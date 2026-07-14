@@ -1,0 +1,111 @@
+{:paths ["src" "test"]
+ :tasks
+ {agent {:doc "Run one agent turn. Usage: bb agent \"say pong\""
+         :requires ([bb-agent.cli :as cli])
+         :task (cli/-main *command-line-args*)}
+     memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
+             :requires ([bb-agent.cli :as cli])
+             :task (apply cli/-main "memory" *command-line-args*)}
+     session {:doc "Session commands. Usage: bb session list/current/set-cwd ..."
+              :requires ([bb-agent.cli :as cli])
+              :task (apply cli/-main "session" *command-line-args*)}
+     usage {:doc "Usage commands. Usage: bb usage report"
+            :requires ([bb-agent.cli :as cli])
+            :task (apply cli/-main "usage" *command-line-args*)}
+     model {:doc "Model commands. Usage: bb model set/current ..."
+            :requires ([bb-agent.cli :as cli])
+            :task (apply cli/-main "model" *command-line-args*)}
+    config {:doc "Config commands. Usage: bb config doctor"
+            :requires ([bb-agent.cli :as cli])
+            :task (apply cli/-main "config" *command-line-args*)}
+   schedule {:doc "Schedule commands. Usage: bb schedule add/list/remove/run ..."
+             :requires ([bb-agent.cli :as cli])
+             :task (apply cli/-main "schedule" *command-line-args*)}
+   daemon {:doc "Daemon commands. Usage: bb daemon start [--once]"
+           :requires ([bb-agent.cli :as cli])
+           :task (apply cli/-main "daemon" *command-line-args*)}
+   telegram {:doc "Telegram commands. Usage: bb telegram poll-once"
+             :requires ([bb-agent.cli :as cli])
+             :task (apply cli/-main "telegram" *command-line-args*)}
+   slack {:doc "Slack commands. Usage: bb slack poll-once"
+          :requires ([bb-agent.cli :as cli])
+          :task (apply cli/-main "slack" *command-line-args*)}
+   ui {:doc "Simple terminal status UI. Usage: bb ui status"
+       :requires ([bb-agent.cli :as cli])
+       :task (apply cli/-main "ui" *command-line-args*)}
+   test:e2e:cli-agent {:doc "Run CLI agent e2e tests."
+                       :extra-paths ["test"]
+                       :requires ([clojure.test :as t]
+                                  [e2e.cli-agent-test])
+                       :task (let [{:keys [fail error]}
+                                   (t/run-tests 'e2e.cli-agent-test)]
+                                (when (pos? (+ fail error))
+                                  (System/exit 1)))}
+   test:e2e:tools {:doc "Run tool protocol e2e tests."
+                   :extra-paths ["test"]
+                   :requires ([clojure.test :as t]
+                              [e2e.tools-test])
+                   :task (let [{:keys [fail error]}
+                               (t/run-tests 'e2e.tools-test)]
+                           (when (pos? (+ fail error))
+                             (System/exit 1)))}
+    test:e2e:memory {:doc "Run memory e2e tests."
+                    :extra-paths ["test"]
+                    :requires ([clojure.test :as t]
+                               [e2e.memory-test])
+                    :task (let [{:keys [fail error]}
+                                (t/run-tests 'e2e.memory-test)]
+                             (when (pos? (+ fail error))
+                               (System/exit 1)))}
+    test:e2e:model-switching {:doc "Run model switching e2e tests."
+                              :extra-paths ["test"]
+                              :requires ([clojure.test :as t]
+                                         [e2e.model-switching-test])
+                              :task (let [{:keys [fail error]}
+                                          (t/run-tests 'e2e.model-switching-test)]
+                                      (when (pos? (+ fail error))
+                                        (System/exit 1)))}
+    test:e2e:anthropic {:doc "Run Anthropic provider e2e tests."
+                        :extra-paths ["test"]
+                        :requires ([clojure.test :as t]
+                                   [e2e.anthropic-test])
+                        :task (let [{:keys [fail error]}
+                                    (t/run-tests 'e2e.anthropic-test)]
+                                (when (pos? (+ fail error))
+                                  (System/exit 1)))}
+    test:e2e:config {:doc "Run config doctor e2e tests."
+                     :extra-paths ["test"]
+                     :requires ([clojure.test :as t]
+                                [e2e.config-test])
+                     :task (let [{:keys [fail error]}
+                                 (t/run-tests 'e2e.config-test)]
+                             (when (pos? (+ fail error))
+                               (System/exit 1)))}
+   test:e2e:scheduler {:doc "Run scheduler e2e tests."
+                       :extra-paths ["test"]
+                       :requires ([clojure.test :as t]
+                                  [e2e.scheduler-test])
+                       :task (let [{:keys [fail error]}
+                                   (t/run-tests 'e2e.scheduler-test)]
+                               (when (pos? (+ fail error))
+                                 (System/exit 1)))}
+   test:e2e:telegram {:doc "Run Telegram e2e tests."
+                      :extra-paths ["test"]
+                      :requires ([clojure.test :as t]
+                                 [e2e.telegram-test])
+                      :task (let [{:keys [fail error]}
+                                  (t/run-tests 'e2e.telegram-test)]
+                              (when (pos? (+ fail error))
+                                (System/exit 1)))}
+   test:e2e:phase6 {:doc "Run Phase 6 extension e2e tests."
+                    :extra-paths ["test"]
+                    :requires ([clojure.test :as t]
+                               [e2e.phase6-test])
+                    :task (let [{:keys [fail error]}
+                                (t/run-tests 'e2e.phase6-test)]
+                            (when (pos? (+ fail error))
+                              (System/exit 1)))}
+   verify:rewrite-docs {:doc "Verify Babashka rewrite planning docs."
+                        :task (load-file "script/verify-babashka-rewrite-docs.bb")}
+   test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:scheduler test:e2e:telegram test:e2e:phase6 verify:rewrite-docs]}}}

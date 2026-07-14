@@ -1,0 +1,5 @@
+.opencrabs-bb/
+.cpcache/
+target/
+tmp/
+*.log
