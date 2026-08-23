@@ -123,13 +123,18 @@
         (fs/delete-tree home)))))
 
 (deftest approved-shell-enforces-timeout
-  (let [result (tool/handle-tool-request {:tool/name "shell"
-                                          :approval/policy :auto-all
-                                          :tool/args {:cmd "sleep 2"
-                                                      :timeout-ms 1}})]
-    (is (= "shell" (:tool/name result)))
-    (is (= :error (:status result)))
-    (is (str/includes? (:error/message result) "Timed out"))))
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-timeout-"})]
+    (try
+      (with-redefs [bb-agent.config/home (fn [] (str home))]
+        (let [result (tool/handle-tool-request {:tool/name "shell"
+                                                :approval/policy :auto-all
+                                                :tool/args {:cmd "sleep 2"
+                                                            :timeout-ms 1}})]
+          (is (= "shell" (:tool/name result)))
+          (is (= :error (:status result)))
+          (is (str/includes? (:error/message result) "Timed out"))))
+      (finally
+        (fs/delete-tree home)))))
 
 (deftest file-and-document-tools-deny-symlink-escapes
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-symlink-"})
@@ -140,9 +145,10 @@
       (spit (str secret) "secret")
       (fs/create-sym-link link secret)
       (let [read-result (run-agent home (str "try approved read_file " link))
-            document-result (tool/handle-tool-request {:tool/name "document_read"
-                                                       :approval/policy :auto-all
-                                                       :tool/args {:path (str link)}})]
+            document-result (with-redefs [bb-agent.config/home (fn [] (str home))]
+                              (tool/handle-tool-request {:tool/name "document_read"
+                                                         :approval/policy :auto-all
+                                                         :tool/args {:path (str link)}}))]
         (is (= 0 (:exit read-result)) (:err read-result))
         (is (str/includes? (:out read-result) ":status :error"))
         (is (str/includes? (:out read-result) "outside allowed root"))
