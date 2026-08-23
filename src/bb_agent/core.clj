@@ -4,6 +4,7 @@
             [bb-agent.model :as model]
             [bb-agent.provider :as provider]
             [bb-agent.retry :as retry]
+            [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
             [bb-agent.tool :as tool]
             [bb-agent.usage :as usage]
@@ -44,9 +45,13 @@
    :content (str "Relevant memories:\n"
                  (str/join "\n" (map :memory/text matches)))})
 
-(defn- initial-messages [prompt memory-matches]
+(defn- semantic-system-message [context]
+  {:role :system :content context})
+
+(defn- initial-messages [prompt memory-matches semantic-ctx]
   (cond-> []
     (seq memory-matches) (conj (memory-system-message memory-matches))
+    semantic-ctx (conj (semantic-system-message semantic-ctx))
     true (conj {:role :user :content prompt})))
 
 (defn- tool-call-message [tool-requests]
@@ -68,7 +73,7 @@
     (seq (:tool/requests response)) (conj (tool-call-message (:tool/requests response)))
     (seq tool-results) (conj (tool-result-message tool-results))))
 
-(defn- finish-turn [id cfg prompt memory-matches turn final-content usage]
+(defn- finish-turn [id cfg prompt memory-matches semantic-ctx turn final-content usage]
   (let [completed (assoc turn
                          :session/id id
                          :user/input prompt
@@ -76,9 +81,12 @@
                          :model (:model cfg)
                          :memory/backend (memory/backend)
                          :memory/matches memory-matches
+                         :semantic/context semantic-ctx
                          :assistant/final final-content)]
     (session/touch-metadata! id cfg)
     (session/append-turn! id completed)
+    (when (semantic-memory/enabled? cfg)
+      (semantic-memory/index-session! id))
     (usage/append-event! (usage/event {:session-id id
                                        :provider (:provider cfg)
                                        :model (:model cfg)
@@ -95,8 +103,9 @@
         metadata (session/load-metadata id)
         cfg (cond-> cfg
               (:cwd metadata) (assoc :cwd (:cwd metadata)))
-        memory-matches (memory/attach-memories prompt)]
-    (loop [messages (initial-messages prompt memory-matches)
+        memory-matches (memory/attach-memories prompt)
+        semantic-ctx (semantic-memory/attach-context prompt cfg)]
+    (loop [messages (initial-messages prompt memory-matches semantic-ctx)
            turn {:tool/requests []
                  :tool/results []}
            rounds-left max-tool-rounds]
@@ -113,11 +122,11 @@
                             (mapv #(tool/handle-tool-request % cfg) tool-requests))
             turn* (append-tool-round turn response (or tool-results []))]
         (if-let [content (:content response)]
-          (finish-turn id cfg prompt memory-matches turn* content (:usage response))
+          (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
           (if (seq tool-requests)
             (if (every? #(= :denied (:status %)) tool-results)
-              (finish-turn id cfg prompt memory-matches turn* (tool-results-summary tool-results) (:usage response))
+              (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
               (recur (continue-messages messages response tool-results)
                      turn*
                      (dec rounds-left)))
-            (finish-turn id cfg prompt memory-matches turn* (tool-error-summary (:tool/results turn*)) (:usage response))))))))
+            (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-error-summary (:tool/results turn*)) (:usage response))))))))

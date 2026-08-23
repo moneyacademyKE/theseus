@@ -8,6 +8,7 @@
             [bb-agent.model :as model]
             [bb-agent.rich :as rich]
             [bb-agent.schedule :as schedule]
+            [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
             [bb-agent.slack :as slack]
             [bb-agent.telegram :as telegram]
@@ -76,7 +77,23 @@
         (doseq [entry (memory/search-memories payload 10)]
           (println (:memory/text entry))))
 
-      (usage! "Usage: bb memory add <text> | bb memory search <query>" 2))))
+      "index-session"
+      (let [[session-id] rest-args]
+        (if (str/blank? session-id)
+          (usage! "Usage: bb memory index-session <session-id>" 2)
+          (if-let [record (semantic-memory/index-session! session-id)]
+            (println (:summary record))
+            (println "No turns to index for session:" session-id))))
+
+      "semantic-search"
+      (if (str/blank? payload)
+        (usage! "Usage: bb memory semantic-search <query>" 2)
+        (doseq [hit (semantic-memory/semantic-search payload {:top-k 10})]
+          (println (format "%.3f" (double (:score hit)))
+                   "- [Session" (:session/id hit) "]:"
+                   (:summary hit))))
+
+      (usage! "Usage: bb memory add <text> | bb memory search <query> | bb memory index-session <id> | bb memory semantic-search <query>" 2))))
 
 (defn- handle-model-command [args]
   (let [[subcommand & rest-args] args]
