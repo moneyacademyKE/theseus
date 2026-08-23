@@ -131,6 +131,14 @@
                                (t/run-tests 'e2e.retry-test)]
                            (when (pos? (+ fail error))
                              (System/exit 1)))}
+   test:e2e:subagent {:doc "Run subagent ledger e2e tests."
+                      :extra-paths ["test"]
+                      :requires ([clojure.test :as t]
+                                 [e2e.subagent-test])
+                      :task (let [{:keys [fail error]}
+                                  (t/run-tests 'e2e.subagent-test)]
+                              (when (pos? (+ fail error))
+                                (System/exit 1)))}
    benchmark {:doc "Exit-0 benchmark harness (offline scenarios)."
               :task (load-file "script/benchmark.bb")}
    test:e2e:cron-edge {:doc "Run cron matcher edge-case tests (DST, catch-up, drift)."
