@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Babashka
-        uses: babashka/bb-install@v1
+        run: sudo bash <(curl -s https://raw.githubusercontent.com/babashka/babashka/master/install)
 
       - name: Run e2e test suite
         run: bb test:e2e:all
