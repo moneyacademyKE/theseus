@@ -4,6 +4,12 @@
 
 ### Added
 
+- Cross-session semantic memory (`bb-agent.semantic-memory`), ported from hermes-beam's `semantic_search` + `cross_session_search`: per-session summary records (deterministic transcript summarizer, injectable), BM25/IDF ranking with age decay as the default scorer (injectable `:score-fn`), automatic re-index after each completed turn behind a `:semantic-memory {:enabled true}` config gate, historical-context injection into turn prompts, and `bb memory index-session <id>` / `bb memory semantic-search <query>` CLI commands.
+
+## v0.2.0 - 2026-08-23
+
+### Added
+
 - Retry/backoff executor (`bb-agent.retry`): pure opts+thunk loop composing the error classifier and circuit breaker — capped attempts, jittered exponential backoff, clock/sleep/rand injectable. Wired into `core/run-turn!` via `complete-retrying` with a shared per-provider breaker; config `:retry` map overrides knobs. Ported shape from hermes-beam's provider retry loop.
 - Pure cron matcher (`bb-agent.cron`) over `java.time` ZonedDateTime: hermes-beam's expression semantics (wildcards, lists, ranges, steps, Sunday 0/7) plus `next-match` / `matches-in-window` for DST-gap, ambiguous-hour, catch-up, and drift-anchoring behavior.
 - Subagent ledger (`bb-agent.subagent`): hermes-beam's 529-LOC OTP supervisor flattened to pure record transitions (:pending -> :claimed -> :completed/:failed), id-or-record handles, capacity as data (4-arity claim + `can-claim?`), file-backed shell at `state/subagents.edn`.
