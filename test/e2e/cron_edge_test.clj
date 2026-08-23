@@ -68,7 +68,7 @@
     (is (= 25 (count (cron/matches-in-window "0 * * * *"
                                              (dt 2026 11 1 0 0 "America/New_York")
                                              (dt 2026 11 2 0 0 "America/New_York"))))
-       "fall-back day has 25 top-of-hour slots"))))
+       "fall-back day has 25 top-of-hour slots")))
 
 (deftest missed-run-catch-up-window
   (testing "a scheduler replaying a 5-hour outage of */30 collects exactly the missed slots"
