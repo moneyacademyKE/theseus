@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Context compaction module (`bb-agent.compression`) ported from AlcaponeCoder, adapted to theseus message shapes; zero-dep with an injected summarizer function.
+- Circuit breaker as a pure value (`bb-agent.circuit-breaker`) ported from hermes-beam's actor; identical closed/open/half-open semantics with time as an argument.
+- Error classifier (`bb-agent.error-classifier`) ported from hermes-beam; pattern tables and precedence preserved as data, plus `retryable?` policy.
+- `bb test:e2e:compression` and `bb test:e2e:resilience` suites, wired into `test:e2e:all`.
+- GitHub Actions workflow running the full e2e suite on Babashka (adapted from hermes-beam's tests.yml).
+
+### Verification
+
+- `bb test:e2e:all` passes (46 tests, 259 assertions, 0 failures).
+
 ## v0.1.0 - 2026-07-14
 
 Initial standalone Theseus release.
