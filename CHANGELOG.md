@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 - 2026-08-23
 
 ### Added
 
 - Cross-session semantic memory (`bb-agent.semantic-memory`), ported from hermes-beam's `semantic_search` + `cross_session_search`: per-session summary records (deterministic transcript summarizer, injectable), BM25/IDF ranking with age decay as the default scorer (injectable `:score-fn`), automatic re-index after each completed turn behind a `:semantic-memory {:enabled true}` config gate, historical-context injection into turn prompts, and `bb memory index-session <id>` / `bb memory semantic-search <query>` CLI commands.
+
+### Verification
+
+- `bb test:e2e:all` passes (73 tests, 360 assertions, 0 failures; prior release: 61/325).
+- CI green on `c46fa70` (run 32620312885), first run, no fixes needed.
+- Module 179 LOC, zero new dependencies; opt-in via config — no behavior change by default.
 
 ## v0.2.0 - 2026-08-23
 
