@@ -34,9 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Babashka
-        uses: taiki-e/install-action@v2
-        with:
-          tool: bb
+        uses: babashka/bb-install@v1
 
       - name: Run e2e test suite
         run: bb test:e2e:all
