@@ -1,13 +1,36 @@
 (ns bb-agent.core
-  (:require [bb-agent.memory :as memory]
+  (:require [bb-agent.circuit-breaker :as cb]
+            [bb-agent.memory :as memory]
             [bb-agent.model :as model]
             [bb-agent.provider :as provider]
+            [bb-agent.retry :as retry]
             [bb-agent.session :as session]
             [bb-agent.tool :as tool]
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
 
 (def ^:private max-tool-rounds 8)
+
+(def ^:private provider-breaker
+  "Shared per-provider breaker threaded through retry calls. The
+  breaker modules stay pure; this atom is the one mutable seam."
+  (atom (cb/breaker 5 30)))
+
+(defn- complete-retrying
+  "Wrap provider/complete with retry/backoff + the shared breaker.
+  config.edn may override retry knobs via a `:retry` map."
+  [cfg provider request]
+  (let [opts (-> (retry/defaults)
+                 (merge (:retry cfg))
+                 (assoc :breaker @provider-breaker
+                        :breaker-key provider))
+        result (retry/with-retries opts #(provider/complete provider request))]
+    (when (:breaker result) (reset! provider-breaker (:breaker result)))
+    (case (:outcome result)
+      :success (:value result)
+      :breaker-open (throw (ex-info (str "Provider circuit breaker open for " provider)
+                                    {:provider provider :outcome :breaker-open}))
+      (throw (:error result)))))
 
 (defn- tool-error-summary [results]
   (let [names (->> results (map :tool/name) (str/join ", "))]
@@ -84,7 +107,7 @@
                      :messages messages
                      :memory/matches memory-matches
                      :provider/config (get-in cfg [:providers provider])}
-            response (provider/complete provider request)
+            response (complete-retrying cfg provider request)
             tool-requests (:tool/requests response)
             tool-results (when (seq tool-requests)
                             (mapv #(tool/handle-tool-request % cfg) tool-requests))

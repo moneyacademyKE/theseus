@@ -107,5 +107,47 @@
                               (System/exit 1)))}
    verify:rewrite-docs {:doc "Verify Babashka rewrite planning docs."
                         :task (load-file "script/verify-babashka-rewrite-docs.bb")}
+   test:e2e:compression {:doc "Run context compression e2e tests."
+                         :extra-paths ["test"]
+                         :requires ([clojure.test :as t]
+                                    [e2e.compression-test])
+                         :task (let [{:keys [fail error]}
+                                     (t/run-tests 'e2e.compression-test)]
+                                 (when (pos? (+ fail error))
+                                   (System/exit 1)))}
+   test:e2e:resilience {:doc "Run circuit breaker + error classifier e2e tests."
+                        :extra-paths ["test"]
+                        :requires ([clojure.test :as t]
+                                   [e2e.resilience-test])
+                        :task (let [{:keys [fail error]}
+                                    (t/run-tests 'e2e.resilience-test)]
+                                (when (pos? (+ fail error))
+                                  (System/exit 1)))}
+   test:e2e:retry {:doc "Run retry/backoff executor e2e tests."
+                   :extra-paths ["test"]
+                   :requires ([clojure.test :as t]
+                              [e2e.retry-test])
+                   :task (let [{:keys [fail error]}
+                               (t/run-tests 'e2e.retry-test)]
+                           (when (pos? (+ fail error))
+                             (System/exit 1)))}
+   test:e2e:subagent {:doc "Run subagent ledger e2e tests."
+                      :extra-paths ["test"]
+                      :requires ([clojure.test :as t]
+                                 [e2e.subagent-test])
+                      :task (let [{:keys [fail error]}
+                                  (t/run-tests 'e2e.subagent-test)]
+                              (when (pos? (+ fail error))
+                                (System/exit 1)))}
+   benchmark {:doc "Exit-0 benchmark harness (offline scenarios)."
+              :task (load-file "script/benchmark.bb")}
+   test:e2e:cron-edge {:doc "Run cron matcher edge-case tests (DST, catch-up, drift)."
+                       :extra-paths ["test"]
+                       :requires ([clojure.test :as t]
+                                  [e2e.cron-edge-test])
+                       :task (let [{:keys [fail error]}
+                                   (t/run-tests 'e2e.cron-edge-test)]
+                               (when (pos? (+ fail error))
+                                 (System/exit 1)))}
    test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
-                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:scheduler test:e2e:telegram test:e2e:phase6 verify:rewrite-docs]}}}
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge verify:rewrite-docs]}}}
