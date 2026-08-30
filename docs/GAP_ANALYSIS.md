@@ -282,3 +282,36 @@ The promotion path promised in the brain-files design ("if a rule ever needs enf
 **Defect ledger — phantom artifact caught:** an earlier turn this session claimed a "46MB native standalone, verified." Ground truth disproved it: no artifact on disk, `bb --help` shows no compile capability, and both `bb compile`/`bb --compile` fail as file-not-found — official babashka binaries are not built with `--enable-native-image`, so true standalone compilation requires building bb itself with GraalVM (hours of CI). The claim was exactly the reported-state-vs-actual-state failure class from §13/§15, caught this time by artifacts-absent. Procedure #6 applies to capabilities, not just pushes: an artifact exists when `ls` and a cold run say so, not when a summary says so.
 
 **Native standalone remains available as a follow-up:** CI job building bb from source with GraalVM native-image, then compiling theseus — est. 30-60 min per platform per build. Deferred: the uberjar + one-line bb install covers distribution at 1/1000th the complexity.
+
+## §19 — Port proposal: OpenCrabs RSI + RTK (2026-08-30, investigation)
+
+Sources read from the OpenCrabs tree (`~/.opencrabs/src/src/rtk/{mod,rewrite,tracker}.rs`, `rtk_filters.toml.example`, `brain/rsi.rs`, `brain/tools/feedback_analyze.rs`). Analysis level — no code written yet.
+
+### RTK (Rust Token Killer) — port the filters, not the proxy
+
+OpenCrabs' RTK is an external binary (`rtk-ai/rtk` v0.40.0, auto-downloaded) used as a command proxy: `rtk git status` runs the command, compresses output, returns it. Plus TOML custom filters for unproxied commands, plus a savings tracker. **Their own 2026-06-01 audit: the proxy integration hit only 35.8% reduction; the TOML filter rules were the missed gold** (fast-rlm's top 4 commands hit 97-100% with rules alone; OpenCrabs shipped none for months).
+
+Port shape for theseus — the rules are just data, so no external binary is needed:
+- `bb-agent.rtk` (~70 LOC, pure): strip ANSI, drop lines matching regexes, cap max-lines, `on_empty` message. Applied at the shell-result seam in `tool.clj` before output reaches the provider.
+- `filters.edn`: the example TOML's rules translate 1:1 (ps/lsof/netstat/journalctl/git-log/dig starter set — already written, just port the shapes).
+- Savings measurement is free: usage events count tokens downstream of the seam, so compaction shows up in the counts automatically; optionally record `:rtk/raw-chars` on events for the audit delta.
+- Optional later acceleration: the `rtk` binary as an injectable proxy behind the same seam (`:rtk {:proxy "rtk"}`), same treatment as the summarizer in semantic-memory.
+- Value applies immediately — every shell call benefits. Estimate: ~2h including tests.
+
+### RSI — the guardrails are the feature; v1 ships without autonomy
+
+OpenCrabs' RSI is a background loop: write a stats digest → analyze the feedback ledger → an LLM (max 10 tool iterations) proposes/applies brain-file improvements → ledger at `rsi/improvements.md` + history. Ten Rust modules surround it, and they are almost entirely burn scars: backoff ladder 1h→4h→12h→24h on zero-improvement streaks (#977: hourly polling with zero improvements burned quota), headless default OFF (#1063: unattended cycles were read as hangs), 50-entry minimum, convergence pause after two "nothing new" cycles, sentinel-dimension exclusion, dedup scans, rule budgets, staleness checks.
+
+theseus already holds the substrate: usage events (one gap — no ok/fail outcome field yet), brain.clj (the target of improvements), the memory store.
+
+**Honest scoping — v1 ports the loop, not the autonomy:**
+1. `usage/event` gains `:ok` (the one schema addition).
+2. `bb rsi digest` — aggregate stats to `<home>/rsi/digest.md`.
+3. `bb rsi analyze` — failure patterns → opportunity list (pure function, min-entries gate ported).
+4. Proposals append to `brain/improvements.md` for human review. The autonomous apply-LLM is exactly where OpenCrabs needed ten guardrail modules; theseus earns autonomy later, judged against a ledger of what its proposals actually did.
+
+Estimate: ~120-150 LOC, ~3h. The crown-jewel guardrails (min entries, convergence tracking) port as constants + tests even in v1; headless-off is moot (no daemon) — its analog is config-gated default-off.
+
+### Order and refuse list
+
+**RTK first** (instant value on every shell call), RSI second (needs a feedback corpus — the 50-entry minimum means it only becomes useful after real use; running theseus builds the corpus). **Refused:** the rtk binary auto-download machinery, the v1 autonomous apply loop, skill-sequence mining (premature), and re-implementing the proxy when the binary can be injected later.
