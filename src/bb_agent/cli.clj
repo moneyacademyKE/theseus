@@ -77,6 +77,16 @@
         (doseq [entry (memory/search-memories payload 10)]
           (println (:memory/text entry))))
 
+      "curate"
+      (let [[id] rest-args]
+        (if (str/blank? id)
+          (usage! "Usage: bb memory curate <id>" 2)
+          (try
+            (let [entry (memory/curate-memory! id)]
+              (println "Curated:" (:memory/text entry)))
+            (catch Exception e
+              (usage! (ex-message e) 1)))))
+
       "index-session"
       (let [[session-id] rest-args]
         (if (str/blank? session-id)
@@ -93,7 +103,7 @@
                    "- [Session" (:session/id hit) "]:"
                    (:summary hit))))
 
-      (usage! "Usage: bb memory add <text> | bb memory search <query> | bb memory index-session <id> | bb memory semantic-search <query>" 2))))
+      (usage! "Usage: bb memory add <text> | bb memory search <query> | bb memory curate <id> | bb memory index-session <id> | bb memory semantic-search <query>" 2))))
 
 (defn- handle-model-command [args]
   (let [[subcommand & rest-args] args]
