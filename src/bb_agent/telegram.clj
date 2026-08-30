@@ -4,7 +4,8 @@
             [bb-agent.approval :as approval]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
-            [bb-agent.rich :as rich]
+            [bb-agent.telegram-guard :as guard]
+            [bb-agent.telegram-rich :as tr]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]))
@@ -64,12 +65,22 @@
         body (json/parse-string (:body response) keyword)]
     (or (:result body) [])))
 
-(defn- send-message! [cfg chat-id text]
-  (let [url (api-url cfg "sendMessage")]
-    (http/post url {:throw false
-                    :headers {"content-type" "application/json"}
-                    :body (json/generate-string {:chat_id chat-id
-                                                  :text text})})))
+(defn- send-message!
+  ([cfg chat-id text] (send-message! cfg chat-id text nil))
+  ([cfg chat-id text parse-mode]
+   (let [url (api-url cfg "sendMessage")]
+     (http/post url {:throw false
+                     :headers {"content-type" "application/json"}
+                     :body (json/generate-string (cond-> {:chat_id chat-id
+                                                          :text text}
+                                                  parse-mode (assoc :parse_mode parse-mode)))}))))
+
+(defn- send-html!
+  "Split rendered HTML into Telegram-safe chunks and send each with
+   HTML parse mode. Chunks concatenate back to the full document."
+  [cfg chat-id html]
+  (doseq [chunk (tr/split-message html)]
+    (send-message! cfg chat-id chunk "HTML")))
 
 (defn- send-approval-request! [cfg chat-id pending]
   (send-message! cfg chat-id
@@ -95,23 +106,37 @@
         (let [chat-id (get-in message [:chat :id])
               session-id (session-id-for-chat chat-id)
               text (:text message)]
-          (if-let [decision (approval/telegram-approval-reply text)]
-            (send-message! cfg* chat-id
-                           (approval/approval-reply-text
-                            (approval/resolve! session-id decision)
-                            decision))
-            (let [turn (core/run-turn! (assoc (config/load-config)
-                                              :session/id session-id
-                                              :approval/ask
-                                              (approval/waiting-approver
-                                               {:session-id session-id
-                                                :channel :telegram
-                                                :timeout-ms (or (:approval-timeout-ms cfg*) 30000)
-                                                :notify #(send-approval-request! cfg* chat-id %)}))
-                                       text)]
-              (send-message! cfg* chat-id (rich/telegram (rich/markdown (:assistant/final turn))))))))
+          ;; Owner allowlist: fail-closed. Denied chats are marked seen
+          ;; below (so they are not reprocessed) but never answered.
+          (when (guard/allowed? (config/load-config) chat-id)
+            (if-let [decision (approval/telegram-approval-reply text)]
+              (send-message! cfg* chat-id
+                             (approval/approval-reply-text
+                              (approval/resolve! session-id decision)
+                              decision))
+              (let [turn (core/run-turn! (assoc (config/load-config)
+                                                :session/id session-id
+                                                :approval/ask
+                                                (approval/waiting-approver
+                                                 {:session-id session-id
+                                                  :channel :telegram
+                                                  :timeout-ms (or (:approval-timeout-ms cfg*) 30000)
+                                                  :notify #(send-approval-request! cfg* chat-id %)}))
+                                         text)]
+                (send-html! cfg* chat-id (tr/to-html (:assistant/final turn)))))))))
       (swap! seen conj (:update_id update))
       (save-seen! @seen)
       (save-offset! (inc (:update_id update)))
-      (swap! processed inc)))
+      (swap! processed inc))
     {:updates @processed}))
+
+(defn poll-loop!
+  "Continuous polling with a sleep between cycles. Stop with ctrl-c."
+  [& {:keys [interval-ms] :or {interval-ms 2000}}]
+  (loop []
+    (try
+      (poll-once!)
+      (catch Exception e
+        (println (str "telegram poll error: " (.getMessage e)))))
+    (Thread/sleep (long interval-ms))
+    (recur)))
