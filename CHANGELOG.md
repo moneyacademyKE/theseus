@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Doctor hardening + last-good config swap (`bb-agent.doctor` + `bb-agent.config`): the doctor now survives a corrupt `config.edn` (it previously crashed with empty output on exactly the condition it exists to diagnose) and reports `:config-parse`, `:home-writable`, `:memory-store`, `:semantic-store`, `:usage-store` alongside the original checks; `bb config apply <file>` validates a candidate against the provider-config rules before an atomic temp+rename swap that keeps the previous config at `config.last-good.edn`; `bb config restore-last-good` recovers. Ported from OpenCrabs' doctor/last-good patterns.
+- Provider reachability probe + top-level `bb doctor` (plan-worker delta): the fake provider is probed in-process (offline, deterministic); http base-urls are probed with 1.5s connect / 3s request timeouts and an unreachable endpoint degrades to `[WARN]`, never an error exit.
+- Provider attribution stats (`bb-agent.usage`): usage events carry `:fallback/tried` + `:fallback/served`; `bb usage report` gains `:fallback {hits, rate, by-served}` — the honesty fix from v0.4.0 becomes measurable.
+- Brain files (`bb-agent.brain`): `<home>/brain/*.md` loaded sorted under filename headers into system context — identity and conventions live as editable markdown; the presence of files is the gate, no config flag. Memory = what happened, brain = who the agent is.
+
+### Verification
+
+- `bb test:e2e:all` passes (97 tests, 455 assertions, 0 failures; prior release: 82/391), now 19 suites including `test:e2e:doctor` (8/38), `test:e2e:stats`, `test:e2e:brain`.
+- Zero new dependencies (`babashka.http-client` is built into Babashka); doctor.clj 149 LOC, brain.clj 25 LOC.
+
 ## v0.4.0 - 2026-08-29
 
 ### Added

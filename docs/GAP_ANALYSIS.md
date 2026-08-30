@@ -234,3 +234,16 @@ Roadmap item 5 (semantic memory) executed as PR #4 (`feat/semantic-memory`, comm
 | Suite | 82 tests / 391 assertions / exit 0 | 16 suites, measured by awk from run output |
 
 Process notes: PR #6 was created as a draft and the "ready" state was reported in prose without the `gh pr ready` call — the merge attempt caught it. Rule: state changes are tool calls, not sentences. Sub-agent schedule.clj refinement verified against both cron suites before commit (`1a066ee`); the fallback honesty fix (`finish-turn` prefers `:fallback/served-by`) was assertion-driven, not speculative.
+
+## §14 — V3 Pattern-Port Execution Record (OpenCrabs → theseus, 2026-08-30)
+
+| Port | Commit | Shape | Proof |
+|---|---|---|---|
+| Doctor hardening + last-good swap | `d663bf8` | doctor.clj 132→149 LOC (with delta), config.clj 51 LOC | `test:e2e:doctor` 8/38 exit 0; config regression 4/13 |
+| Reachability probe + `bb doctor` top-level | `b4732aa` (plan-worker delta) | +33/−8 doctor, +1 cli dispatch | absorbed after code review: offline fake probe, WARN-class http failures, `babashka.http-client` built-in |
+| Provider attribution stats | `a680534` | usage.clj extended (no new module — it already owned the events file) | `test:e2e:stats` 4/15 incl. legacy-events case; fallback regression 4/9 |
+| Brain files | `980b9a3` | brain.clj 25 LOC, third system message in `initial-messages` | `test:e2e:brain` 3/11 incl. injection capture; cli-agent regression 6/41 |
+
+Integration: 19 suites, 97 tests / 455 assertions, 0 failures, exit 0 (measured, awk $5). Deviations recorded honestly: doctor already existed (port reshaped to extend + add the write path); stats became a usage.clj extension (module ownership beats duplication); one `=` vs `==` lesson (Clojure `=` is category-strict — Ratio 1/2 ≠ double 0.5).
+
+Collision note: the task-1 plan worker (spawned isolated, reported "ended") actually landed `b4732aa` on top of task 3's commit while tasks 2–3 ran — caught by a test-count discrepancy (doctor suite ran 8 tests, not my 6) and verified before absorption: commit on-branch, code reviewed, suite re-run 8/38 by the main session. Same pattern as V2's `1a066ee`: verify, then absorb — never discard, never trust self-reports.
