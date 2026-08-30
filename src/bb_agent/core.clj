@@ -1,5 +1,6 @@
 (ns bb-agent.core
-  (:require [bb-agent.circuit-breaker :as cb]
+  (:require [bb-agent.brain :as brain]
+            [bb-agent.circuit-breaker :as cb]
             [bb-agent.fallback :as fallback]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
@@ -80,10 +81,15 @@
 (defn- semantic-system-message [context]
   {:role :system :content context})
 
-(defn- initial-messages [prompt memory-matches semantic-ctx]
+(defn- brain-system-message [brain]
+  {:role :system
+   :content (str "Agent brain (identity & conventions):\n" brain)})
+
+(defn- initial-messages [prompt memory-matches semantic-ctx brain-ctx]
   (cond-> []
     (seq memory-matches) (conj (memory-system-message memory-matches))
     semantic-ctx (conj (semantic-system-message semantic-ctx))
+    (seq brain-ctx) (conj (brain-system-message brain-ctx))
     true (conj {:role :user :content prompt})))
 
 (defn- tool-call-message [tool-requests]
@@ -124,7 +130,9 @@
                                        :model (:model cfg)
                                        :prompt prompt
                                        :final final-content
-                                       :usage usage}))
+                                       :usage usage
+                                       :fallback-tried (not-empty (:fallback/tried turn))
+                                       :fallback-served (:fallback/served-by turn)}))
     completed))
 
 (defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
@@ -136,8 +144,9 @@
         cfg (cond-> cfg
               (:cwd metadata) (assoc :cwd (:cwd metadata)))
         memory-matches (memory/attach-memories prompt)
-        semantic-ctx (semantic-memory/attach-context prompt cfg)]
-    (loop [messages (initial-messages prompt memory-matches semantic-ctx)
+        semantic-ctx (semantic-memory/attach-context prompt cfg)
+        brain-ctx (brain/load-brain)]
+    (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx)
            turn {:tool/requests []
                  :tool/results []}
            rounds-left max-tool-rounds]

@@ -14,6 +14,7 @@
             [bb-agent.telegram :as telegram]
             [bb-agent.ui :as ui]
             [bb-agent.usage :as usage]
+            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (defn- usage! [message exit-code]
@@ -198,7 +199,7 @@
       (usage! "Usage: bb ui status" 2))))
 
 (defn- handle-config-command [args]
-  (let [[subcommand] args]
+  (let [[subcommand & rest-args] args]
     (case subcommand
       "doctor"
       (let [checks (doctor/run-checks)]
@@ -207,7 +208,32 @@
         (when (doctor/has-errors? checks)
           (System/exit 1)))
 
-      (usage! "Usage: bb config doctor" 2))))
+      "apply"
+      (let [[candidate-path] rest-args]
+        (if (str/blank? candidate-path)
+          (usage! "Usage: bb config apply <candidate-file>" 2)
+          (try
+            (let [candidate (edn/read-string (slurp candidate-path))
+                  check (doctor/check-provider-config candidate)]
+              (if (= :error (:status check))
+                (do (println (doctor/format-check check))
+                    (System/exit 1))
+                (let [applied (config/write-config! candidate)]
+                  (println (str "applied " candidate-path
+                                " -> " (:provider applied) "/" (:model applied)
+                                " (previous kept in config.last-good.edn)")))))
+            (catch Exception e
+              (usage! (str "Invalid candidate: " (ex-message e)) 1)))))
+
+      "restore-last-good"
+      (try
+        (let [cfg (config/restore-last-good!)]
+          (println (str "restored config.last-good.edn -> "
+                        (:provider cfg) "/" (:model cfg))))
+        (catch Exception e
+          (usage! (ex-message e) 1)))
+
+      (usage! "Usage: bb config doctor | bb config apply <file> | bb config restore-last-good" 2))))
 
 (defn -main [& args]
   (let [[command & rest-args] (if (= 1 (count args))
@@ -220,6 +246,7 @@
       "usage" (handle-usage-command rest-args)
       "model" (handle-model-command rest-args)
       "config" (handle-config-command rest-args)
+      "doctor" (handle-config-command (cons "doctor" rest-args))
       "schedule" (handle-schedule-command rest-args)
       "daemon" (handle-daemon-command rest-args)
       "telegram" (handle-telegram-command rest-args)

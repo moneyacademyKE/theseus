@@ -66,22 +66,25 @@
        (* (/ cache-read 1000000.0) (or cache_read_per_m 0.0))
        (* (/ cache-write 1000000.0) (or cache_write_per_m input_per_m 0.0)))))
 
-(defn event [{:keys [session-id provider model prompt final usage]}]
+(defn event [{:keys [session-id provider model prompt final usage
+                     fallback-tried fallback-served]}]
   (let [input (or (:tokens/input usage) (token-estimate prompt))
         output (or (:tokens/output usage) (token-estimate final))
         cache-read (or (:tokens/cache-read usage) 0)
         cache-write (or (:tokens/cache-write usage) 0)]
-    {:usage/event :turn
-     :session/id session-id
-     :provider provider
-     :model (normalize-model-name model)
-     :tokens/input input
-     :tokens/output output
-     :tokens/cache-read cache-read
-     :tokens/cache-write cache-write
-     :tokens/total (+ input output cache-read cache-write)
-     :cost/estimate-usd (cost-estimate provider model input output cache-read cache-write)
-     :created/at (str (java.time.Instant/now))}))
+    (cond-> {:usage/event :turn
+             :session/id session-id
+             :provider provider
+             :model (normalize-model-name model)
+             :tokens/input input
+             :tokens/output output
+             :tokens/cache-read cache-read
+             :tokens/cache-write cache-write
+             :tokens/total (+ input output cache-read cache-write)
+             :cost/estimate-usd (cost-estimate provider model input output cache-read cache-write)
+             :created/at (str (java.time.Instant/now))}
+      fallback-tried (assoc :fallback/tried fallback-tried)
+      fallback-served (assoc :fallback/served fallback-served))))
 
 (defn append-event! [entry]
   (let [path (usage-file)
@@ -89,6 +92,13 @@
     (fs/create-dirs (fs/parent path))
     (spit (str path) (pr-str events))
     events))
+
+(defn- fallback-stats [events]
+  (let [hits (filter :fallback/served events)
+        total (count events)]
+    {:hits (count hits)
+     :rate (if (pos? total) (double (/ (count hits) total)) 0.0)
+     :by-served (frequencies (map :fallback/served hits))}))
 
 (defn report []
   (let [events (load-events)
@@ -101,4 +111,5 @@
                        (map (fn [[provider xs]]
                               [provider {:usage/events (count xs)
                                          :tokens/total (reduce + 0 (map :tokens/total xs))}]))
-                       (into {}))}))
+                       (into {}))
+     :fallback (fallback-stats events)}))
