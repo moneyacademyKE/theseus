@@ -25,6 +25,10 @@
     (vec entries)))
 
 (defn add-schedule!
+  "Register `schedule-id` -> `prompt`. The 3-arity attaches a 5-field
+  cron expression: the entry then fires only when the expression
+  matched since its last logged run (see due-schedules). Entries
+  without one are free-running and fire every tick, as before."
   ([schedule-id prompt] (add-schedule! schedule-id prompt nil))
   ([schedule-id prompt cron-expr]
    (let [cfg (config/load-config)
@@ -62,9 +66,10 @@
     updated))
 
 (defn last-run-times
-  "schedule/id -> Instant of its most recent run. Entries are appended
-  chronologically, so later entries win the reduce. Runs from before
-  :at stamping existed simply carry no time and are ignored."
+  "schedule/id -> :at stamp of its most recent run (ISO-8601 instant
+  string; due-schedules coerces). Entries are appended chronologically,
+  so later entries win the reduce. Runs from before :at stamping
+  existed simply carry no time and are ignored."
   []
   (let [path (runs-file)]
     (if (fs/regular-file? path)
@@ -110,27 +115,42 @@
             (or (str/blank? cron)
                 (cron-due? cron
                            (some-> (get last-runs (:schedule/id s))
-                                   java.time.Instant/parse)
+                                   ->instant)
                            now)))
           schedules))
 
-(defn run-schedule! [cfg schedule-id]
-  (if-let [schedule (find-schedule schedule-id)]
-    (let [turn (core/run-turn! (merge cfg
-                                      (select-keys schedule [:cwd :provider :model])
-                                      {:session/id schedule-id})
-                               (:schedule/prompt schedule))
-          log-entry {:schedule/id schedule-id
-                     :status :ok
-                     :at (str (java.time.Instant/now))
-                     :assistant/final (:assistant/final turn)}]
-      (append-run-log! log-entry)
-      turn)
-    (throw (ex-info (str "Unknown schedule: " schedule-id)
-                    {:schedule/id schedule-id}))))
+(defn run-schedule!
+  "Run one schedule by id and log it with an :at stamp — the
+  wall-clock instant of the run, the hook the cron gate reads back.
+  The 3-arity lets the cron lane stamp the injected clock instead of
+  the host's, keeping the log consistent with the window that
+  justified the run."
+  ([cfg schedule-id] (run-schedule! cfg schedule-id (str (java.time.Instant/now))))
+  ([cfg schedule-id at]
+   (if-let [schedule (find-schedule schedule-id)]
+     (let [turn (core/run-turn! (merge cfg
+                                       (select-keys schedule [:cwd :provider :model])
+                                       {:session/id schedule-id})
+                                (:schedule/prompt schedule))
+           log-entry {:schedule/id schedule-id
+                      :status :ok
+                      :at at
+                      :assistant/final (:assistant/final turn)}]
+       (append-run-log! log-entry)
+       turn)
+     (throw (ex-info (str "Unknown schedule: " schedule-id)
+                     {:schedule/id schedule-id})))))
 
 (defn run-all-schedules!
+  "Fire what's due. The 1-arity is what the daemon rides: a single
+  config arg, wall-clock now. The 2-arity takes `now` explicitly so
+  tests (and callers with their own clock) drive the tick. Either way
+  cron entries fire only inside their (last-run, now] catch-up
+  window; free entries fire every tick. Returns the completed turns
+  of everything that fired, in file order — same shape the 1-arity
+  always returned."
   ([cfg] (run-all-schedules! cfg (java.time.ZonedDateTime/now)))
   ([cfg now]
-   (->> (due-schedules (load-schedules) (last-run-times) now)
-        (mapv #(run-schedule! cfg (:schedule/id %))))))
+   (let [at (str (.toInstant now))]
+     (->> (due-schedules (load-schedules) (last-run-times) now)
+          (mapv #(run-schedule! cfg (:schedule/id %) at))))))
