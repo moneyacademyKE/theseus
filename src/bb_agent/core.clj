@@ -1,5 +1,6 @@
 (ns bb-agent.core
   (:require [bb-agent.circuit-breaker :as cb]
+            [bb-agent.fallback :as fallback]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
             [bb-agent.provider :as provider]
@@ -32,6 +33,37 @@
       :breaker-open (throw (ex-info (str "Provider circuit breaker open for " provider)
                                     {:provider provider :outcome :breaker-open}))
       (throw (:error result)))))
+
+(defn- request-for [base step]
+  (-> base
+      (assoc :provider (:provider step))
+      (assoc :model (:model step))
+      (assoc :provider/config (:provider/config step))))
+
+(defn- fallback-steps [cfg base-request]
+  (let [primary {:provider (:provider base-request)
+                 :model (:model base-request)
+                 :provider/config (:provider/config base-request)}]
+    (into [primary]
+          (map (fn [fb]
+                 (let [p (keyword (:provider fb))]
+                   {:provider p
+                    :model (:model fb)
+                    :provider/config (get-in cfg [:providers p])})))
+          (:provider/fallbacks cfg))))
+
+(defn- complete-chain
+  "Primary provider first (retries + breaker intact), then
+  :provider/fallbacks as data — each step its own provider, model,
+  and provider config. Nothing configured: exactly the old
+  single-provider path, byte for byte."
+  [cfg base-request]
+  (let [steps (fallback-steps cfg base-request)]
+    (if (= 1 (count steps))
+      (complete-retrying cfg (:provider base-request) base-request)
+      (fallback/try-chain steps
+                          #(complete-retrying cfg (:provider %)
+                                              (request-for base-request %))))))
 
 (defn- tool-error-summary [results]
   (let [names (->> results (map :tool/name) (str/join ", "))]
@@ -77,7 +109,7 @@
   (let [completed (assoc turn
                          :session/id id
                          :user/input prompt
-                         :provider (:provider cfg)
+                         :provider (or (:provider turn) (:provider cfg))
                          :model (:model cfg)
                          :memory/backend (memory/backend)
                          :memory/matches memory-matches
@@ -88,7 +120,7 @@
     (when (semantic-memory/enabled? cfg)
       (semantic-memory/index-session! id))
     (usage/append-event! (usage/event {:session-id id
-                                       :provider (:provider cfg)
+                                       :provider (or (:provider turn) (:provider cfg))
                                        :model (:model cfg)
                                        :prompt prompt
                                        :final final-content
@@ -116,11 +148,15 @@
                      :messages messages
                      :memory/matches memory-matches
                      :provider/config (get-in cfg [:providers provider])}
-            response (complete-retrying cfg provider request)
+            response (complete-chain cfg request)
             tool-requests (:tool/requests response)
             tool-results (when (seq tool-requests)
                             (mapv #(tool/handle-tool-request % cfg) tool-requests))
-            turn* (append-tool-round turn response (or tool-results []))]
+            turn* (cond-> (append-tool-round turn response (or tool-results []))
+                    (:fallback/tried response)
+                    (assoc :fallback/tried (:fallback/tried response))
+                    (:fallback/served-by response)
+                    (assoc :provider (:fallback/served-by response)))]
         (if-let [content (:content response)]
           (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
           (if (seq tool-requests)
