@@ -386,3 +386,38 @@ advertisement 2/11 green + cli-agent, retry, resilience, anthropic regressions. 
 
 **Rule:** a masked fake can hold a whole product green while the real integration is
 broken. The first real task is a test suite the fake cannot run for you.
+
+## 23. Telegram gateway — parity tier 1 (2026-08-30)
+
+Directive: theseus builds its own Telegram gateway to feature parity with OpenCrabs,
+using its own agent as the builder. Discovery: `telegram.clj` (117 LOC: poll-once with
+offset persistence, per-chat sessions, approval loop from-chat) shipped in the **initial
+commit** — this was a parity upgrade, not greenfield. Parity scoped in tiers: tier 1
+(rendering, allowlist, poll loop) this PR; reactions/topics/quote-replies tier 2;
+MTProto/voice refused for now.
+
+Shipped: `telegram_render` (88→106 LOC, md→HTML escape-first + 4096 split with
+newline-boundary awareness), `telegram_guard` (fail-closed allowlist; denied chats
+marked seen, never answered, no session), `parse_mode: HTML` send path, `bb telegram
+poll` loop, deny-path e2e. Suite: 136 tests / 552 assertions / 0 failures / exit 0
+across 25 suites.
+
+**Defect ledger (this arc):**
+
+1. **Config-write corruption** — wrote `:telegram` config with python; a branch ate the
+   config's closing brace. The v0.3.0 doctor caught it at next gate (`EOF while
+   reading`). Repaired with bb. Rule: config mutations go through bb/EDN round-trip,
+   never python string surgery.
+2. **Policy grant mismatch** — builder denials were caused by MY rules regex written
+   from the supervisor's path view (`theseus/…`) vs the builder's cwd-relative paths.
+   Un-granted = denied is the design; the grant was wrong, not the gate.
+3. **Silent fail-to-baseline chain** — the rules file never parsed (missing `)`, then a
+   list-wrapped map); every verdict was nil, indistinguishable from "no rules". Text-only
+   smoke tests masked it (they never consult policy). Rule: verify policy grants with a
+   pred-probe, never a text reply.
+4. **`clojure.core/update` shadowing** — one extra closer let the doseq close early;
+   line 129's `update` resolved to the core function; `(:update_id fn)` → nil →
+   `(inc nil)` NPE. Diagnosed by per-line paren-balance scan, not by counting.
+5. **Lost turns** — two turns died between announcing a command and its execution
+   (provider switch mid-flight); one resume looped on re-verification. The loop-guard
+   plus "state changes are tool calls" (#7) both apply.
