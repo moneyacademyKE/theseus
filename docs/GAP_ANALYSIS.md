@@ -354,3 +354,35 @@ unaffected (runs green — the artifact story held).
 **Rule (extends §18):** an artifact is done when a cold run from an arbitrary cwd
 prints doctor OK and dispatches a command. Build success is not artifact success —
 and exit 0 from a REPL is not success at all.
+
+## §22 — Real work: tool advertisement (v0.8.0 arc)
+
+**Trigger:** the "use, not features" verdict (§21 close) — run genuine tasks through
+theseus on a genuine model (inferhub `combo/glm35flash`; key lives in `config.edn`,
+chmod 600, never logged).
+
+**The gap real work found on turn one:** the openai-compatible provider sent
+`{:model :messages}` and nothing else — tools were never advertised. Real LLMs cannot
+call what they do not know exists; the fake provider hardcodes tool emission, which
+masked the gap for seven releases.
+
+**Fix:** `bb-agent.tools` registry (53 LOC) — five tools (`read_file`, `write_file`,
+`search`, `shell`, `git_status`) with JSON-schema parameters, wired as one `:tools`
+key in the request body. E2E pins the body shape and the tool_calls parse path
+(`with-redefs` on `http/post` — the repo's proven fake-server idiom).
+
+**Doors used, not bypassed:** file/shell tools are jailed to the agent home by design —
+project work goes through a project-scoped `OPENCRABS_HOME` at the workspace plus
+`bb session set-cwd`. Headless default denies writes — scoped allowances live in
+`brain/rules.clj` (v0.6.0 doing its real job): `docs/` writes allowed, genuinely
+read-only shell allowed (the first rule name lied — `cat >` is a write — split and
+renamed), everything else denied.
+
+**Receipts:** Task A — `docs/INDEX.md` written by theseus itself: all 21 ledger
+sections indexed with accurate summaries. Task B — shell diagnostic: 0 TODO/FIXME in
+src. Usage ledger: 7 events / 7 ok / 14,278 tokens / fallback 0. Suites: tool
+advertisement 2/11 green + cli-agent, retry, resilience, anthropic regressions. CI run
+`33306958215` green; merged `c863f28` (PR #13, ready-called before merge — rule #7).
+
+**Rule:** a masked fake can hold a whole product green while the real integration is
+broken. The first real task is a test suite the fake cannot run for you.
