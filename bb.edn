@@ -157,6 +157,14 @@
                                 (t/run-tests 'e2e.stats-test)]
                             (when (pos? (+ fail error))
                               (System/exit 1)))}
+   test:e2e:brain {:doc "Run brain files context e2e tests."
+                   :extra-paths ["test"]
+                   :requires ([clojure.test :as t]
+                              [e2e.brain-test])
+                   :task (let [{:keys [fail error]}
+                                (t/run-tests 'e2e.brain-test)]
+                            (when (pos? (+ fail error))
+                              (System/exit 1)))}
    test:e2e:cron-edge {:doc "Run cron matcher edge-case tests (DST, catch-up, drift)."
                        :extra-paths ["test"]
                        :requires ([clojure.test :as t]
@@ -190,4 +198,4 @@
                                       (when (pos? (+ fail error))
                                         (System/exit 1)))}
    test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
-                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats verify:rewrite-docs]}}}
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain verify:rewrite-docs]}}}
