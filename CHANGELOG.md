@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Policy predicates (`bb-agent.policy` + `bb-agent.tool` wiring): `<home>/brain/rules.clj` — approval gates as sci-evaluated code instead of prose. First matching predicate `(fn [tool args])` returns `:allow`/`:deny` and replaces the approval classifier verdict; everything else — disabled, no file, unparseable, throwing, or runaway pred (500ms deref bound on both file eval and pred execution) — fails to baseline, so a broken rules file can make the agent neither more permissive nor more restrictive than configured. Gated by `:policy {:enabled true}` (default off). Sandbox contract pinned by test: sci default context, no io/interop/threads (this sci build ignores `:timeout-ms` — verified empirically — hence the deref futures).
+
+### Verification
+
+- `bb test:e2e:all` passes (106 tests, 479 assertions, 0 failures; prior: 97/455), now 20 suites including `test:e2e:policy` (9/24, two subprocess e2e through the fake provider).
+- Zero new dependencies; policy.clj 62 LOC, tool.clj 50 LOC.
+
 ## v0.5.0 - 2026-08-30
 
 ### Added
