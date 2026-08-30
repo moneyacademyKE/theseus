@@ -124,7 +124,9 @@
                                        :model (:model cfg)
                                        :prompt prompt
                                        :final final-content
-                                       :usage usage}))
+                                       :usage usage
+                                       :fallback-tried (not-empty (:fallback/tried turn))
+                                       :fallback-served (:fallback/served-by turn)}))
     completed))
 
 (defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
