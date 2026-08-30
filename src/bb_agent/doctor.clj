@@ -1,14 +1,18 @@
 (ns bb-agent.doctor
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
+            [bb-agent.memory :as memory]
             [bb-agent.model :as model]
+            [bb-agent.semantic-memory :as semantic-memory]
+            [bb-agent.usage :as usage]
+            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (def ^:private provider-required-keys
   {:openai-compatible [:base-url :api-key]
    :anthropic-compatible [:base-url :api-key]})
 
-(defn- check-provider-config [cfg]
+(defn check-provider-config [cfg]
   (let [provider (:provider cfg)
         providers (:providers cfg)
         provider-cfg (get providers provider)
@@ -61,6 +65,14 @@
        :check :config-file
        :message (str "No config file found at " path ", using defaults")})))
 
+(defn- check-config-parses [parse-error]
+  (if parse-error
+    {:status :error
+     :check :config-parse
+     :message (str "config.edn is not valid EDN: " parse-error
+                   " — fix it or run: bb config restore-last-good")}
+    {:status :ok :check :config-parse :message "config.edn parses"}))
+
 (defn- check-home-dir []
   (let [home (config/home)]
     (if (fs/exists? home)
@@ -69,12 +81,41 @@
        :check :home-dir
        :message (str "Home directory does not exist yet: " home)})))
 
+(defn- check-home-writable []
+  (let [home (config/home)]
+    (if (and (fs/exists? home) (fs/writable? home))
+      {:status :ok :check :home-writable :message (str "Home is writable: " home)}
+      {:status :warning
+       :check :home-writable
+       :message (str "Home is missing or not writable: " home)})))
+
+(defn- check-edn-file [check-k path]
+  (let [path (str path)
+        name (fs/file-name path)]
+    (if-not (fs/regular-file? path)
+      {:status :ok :check check-k :message (str "No " name " yet")}
+      (try (edn/read-string (slurp path))
+           {:status :ok :check check-k :message (str name " parses")}
+           (catch Exception e
+             {:status :error :check check-k
+              :message (str name " is not valid EDN: " (ex-message e))})))))
+
 (defn run-checks []
-  (let [cfg (config/load-config)]
-    [(check-config-file)
-     (check-home-dir)
-     (check-provider-config cfg)
-     (check-session-model-drift cfg)]))
+  (let [result (try {:cfg (config/load-config)}
+                    (catch Exception e {:error (ex-message e)}))]
+    (if-let [parse-error (:error result)]
+      [(check-config-file)
+       (check-config-parses parse-error)]
+      (let [cfg (:cfg result)]
+        [(check-config-file)
+         (check-config-parses nil)
+         (check-home-dir)
+         (check-home-writable)
+         (check-provider-config cfg)
+         (check-session-model-drift cfg)
+         (check-edn-file :memory-store (memory/memory-file))
+         (check-edn-file :semantic-store (semantic-memory/store-file))
+         (check-edn-file :usage-store (usage/usage-file))]))))
 
 (defn format-check [check]
   (let [status (:status check)
