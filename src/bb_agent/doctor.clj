@@ -1,8 +1,10 @@
 (ns bb-agent.doctor
   (:require [babashka.fs :as fs]
+            [babashka.http-client :as http]
             [bb-agent.config :as config]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
+            [bb-agent.provider :as provider]
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.usage :as usage]
             [clojure.edn :as edn]
@@ -22,8 +24,7 @@
       {:status :ok :check :provider-config :message (str "Provider " provider " requires no external config")}
 
       (nil? provider-cfg)
-      {:status :error
-       :check :provider-config
+      {:status :error :check :provider-config
        :message (str "Provider " provider " is configured but has no :providers entry")
        :provider provider}
 
@@ -67,8 +68,7 @@
 
 (defn- check-config-parses [parse-error]
   (if parse-error
-    {:status :error
-     :check :config-parse
+    {:status :error :check :config-parse
      :message (str "config.edn is not valid EDN: " parse-error
                    " — fix it or run: bb config restore-last-good")}
     {:status :ok :check :config-parse :message "config.edn parses"}))
@@ -77,17 +77,33 @@
   (let [home (config/home)]
     (if (fs/exists? home)
       {:status :ok :check :home-dir :message (str "Home directory exists: " home)}
-      {:status :warning
-       :check :home-dir
+      {:status :warning :check :home-dir
        :message (str "Home directory does not exist yet: " home)})))
 
 (defn- check-home-writable []
   (let [home (config/home)]
     (if (and (fs/exists? home) (fs/writable? home))
       {:status :ok :check :home-writable :message (str "Home is writable: " home)}
-      {:status :warning
-       :check :home-writable
+      {:status :warning :check :home-writable
        :message (str "Home is missing or not writable: " home)})))
+
+(defn- check-provider-reachable [cfg]
+  (if (= :fake (:provider cfg))
+    (try
+      (if (= "status=ok" (:content (provider/complete :fake {:messages [{:role :user :content "status please"}]})))
+        {:status :ok :check :provider-reachable :message "Fake provider responds status=ok"}
+        {:status :error :check :provider-reachable :message "Fake provider gave an unexpected reply"})
+      (catch Exception e
+        {:status :error :check :provider-reachable :message (str "Fake provider probe failed: " (ex-message e))}))
+    (let [base-url (get-in cfg [:providers (:provider cfg) :base-url])]
+      (try {:status :ok :check :provider-reachable
+            :message (str "Provider reachable: " base-url
+                          " (status " (:status (http/get base-url {:throw false
+                                                                   :connect-timeout 1500
+                                                                   :request-timeout 3000})) ")")}
+           (catch Exception _
+             {:status :warning :check :provider-reachable
+              :message (str "Provider base-url not reachable right now: " base-url)})))))
 
 (defn- check-edn-file [check-k path]
   (let [path (str path)
@@ -111,6 +127,7 @@
          (check-config-parses nil)
          (check-home-dir)
          (check-home-writable)
+         (check-provider-reachable cfg)
          (check-provider-config cfg)
          (check-session-model-drift cfg)
          (check-edn-file :memory-store (memory/memory-file))

@@ -111,3 +111,30 @@
       (finally
         (fs/delete-tree home)
         (fs/delete-tree candidate)))))
+
+(deftest doctor-top-level-runs-full-matrix-green
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-matrix-"})]
+    (try
+      (spit (str (fs/path home "config.edn"))
+            (pr-str {:provider :fake
+                     :model "fake-deterministic"
+                     :session/id "default"}))
+      (let [result (shell! home "doctor")]
+        (is (= 0 (:exit result)) (:out result))
+        (doseq [check-id [:config-file :config-parse :home-dir :home-writable
+                          :provider-config :session-model-drift :memory-store
+                          :semantic-store :usage-store :provider-reachable]]
+          (is (str/includes? (:out result) (str "[OK] " check-id))))
+        (is (str/includes? (:out result) "Fake provider responds status=ok")))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest doctor-warns-when-http-provider-unreachable
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-unreach-"})]
+    (try
+      (spit (str (fs/path home "config.edn")) (pr-str valid-config))
+      (let [result (shell! home "doctor")]
+        (is (= 0 (:exit result)) (:out result))
+        (is (str/includes? (:out result) "[WARN] :provider-reachable")))
+      (finally
+        (fs/delete-tree home)))))

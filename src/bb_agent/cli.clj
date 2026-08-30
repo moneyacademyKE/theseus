@@ -246,6 +246,7 @@
       "usage" (handle-usage-command rest-args)
       "model" (handle-model-command rest-args)
       "config" (handle-config-command rest-args)
+      "doctor" (handle-config-command (cons "doctor" rest-args))
       "schedule" (handle-schedule-command rest-args)
       "daemon" (handle-daemon-command rest-args)
       "telegram" (handle-telegram-command rest-args)

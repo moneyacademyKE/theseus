@@ -18,6 +18,9 @@
     config {:doc "Config commands. Usage: bb config doctor"
             :requires ([bb-agent.cli :as cli])
             :task (apply cli/-main "config" *command-line-args*)}
+    doctor {:doc "Run the health-check matrix. Usage: bb doctor"
+            :requires ([bb-agent.cli :as cli])
+            :task (apply cli/-main "doctor" *command-line-args*)}
    schedule {:doc "Schedule commands. Usage: bb schedule add/list/remove/run ..."
              :requires ([bb-agent.cli :as cli])
              :task (apply cli/-main "schedule" *command-line-args*)}
