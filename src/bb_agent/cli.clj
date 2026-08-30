@@ -7,6 +7,7 @@
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
             [bb-agent.rich :as rich]
+            [bb-agent.rsi :as rsi]
             [bb-agent.schedule :as schedule]
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
@@ -235,6 +236,29 @@
 
       (usage! "Usage: bb config doctor | bb config apply <file> | bb config restore-last-good" 2))))
 
+(defn- handle-rsi-command [args]
+  (let [[subcommand & rest-args] args]
+    (case subcommand
+      "digest"
+      (let [path (rsi/write-digest!)]
+        (println (slurp (str path))))
+
+      "analyze"
+      (let [analysis (rsi/analyze)]
+        (if (:blocked analysis)
+          (println (:blocked analysis))
+          (doseq [op (:opportunities analysis)]
+            (println (str "- [" (name (:kind op)) "] " (:detail op)))
+            (println (str "  " (:suggestion op))))))
+
+      "propose"
+      (let [result (rsi/propose!)]
+        (if (:blocked result)
+          (println (:blocked result))
+          (println (str "added " (:added result) " proposal(s), skipped " (:skipped result)))))
+
+      (usage! "Usage: bb rsi digest | bb rsi analyze | bb rsi propose" 2))))
+
 (defn -main [& args]
   (let [[command & rest-args] (if (= 1 (count args))
                                 (let [only (first args)]
@@ -246,6 +270,7 @@
       "usage" (handle-usage-command rest-args)
       "model" (handle-model-command rest-args)
       "config" (handle-config-command rest-args)
+      "rsi" (handle-rsi-command rest-args)
       "doctor" (handle-config-command (cons "doctor" rest-args))
       "schedule" (handle-schedule-command rest-args)
       "daemon" (handle-daemon-command rest-args)

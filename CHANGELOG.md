@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- RTK output filters (`bb-agent.rtk` + `bb-agent.tool` seam): ported from OpenCrabs' Rust Token Killer — the rules, not the proxy. Shell and git_status output is compacted before it reaches the provider (ANSI stripped, noise lines dropped, long output capped with a `[rtk: N→M lines]` marker) so tokens buy answers instead of table formatting. Rules are data: built-in defaults (`ps`, `lsof`, `git-log`, `dig`) plus `<home>/rtk-filters.edn` user rules; malformed user files fall back to defaults. Gated by `:rtk {:enabled true}` (default off); results carry `:rtk` savings stats. Zero dependencies — no external binary.
+- RSI v1 (`bb-agent.rsi` + `bb rsi digest|analyze|propose`): ported from OpenCrabs' self-improvement loop, minus the autonomy. `digest` aggregates the usage ledger per provider (turns/ok/fail/fallback-hits); `analyze` derives opportunities — provider failure rates, fallback pressure — behind a 50-event minimum gate; `propose!` appends deduplicated suggestions to `brain/improvements.md` for owner review. The v1 autonomous apply-LLM is deliberately refused: no LLM writes brain files unattended until the proposal ledger earns it.
+- Turn outcomes: turns record `:ok` (false on the tool-error path) so the usage ledger can learn from failures — the substrate RSI analyzes.
+
+### Changed
+
+- `bb rsi digest` prints the digest table; `brain/improvements.md` dedup compares bare suggestion lines.
+
 ## v0.6.0 - 2026-08-30
 
 ### Added
