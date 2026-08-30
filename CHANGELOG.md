@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.0 - 2026-08-30
+
+### Added
+
+- Tool advertisement (`bb-agent.tools`): openai-compatible requests now carry a `:tools` array advertising the registry — `read_file`, `write_file`, `search`, `shell`, `git_status`, with JSON-schema parameters. Real models could never call tools they were never told about; the fake provider's hardcoded emission masked this for seven releases. One-line provider wiring; e2e pins the request body and the tool_calls parse path. Found by theseus' first real tasks on a genuine endpoint (GAP_ANALYSIS §22).
+
 ## v0.7.0 - 2026-08-30
 
 ### Added
