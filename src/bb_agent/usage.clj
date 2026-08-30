@@ -67,7 +67,7 @@
        (* (/ cache-write 1000000.0) (or cache_write_per_m input_per_m 0.0)))))
 
 (defn event [{:keys [session-id provider model prompt final usage
-                     fallback-tried fallback-served]}]
+                     fallback-tried fallback-served ok]}]
   (let [input (or (:tokens/input usage) (token-estimate prompt))
         output (or (:tokens/output usage) (token-estimate final))
         cache-read (or (:tokens/cache-read usage) 0)
@@ -84,7 +84,8 @@
              :cost/estimate-usd (cost-estimate provider model input output cache-read cache-write)
              :created/at (str (java.time.Instant/now))}
       fallback-tried (assoc :fallback/tried fallback-tried)
-      fallback-served (assoc :fallback/served fallback-served))))
+      fallback-served (assoc :fallback/served fallback-served)
+      (some? ok) (assoc :ok ok))))
 
 (defn append-event! [entry]
   (let [path (usage-file)

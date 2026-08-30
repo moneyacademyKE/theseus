@@ -132,7 +132,8 @@
                                        :final final-content
                                        :usage usage
                                        :fallback-tried (not-empty (:fallback/tried turn))
-                                       :fallback-served (:fallback/served-by turn)}))
+                                       :fallback-served (:fallback/served-by turn)
+                                       :ok (:turn/ok completed true)}))
     completed))
 
 (defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
@@ -174,4 +175,4 @@
               (recur (continue-messages messages response tool-results)
                      turn*
                      (dec rounds-left)))
-            (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-error-summary (:tool/results turn*)) (:usage response))))))))
+            (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (tool-error-summary (:tool/results turn*)) (:usage response))))))))
