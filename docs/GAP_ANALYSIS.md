@@ -315,3 +315,21 @@ Estimate: ~120-150 LOC, ~3h. The crown-jewel guardrails (min entries, convergenc
 ### Order and refuse list
 
 **RTK first** (instant value on every shell call), RSI second (needs a feedback corpus — the 50-entry minimum means it only becomes useful after real use; running theseus builds the corpus). **Refused:** the rtk binary auto-download machinery, the v1 autonomous apply loop, skill-sequence mining (premature), and re-implementing the proxy when the binary can be injected later.
+
+## 20. V5 execution record — RTK filters + RSI v1 (2026-08-30)
+
+Shipped in two commits on `feat/rtk-rsi` (PR #12, Fixes #11):
+
+| Port | Commit | LOC | Suite |
+|---|---|---|---|
+| `bb-agent.rtk` + tool seam | `f63790b` | 103 | 10 tests / 24 assertions (incl. subprocess-free e2e through `handle-tool-request`) |
+| `bb-agent.rsi` + `:ok` schema + cli | `93039c0` | 138 | 8 tests / 18 assertions (incl. subprocess `bb rsi digest`) |
+| Full suite | — | — | **124 tests / 521 assertions / 0 failures / exit 0**, 22 suites; delta +18/+42 arithmetic-exact |
+
+Defect ledger (all self-caught by tests/probes):
+
+1. **`fs/temp-dir` is a getter, not a constructor.** It returns THE temp dir (same every call); `fs/create-temp-dir` makes a new one. Every "fresh home" in both test files was one shared directory — cumulative usage counts, cross-test pollution, an `analyze` gate that saw 10 events instead of 3. Caught by arithmetic (`:events 10` vs 3 seeded), confirmed by finding the real home clean (no leak — the pollution was intra-tmpdir).
+2. **`edn/read-string` cannot read `#"regex"` literals** — the user rules file threw at parse and the catch silently fell back to defaults (fail-safe working as designed, but for the wrong reason). Switched to `read-string` (data literals, no evaluation).
+3. **Dedup that never matches**: proposals were stored as `- suggestion` markdown bullets but compared against bare suggestion lines — dedup always missed. Fixed by normalizing stored lines.
+4. **Concurrent-writer collision #4, detected by the harness itself**: the edit tool flagged a parallel agent writing `rsi_test.clj` mid-edit, which reverted one of two fixes. Handled by the V2 playbook: re-verify from disk, re-apply, run, and confirm md5 stability across the suite run before committing.
+5. **Worker false-hazard, settled by `git show HEAD:`**: the plan worker reported that the committed RTK test file was red without its uncommitted fix — but HEAD's blob already contained the identical fix (my commit had landed mid-worker). Lesson: a hazard report about commit boundaries is falsifiable with `git show` in one command; check before absorbing the alarm.
