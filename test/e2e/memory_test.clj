@@ -41,3 +41,38 @@
                  (mapv :memory/text (:memory/matches turn))))))
       (finally
         (fs/delete-tree home)))))
+
+(deftest curated-tier-promotes-and-ranks-first
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-memory-curate-"})
+        memory-file (fs/path home "state" "memory.edn")]
+    (try
+      (let [add-raw (shell! home "memory" "add" "deploy deploy pipeline")
+            add-curated-target (shell! home "memory" "add" "zanzibar shipping lane")]
+        (is (= 0 (:exit add-raw)) (:err add-raw))
+        (is (= 0 (:exit add-curated-target)) (:err add-curated-target))
+        ;; defaults: both entries land as :raw
+        (let [stored (edn/read-string (slurp (str memory-file)))]
+          (is (every? #(= :raw (:memory/kind %)) stored) "new entries default to :raw"))
+        ;; promote the LOW-scoring entry by id
+        (let [id (->> (edn/read-string (slurp (str memory-file)))
+                      (filter #(= "zanzibar shipping lane" (:memory/text %)))
+                      first
+                      :memory/id)
+              curate (shell! home "memory" "curate" id)]
+          (is (= 0 (:exit curate)) (:err curate))
+          ;; kind persisted after promotion
+          (let [stored (edn/read-string (slurp (str memory-file)))
+                zanzibar (first (filter #(= id (:memory/id %)) stored))]
+            (is (= :curated (:memory/kind zanzibar)) "promotion persists"))
+          ;; ranking: curated (score 1) beats raw (score 2)
+          (let [search (shell! home "memory" "search" "deploy pipeline zanzibar")
+                lines (remove str/blank? (str/split-lines (:out search)))]
+            (is (= 0 (:exit search)) (:err search))
+            (is (str/includes? (first lines) "zanzibar")
+                "curated entry ranks first despite lower score")
+            (is (= 2 (count lines)))))
+        ;; unknown id fails loudly through the CLI
+        (let [bogus (shell! home "memory" "curate" "no-such-id")]
+          (is (not= 0 (:exit bogus)) "curating an unknown id exits nonzero")))
+      (finally
+        (fs/delete-tree home)))))

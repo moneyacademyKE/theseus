@@ -149,6 +149,22 @@
                                    (t/run-tests 'e2e.cron-edge-test)]
                                 (when (pos? (+ fail error))
                                   (System/exit 1)))}
+   test:e2e:fallback {:doc "Run provider fallback chain e2e tests."
+                      :extra-paths ["test"]
+                      :requires ([clojure.test :as t]
+                                 [e2e.fallback-test])
+                      :task (let [{:keys [fail error]}
+                                  (t/run-tests 'e2e.fallback-test)]
+                              (when (pos? (+ fail error))
+                                (System/exit 1)))}
+   test:e2e:cron-schedule {:doc "Run cron executor gating e2e tests (due windows, catch-up)."
+                          :extra-paths ["test"]
+                          :requires ([clojure.test :as t]
+                                     [e2e.cron-schedule-test])
+                          :task (let [{:keys [fail error]}
+                                      (t/run-tests 'e2e.cron-schedule-test)]
+                                  (when (pos? (+ fail error))
+                                    (System/exit 1)))}
    test:e2e:semantic-memory {:doc "Run cross-session semantic memory e2e tests."
                              :extra-paths ["test"]
                              :requires ([clojure.test :as t]
@@ -158,4 +174,4 @@
                                       (when (pos? (+ fail error))
                                         (System/exit 1)))}
    test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
-                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge verify:rewrite-docs]}}}
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback verify:rewrite-docs]}}}

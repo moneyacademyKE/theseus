@@ -30,16 +30,22 @@
 
 (defn- ensure-sqlite! []
   (sqlite! "CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, text TEXT NOT NULL);")
+  ;; Idempotent migration for the curated tier: the ALTER fails once
+  ;; the column exists, and that failure IS the migration being
+  ;; already applied.
+  (try (sqlite! "ALTER TABLE memories ADD COLUMN kind TEXT;")
+       (catch Exception _ nil))
   nil)
 
 (defn- sqlite-load-memories []
   (ensure-sqlite!)
-  (->> (str/split-lines (sqlite! "-separator" "\t" "SELECT id, text FROM memories ORDER BY rowid;"))
+  (->> (str/split-lines (sqlite! "-separator" "\t" "SELECT id, text, kind FROM memories ORDER BY rowid;"))
        (remove str/blank?)
        (mapv (fn [line]
-               (let [[id text] (str/split line #"\t" 2)]
+               (let [[id text kind] (str/split line #"\t" 3)]
                  {:memory/id id
-                  :memory/text (or text "")})))))
+                  :memory/text (or text "")
+                  :memory/kind (or (some-> kind edn/read-string) :raw)})))))
 
 (defn- sql-quote [value]
   (str "'" (str/replace (or value "") "'" "''") "'"))
@@ -47,11 +53,13 @@
 (defn- sqlite-save-memories! [entries]
   (ensure-sqlite!)
   (sqlite! "DELETE FROM memories;")
-  (doseq [{:memory/keys [id text]} entries]
-    (sqlite! (str "INSERT INTO memories (id, text) VALUES ("
+  (doseq [{:memory/keys [id text kind]} entries]
+    (sqlite! (str "INSERT INTO memories (id, text, kind) VALUES ("
                   (sql-quote id)
                   ", "
                   (sql-quote text)
+                  ", "
+                  (if kind (sql-quote (pr-str kind)) "NULL")
                   ");")))
   (vec entries))
 
@@ -71,12 +79,33 @@
       (spit (str path) (pr-str (vec entries)))
       (vec entries))))
 
-(defn add-memory! [text]
-  (let [entry {:memory/id (str (random-uuid))
-               :memory/text text}
-        entries (conj (load-memories) entry)]
-    (save-memories! entries)
-    entry))
+(defn add-memory!
+  "Append an entry. Kind defaults to :raw; :curated entries rank
+  before raw ones in search regardless of score."
+  ([text] (add-memory! text :raw))
+  ([text kind]
+   (let [entry {:memory/id (str (random-uuid))
+                :memory/text text
+                :memory/kind kind}
+         entries (conj (load-memories) entry)]
+     (save-memories! entries)
+     entry)))
+
+(defn curate-memory!
+  "Promote the entry with `id` to :curated. Throws when no entry
+  carries that id — curating a ghost would silently do nothing."
+  [id]
+  (let [entries (load-memories)
+        matches (filter #(= id (:memory/id %)) entries)]
+    (if (empty? matches)
+      (throw (ex-info "No memory with that id" {:memory/id id}))
+      (let [updated (mapv (fn [entry]
+                            (if (= id (:memory/id entry))
+                              (assoc entry :memory/kind :curated)
+                              entry))
+                          entries)]
+        (save-memories! updated)
+        (assoc (first matches) :memory/kind :curated)))))
 
 (defn- tokenize [text]
   (->> (or text "")
@@ -95,6 +124,9 @@
             0
             query-tokens)))
 
+(defn- kind-rank [entry]
+  (if (= :curated (:memory/kind entry)) 0 1))
+
 (defn search-memories
   ([query] (search-memories query 5))
   ([query limit]
@@ -102,7 +134,7 @@
         (map (fn [entry]
                (assoc entry :memory/score (score-entry query entry))))
         (filter #(pos? (:memory/score % 0)))
-        (sort-by (juxt (comp - :memory/score) :memory/text))
+        (sort-by (juxt kind-rank (comp - :memory/score) :memory/text))
         (take limit)
         vec)))
 

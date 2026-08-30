@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Cron gating for schedules (`bb-agent.schedule` + `bb-agent.cron`): schedules accept a 5-field cron expression and fire only within their `(last-run, now]` catch-up window; runs log `:at` stamps; run clock injectable for DST-safe testing.
+- Provider fallback chain as data (`bb-agent.fallback`): ordered second opinions walked until one answers, every departure classified (`bb-agent.error-classifier`) and recorded in `:fallback/tried`, per-step retries and breakers unchanged; turns and usage events record the provider that actually answered (`:fallback/served-by`).
+- Curated memory tier (`bb-agent.memory`): entries carry `:memory/kind` (`:raw` default, `:curated` via `bb memory curate <id>`), curated entries rank before raw ones regardless of score; idempotent sqlite migration adds the `kind` column.
+
+### Verification
+
+- `bb test:e2e:all` passes (82 tests, 391 assertions, 0 failures; prior release: 73/360), now 16 suites including `test:e2e:cron-schedule` and `test:e2e:fallback`.
+
 ## v0.3.0 - 2026-08-23
 
 ### Added
