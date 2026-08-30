@@ -1,7 +1,8 @@
 (ns bb-agent.provider
   (:require [babashka.http-client :as http]
             [cheshire.core :as json]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [bb-agent.tools :as tools]))
 
 (defmulti complete (fn [provider _request] provider))
 
@@ -140,7 +141,8 @@
                              :connect-timeout 2000
                              :request-timeout 5000
                              :body (json/generate-string {:model model
-                                                          :messages messages})})
+                                                          :messages messages
+                                                          :tools tools/definitions})})
         body (json/parse-string (:body response) keyword)
         status (:status response)
         message (get-in body [:choices 0 :message])
