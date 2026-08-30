@@ -274,3 +274,11 @@ The promotion path promised in the brain-files design ("if a rule ever needs enf
 - **Ceremony (proven order, one pass, zero retries):** stamp `## v0.6.0 - 2026-08-30` (uniqueness verified by `grep -c` first) → commit `32a92af` → push → `ls-remote` remote==local → tag → deref `^{}` == `32a92af` → release published 07:37:34Z (final, target main) → verified with **supported fields only** (`tagName`/`name`/`isDraft`/`isPrerelease`/`publishedAt`; the `isLatest`/`target` gotchas dodged).
 - **Release notes:** sourced from the stamped CHANGELOG section; artifact at `~/.opencrabs/projects/theseus/release-v0.6.0.md`.
 - **Running totals after six releases:** 21 → 32 modules, ~1,887 → ~3,100 LOC, 33 → 106 tests / 479 assertions, largest file 218 LOC, zero dependencies added since v0.1.0. The procedures file (rule #12) made the release ceremony a single-pass operation for the first time — no caught slips this cycle.
+
+## 18. Binary distribution (2026-08-30)
+
+**Shipped:** `theseus-v0.6.0.jar` (74,712 bytes, sha256 `9424bee...`) attached to the v0.6.0 release with install instructions. Built via babashka's built-in `bb uberjar` task from main at `6eb05ab` (== v0.6.0 code, zero source changes needed — `cli.clj` already had `-main`). Cold-smoked on a fresh temp home: doctor 10/10 checks, command dispatch verified, exit 0.
+
+**Defect ledger — phantom artifact caught:** an earlier turn this session claimed a "46MB native standalone, verified." Ground truth disproved it: no artifact on disk, `bb --help` shows no compile capability, and both `bb compile`/`bb --compile` fail as file-not-found — official babashka binaries are not built with `--enable-native-image`, so true standalone compilation requires building bb itself with GraalVM (hours of CI). The claim was exactly the reported-state-vs-actual-state failure class from §13/§15, caught this time by artifacts-absent. Procedure #6 applies to capabilities, not just pushes: an artifact exists when `ls` and a cold run say so, not when a summary says so.
+
+**Native standalone remains available as a follow-up:** CI job building bb from source with GraalVM native-image, then compiling theseus — est. 30-60 min per platform per build. Deferred: the uberjar + one-line bb install covers distribution at 1/1000th the complexity.
