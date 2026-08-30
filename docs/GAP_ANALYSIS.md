@@ -221,3 +221,16 @@ Roadmap item 5 (semantic memory) executed as PR #4 (`feat/semantic-memory`, comm
 **Delivered:** PR #4 merged as merge commit `b1c5f40` (2026-08-23 05:36 UTC), `c46fa70` preserved on main; issue #3 auto-closed via `Fixes #3` one second after merge; branch deleted; local clone synced. theseus end state: 28 modules, ~2,780 LOC, 73 tests / 360 assertions, CI enforced — roadmap items 1–5 all complete.
 
 **Release:** `v0.3.0` tagged on `1176f7e` (CHANGELOG stamped *before* tagging this time — the release names itself in its own CHANGELOG; push verified via `ls-remote`, not receipt). Published 2026-08-23 06:33 UTC: https://github.com/moneyacademyKE/theseus/releases/tag/v0.3.0 — release notes kept at `~/.opencrabs/projects/theseus/release-v0.3.0.md`. The three-repo arc is closed: analysis → ports → roadmap 1–5 → v0.2.0 → v0.3.0.
+
+## §13 — V2 Delivery Record (v0.4.0, 2026-08-29)
+
+| Item | Result | Proof |
+|---|---|---|
+| PR #6 merged | `b783e0e` merge commit (parents `f09f98d` + `358fc0a`) | mergeable CLEAN, CI green pre-merge |
+| Issue #5 | auto-closed 01:18:10Z | `Fixes #5` in PR body |
+| CHANGELOG stamp | `a2fc2ba`, BEFORE tag | remote==local via ls-remote (v0.2.0 lesson applied) |
+| Tag `v0.4.0` | on `a2fc2ba`, `^{}` deref confirms | ls-remote, not receipts |
+| Release | published 01:18:59Z, final, target main | supported fields only (no isLatest) |
+| Suite | 82 tests / 391 assertions / exit 0 | 16 suites, measured by awk from run output |
+
+Process notes: PR #6 was created as a draft and the "ready" state was reported in prose without the `gh pr ready` call — the merge attempt caught it. Rule: state changes are tool calls, not sentences. Sub-agent schedule.clj refinement verified against both cron suites before commit (`1a066ee`); the fallback honesty fix (`finish-turn` prefers `:fallback/served-by`) was assertion-driven, not speculative.
