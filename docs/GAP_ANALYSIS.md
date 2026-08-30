@@ -267,3 +267,10 @@ The promotion path promised in the brain-files design ("if a rule ever needs enf
 - **Design bug caught at write time:** the first module draft bounded only file eval; preds execute in the caller thread, so a runaway pred would loop forever beside its own timeout. Pred calls are individually future-wrapped now.
 - **Verification:** full suite 106 tests / 479 assertions / 0 failures / exit 0, 20 suites (deltas +9/+24 = the policy suite exactly). Two subprocess e2e prove the real chain: `config.edn` → `load-config` (no key whitelist, verified by read) → run cfg → `handle-tool-request`. PR #10 (draft, Fixes #9); commits `4cf5227` + `93d6a77`.
 - **Provenance rule that paid again:** the ns block edit failed on a remembered anchor — exact re-read (hashline) before retry, no blind writes.
+
+## 17. v0.6.0 release — 2026-08-30
+
+- **Merge:** PR #10 → `8161c1f` (merge commit, 07:36:07Z). Marked ready via `gh pr ready` **before** merge — the v0.4.0 draft-bounce lesson held; no refusal this time. Issue #9 auto-closed 07:36:08Z. Branch `feat/policy-predicates` deleted local + remote (`--prune` verified).
+- **Ceremony (proven order, one pass, zero retries):** stamp `## v0.6.0 - 2026-08-30` (uniqueness verified by `grep -c` first) → commit `32a92af` → push → `ls-remote` remote==local → tag → deref `^{}` == `32a92af` → release published 07:37:34Z (final, target main) → verified with **supported fields only** (`tagName`/`name`/`isDraft`/`isPrerelease`/`publishedAt`; the `isLatest`/`target` gotchas dodged).
+- **Release notes:** sourced from the stamped CHANGELOG section; artifact at `~/.opencrabs/projects/theseus/release-v0.6.0.md`.
+- **Running totals after six releases:** 21 → 32 modules, ~1,887 → ~3,100 LOC, 33 → 106 tests / 479 assertions, largest file 218 LOC, zero dependencies added since v0.1.0. The procedures file (rule #12) made the release ceremony a single-pass operation for the first time — no caught slips this cycle.
