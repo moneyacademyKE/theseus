@@ -333,3 +333,24 @@ Defect ledger (all self-caught by tests/probes):
 3. **Dedup that never matches**: proposals were stored as `- suggestion` markdown bullets but compared against bare suggestion lines — dedup always missed. Fixed by normalizing stored lines.
 4. **Concurrent-writer collision #4, detected by the harness itself**: the edit tool flagged a parallel agent writing `rsi_test.clj` mid-edit, which reverted one of two fixes. Handled by the V2 playbook: re-verify from disk, re-apply, run, and confirm md5 stability across the suite run before committing.
 5. **Worker false-hazard, settled by `git show HEAD:`**: the plan worker reported that the committed RTK test file was red without its uncommitted fix — but HEAD's blob already contained the identical fix (my commit had landed mid-worker). Lesson: a hazard report about commit boundaries is falsifiable with `git show` in one command; check before absorbing the alarm.
+
+## 21. v0.7.0 release + jar defect — 2026-08-30
+
+| Pointer | Value |
+|---|---|
+| Merge | `ec41d8e` (PR #12 merged; issue #11 auto-closed 09:05:32Z) |
+| CHANGELOG stamp | `d2ba9f3` — stamped before tag, remote==local |
+| Tag / Release | v0.7.0 deref `^{}` == `d2ba9f3`; published 09:11:57Z, final, target main |
+| Asset | `theseus-v0.7.0.jar` — 81,496 bytes, sha256 `9a390f5c…`, cold-smoked |
+
+**Jar defect caught by smoke, not by build success:** the first v0.7.0 rebuild dropped
+the `[eval-opt]` slot of `uberjar` — manifest lacked `Main-Class` — so the jar dropped
+into a REPL instead of running `-main` (exit 0 either way; only behavior exposed it).
+Diagnosed by manifest diff (79 vs 54 bytes: `Main-Class: bb_agent.cli`), fixed by
+rebuilding with the main opt, verified by cold run from worst-case cwd (`/tmp`):
+doctor green, `rsi digest` dispatches, exit 0. v0.6.0's published asset re-verified
+unaffected (runs green — the artifact story held).
+
+**Rule (extends §18):** an artifact is done when a cold run from an arbitrary cwd
+prints doctor OK and dispatches a command. Build success is not artifact success —
+and exit 0 from a REPL is not success at all.
