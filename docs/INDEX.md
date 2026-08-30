@@ -1,0 +1,21 @@
+- 0. The Headline — Three repos are generations of one agent runtime lineage
+- 1. Maturity Dashboard — Side-by-side metrics and composite maturity scores per repo
+- 2. Module-by-Module Feature Matrix — Capability comparison across all three repos' modules
+- 3. Per-Repo Module Maturity — Per-module ratings with strengths, weaknesses, repo sins
+- 4. Rich Hickey Decomposition — Complecting vs Decomplecting — Code got simpler; repo boundaries kept complecting
+- 5. The Gaps (What to Port Where) — Numbered list of ports between the three repos
+- 6. Recommendation (Opinionated) — Bet on theseus as trunk; port patterns, not platforms
+- 7. Ports Executed (2026-08-23) — Compression, circuit breaker, classifier, CI landed on theseus
+- 8. Addition Roadmap — what else theseus needs (2026-08-23) — Five prioritized additions plus a refuse list
+- 9. Roadmap Items 1–4 Executed (2026-08-23, later session) — Retry, cron tests, benchmark, subagents delivered with findings
+- 10. Delivery Record (2026-08-23, final) — PR merged, CI green, v0.2.0 released
+- 11. Item 5 Execution Record (2026-08-23, later) — Semantic memory ported; concurrent-writer incident resolved; v0.3.0 released
+- §13. V2 Delivery Record (v0.4.0, 2026-08-29) — PR #6 merged cleanly, release ceremony lessons applied
+- §14. V3 Pattern-Port Execution Record (OpenCrabs → theseus, 2026-08-30) — Doctor, stats, brain files ported; worker collisions absorbed
+- §15. v0.5.0 Release Record (2026-08-30) — Release shipped; wrong cost-table claim corrected by reading files
+- §16. Policy Predicates: Prose → Enforcement (2026-08-30) — Sandbox-evaluated policy rules gate tool approvals, fail-safe
+- 17. v0.6.0 release — 2026-08-30 — Policy PR merged and released via single-pass ceremony
+- 18. Binary distribution (2026-08-30) — Uberjar shipped; phantom native-standalone claim debunked
+- §19. Port proposal: OpenCrabs RSI + RTK (2026-08-30, investigation) — Analysis of token filters and self-improvement loop ports
+- 20. V5 execution record — RTK filters + RSI v1 (2026-08-30) — Both ports shipped; five defects self-caught
+- 21. v0.7.0 release + jar defect — 2026-08-30 — Release shipped; broken jar caught only by cold-run smoke
