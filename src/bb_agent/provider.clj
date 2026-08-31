@@ -157,7 +157,8 @@
 
 (defn- anthropic-tool-request [block]
   (when (= "tool_use" (:type block))
-    {:tool/name (:name block)
+    {:tool/id (:id block)
+     :tool/name (:name block)
      :tool/args (:input block)}))
 
 (defn- anthropic-extract [content-blocks]
