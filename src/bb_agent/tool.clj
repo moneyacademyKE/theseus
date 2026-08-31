@@ -23,7 +23,7 @@
                                (or (ex-message e) (.getName (class e)))
                                {:exception/type (str (class e))
                                 :executed? false})))
-      (common/error-result name (str "Unknown tool: " name) {}))))
+      (common/error-result name (str "Unknown tool: " name) {:executed? false}))))
 
 (defn handle-tool-request
   "Policy predicates (brain/rules.clj, when :policy {:enabled true}) decide
