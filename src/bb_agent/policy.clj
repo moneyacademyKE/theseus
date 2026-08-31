@@ -24,7 +24,7 @@
             [bb-agent.brain :as brain]
             [sci.core :as sci]))
 
-(def eval-timeout-ms 500)
+(def eval-timeout-ms 2000)
 
 (defn rules-file []
   (fs/path (brain/brain-dir) "rules.clj"))
