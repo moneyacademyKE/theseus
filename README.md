@@ -23,6 +23,8 @@ bb usage report
 ## Commands
 
 - `bb agent [--ask] <prompt>` runs one agent turn.
+- `bb skill list` lists validated `skills/<name>/SKILL.md` workflows.
+- `bb skill run <name> [input...]` runs a skill through the existing agent loop.
 - `bb memory add <text>` stores memory.
 - `bb memory search <query>` searches memory.
 - `bb model set <session-id> <provider> <model>` stores session model selection.
@@ -45,6 +47,7 @@ Theseus stores state under `OPENCRABS_HOME` when set, otherwise `~/.opencrabs-bb
 Important files:
 
 - `config.edn`
+- `skills/<name>/SKILL.md` (YAML frontmatter plus inert workflow prompt body)
 - `state/sessions/*.edn`
 - `state/session-metadata/*.edn`
 - `state/approvals.edn`
