@@ -1,8 +1,9 @@
 (ns bb-agent.provider
   (:require [babashka.http-client :as http]
             [cheshire.core :as json]
-            [clojure.string :as str]
-            [bb-agent.tools :as tools]))
+            [bb-agent.openai-wire :as openai-wire]
+            [bb-agent.tools :as tools]
+            [clojure.string :as str]))
 
 (defmulti complete (fn [provider _request] provider))
 
@@ -113,15 +114,8 @@
                       {:config/key key})))
     value))
 
-(defn- parse-json-args [args]
-  (if (str/blank? (or args ""))
-    {}
-    (json/parse-string args keyword)))
-
-(defn- openai-tool-request [tool-call]
-  (let [function (:function tool-call)]
-    {:tool/name (:name function)
-      :tool/args (parse-json-args (:arguments function))}))
+(defn- openai-tool-requests [tool-calls]
+  (mapv openai-wire/tool-request (range) tool-calls))
 
 (defn- openai-usage [body]
   (when-let [usage (:usage body)]
@@ -140,7 +134,7 @@
                              :throw false
                              :timeout 60000
                              :body (json/generate-string {:model model
-                                                          :messages messages
+                                                          :messages (openai-wire/messages messages)
                                                           :tools tools/definitions})})
         body (json/parse-string (:body response) keyword)
         status (:status response)
@@ -156,7 +150,7 @@
     (cond-> {:role :assistant}
       (not (str/blank? content)) (assoc :content content)
       (:usage body) (assoc :usage (openai-usage body))
-      (seq tool-calls) (assoc :tool/requests (mapv openai-tool-request tool-calls)))))
+      (seq tool-calls) (assoc :tool/requests (openai-tool-requests tool-calls)))))
 
 (defn- anthropic-url [{:keys [base-url]}]
   (str (str/replace (or base-url "") #"/+$" "") "/messages"))
