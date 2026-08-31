@@ -76,6 +76,7 @@
                           :body (json/generate-string
                                  (if (= 1 n)
                                    {:content [{:type "tool_use"
+                                               :id "toolu_test_1"
                                                :name "read_file"
                                                :input {:path (str (fs/path home "note.txt"))}}]
                                     :role "assistant"}
@@ -101,6 +102,7 @@
         (is (re-find #":status :denied" (:out result)))
         (is (= 1 @calls))
         (is (= ["read_file"] (mapv :tool/name (:tool/requests turn))))
+        (is (= "toolu_test_1" (get-in turn [:tool/requests 0 :tool/id])))
         (is (= [:denied] (mapv :status (:tool/results turn))))
         (is (= false (get-in turn [:tool/results 0 :executed?]))))
       (finally

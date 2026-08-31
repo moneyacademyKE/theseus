@@ -121,6 +121,61 @@
         (stop-server)
         (fs/delete-tree home)))))
 
+(deftest openai-compatible-provider-serializes-tool-results
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-http-tool-protocol-e2e-"})
+        port (free-port)
+        bodies (atom [])
+        stop-server (server/run-server
+                     (fn [req]
+                       (let [body (json/parse-string (slurp (:body req)) keyword)
+                             n (count (swap! bodies conj body))]
+                         {:status 200
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string
+                                 (if (= 1 n)
+                                   {:choices [{:message
+                                               {:role "assistant"
+                                                :tool_calls
+                                                [{:id "call_read_1"
+                                                  :type "function"
+                                                  :function
+                                                  {:name "read_file"
+                                                   :arguments (json/generate-string
+                                                               {:path "note.txt"})}}]}}]}
+                                   {:choices [{:message {:role "assistant"
+                                                         :content "protocol complete"}}]}))}))
+                     {:port port})
+        config-file (fs/path home "config.edn")]
+    (try
+      (fs/create-dirs (fs/path home "brain"))
+      (spit (str (fs/path home "note.txt")) "hello protocol")
+      (spit (str (fs/path home "brain" "rules.clj"))
+            "{:rules [{:name \"allow-read\" :pred (fn [tool _] (= tool \"read_file\")) :decision :allow}]}\n")
+      (spit (str config-file)
+            (pr-str {:provider :openai-compatible
+                     :model "test-model"
+                     :session/id "http-tool-protocol"
+                     :policy {:enabled true}
+                     :providers {:openai-compatible
+                                 {:base-url (str "http://127.0.0.1:" port "/v1")
+                                  :api-key "test-key"}}}))
+      (let [result (run-agent home "read note with protocol")
+            second-body (second @bodies)
+            messages (:messages second-body)
+            assistant (first (filter #(= "assistant" (:role %)) messages))
+            tool-message (first (filter #(= "tool" (:role %)) messages))]
+        (is (= 0 (:exit result)) (:err result))
+        (is (= "protocol complete\n" (:out result)))
+        (is (= 2 (count @bodies)))
+        (is (= "call_read_1" (get-in assistant [:tool_calls 0 :id])))
+        (is (= "read_file" (get-in assistant [:tool_calls 0 :function :name])))
+        (is (= "call_read_1" (:tool_call_id tool-message)))
+        (is (string? (:content tool-message)))
+        (is (nil? (:tool/requests assistant)))
+        (is (nil? (:tool/results tool-message))))
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))
 (deftest openai-compatible-provider-parses-tool-calls
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-http-tools-e2e-"})
         port (free-port)

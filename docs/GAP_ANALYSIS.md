@@ -421,3 +421,24 @@ across 25 suites.
 5. **Lost turns** — two turns died between announcing a command and its execution
    (provider switch mid-flight); one resume looped on re-verification. The loop-guard
    plus "state changes are tool calls" (#7) both apply.
+
+
+## §24 — Telegram RSI speedruns: protocol truth and bounded improvement (2026-08-31)
+
+Two five-cycle speedruns were driven through `@eileenslybot` by the Telegram userbot. The external supervisor supplied one bounded prompt per cycle; Theseus never self-chained, committed, pushed, merged, changed credentials/permissions, or synthesized usage events.
+
+**v1 receipts:** exposed and repaired OpenAI continuation serialization (`tool_calls` / `tool_call_id`) and made unknown-tool results honest (`:executed? false`). Final score: 4/4 returned calls, zero errors/redundancy/unsupported claims, `VERDICT: STOP`, `NEXT_PROMPT: NONE`.
+
+**v2 loop improvements:** fixed workload per phase; requested-vs-returned call counts; approval denials separated from tool errors; exact expected-vs-actual RED; one mutation budget; native-tools-first; no bundled shell; supervisor verification between cycles; two no-gain cycles force STOP.
+
+| Cycle | Receipt |
+|---|---|
+| 1 — baseline | 8/8 returned, 0 errors/denials/redundancy/unsupported; doctor 10/10; RSI 24/24 ok; tools 13/62 green; selected a new Anthropic tool-use ID loss |
+| 2 — falsify | One intentional call, exact RED: exit 1; expected `:tool/id "toolu_1"`, actual omitted only that field |
+| 3 — mutate | Exact regression RED, then one source change mapping Anthropic `tool_use.id` to `:tool/id`; GREEN 2 tests/20 assertions |
+| 4 — regress | `git diff --check` 0; Anthropic 2/20 and CLI 8/56 green; only two intended files dirty |
+| 5 — converge | 4/4 returned, zero errors/denials/redundancy/unsupported; same green receipts; `VERDICT: STOP`, `NEXT_PROMPT: NONE` |
+
+**Independent supervisor gate:** full `bb test:e2e:all` passed — 25 suites, 139 tests, 571 assertions, 0 failures/errors, exit 0. `provider.clj` remains 210 LOC. RSI corpus moved from 24 to 29 real events, all successful; no synthetic inflation.
+
+**Rich Hickey verdict:** the improved loop separates discovery, falsification, mutation, and verification instead of complecting them into autonomous self-editing. A failed assertion is evidence; a permission denial is a different fact; convergence is a stop condition, not an invitation to shop for another defect.

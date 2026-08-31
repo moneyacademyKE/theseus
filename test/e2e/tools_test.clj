@@ -234,3 +234,12 @@
           (is (str/includes? (:error/message document-result) "File too large"))))
       (finally
         (fs/delete-tree home)))))
+
+(deftest unknown-tool-is-reported-as-not-executed
+  (let [name "unknown_test_tool"
+        result (tool/handle-tool-request {:tool/name name
+                                          :approval/policy :auto-all
+                                          :tool/args {}})]
+    (is (= :error (:status result)))
+    (is (= (str "Unknown tool: " name) (:error/message result)))
+    (is (= false (:executed? result)))))

@@ -23,7 +23,7 @@
                                (or (ex-message e) (.getName (class e)))
                                {:exception/type (str (class e))
                                 :executed? false})))
-      (common/error-result name (str "Unknown tool: " name) {}))))
+      (common/error-result name (str "Unknown tool: " name) {:executed? false}))))
 
 (defn handle-tool-request
   "Policy predicates (brain/rules.clj, when :policy {:enabled true}) decide
@@ -48,5 +48,7 @@
                     :ask (if (and approver (= :approved (approver request)))
                            (execute-tool-request request)
                            (deny-result request))
-                    :denied (deny-result request)))]
-     (rtk/apply request result cfg))))
+                    :denied (deny-result request)))
+         correlated (cond-> result
+                      (:tool/id request) (assoc :tool/id (:tool/id request)))]
+     (rtk/apply request correlated cfg))))

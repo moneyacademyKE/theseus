@@ -5,6 +5,7 @@
 ### Added
 
 - Telegram gateway tier 1 (`bb-agent.telegram-render`, `bb-agent.telegram-guard`): md→HTML rendering with 4096-char splitting, fail-closed owner allowlist (`:allowed-chat-ids`), HTML `parse_mode` on gateway replies, continuous `bb telegram poll` loop, and a deny-path e2e asserting denied chats get no reply and no session. Suites: telegram-rich 5/8, telegram-guard 4/7, gateway 4/22, all in `test:e2e:all` (GAP_ANALYSIS §23).
+- Provider-neutral tool correlation: OpenAI tool continuations serialize native `tool_calls` / `tool_call_id`; unknown tools report `:executed? false`; Anthropic `tool_use.id` now persists as `:tool/id` so results can correlate to the originating request. Discovered and repaired by two bounded Telegram RSI speedruns; v2 independently verified 25 suites, 139 tests, 571 assertions, 0 failures.
 
 ## v0.8.0 - 2026-08-30
 
