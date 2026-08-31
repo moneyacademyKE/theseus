@@ -9,6 +9,9 @@
      rsi {:doc "RSI commands. Usage: bb rsi digest | bb rsi analyze | bb rsi propose"
           :requires ([bb-agent.cli :as cli])
           :task (apply cli/-main "rsi" *command-line-args*)}
+     skill {:doc "Skill commands. Usage: bb skill list | bb skill run <name> [input...]"
+            :requires ([bb-agent.cli :as cli])
+            :task (apply cli/-main "skill" *command-line-args*)}
      session {:doc "Session commands. Usage: bb session list/current/set-cwd ..."
               :requires ([bb-agent.cli :as cli])
               :task (apply cli/-main "session" *command-line-args*)}
@@ -256,5 +259,13 @@
                                 (t/run-tests 'e2e.telegram-group-test)]
                             (when (pos? (+ fail error))
                               (System/exit 1)))},
+   test:e2e:skill {:doc "Run skill-system e2e tests."
+                   :extra-paths ["test"]
+                   :requires ([clojure.test :as t]
+                              [e2e.skill-test])
+                   :task (let [{:keys [fail error]}
+                               (t/run-tests 'e2e.skill-test)]
+                           (when (pos? (+ fail error))
+                             (System/exit 1)))}
    test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
-                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:policy test:e2e:rtk test:e2e:rsi test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group verify:rewrite-docs]}}}
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:policy test:e2e:rtk test:e2e:rsi test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:skill verify:rewrite-docs]}}}

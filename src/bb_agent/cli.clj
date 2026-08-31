@@ -1,5 +1,6 @@
 (ns bb-agent.cli
-  (:require [bb-agent.approval :as approval]
+  (:require [babashka.fs :as fs]
+            [bb-agent.approval :as approval]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.daemon :as daemon]
@@ -11,6 +12,7 @@
             [bb-agent.schedule :as schedule]
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
+            [bb-agent.skill :as skill]
             [bb-agent.slack :as slack]
             [bb-agent.telegram :as telegram]
             [bb-agent.ui :as ui]
@@ -106,6 +108,27 @@
                    (:summary hit))))
 
       (usage! "Usage: bb memory add <text> | bb memory search <query> | bb memory curate <id> | bb memory index-session <id> | bb memory semantic-search <query>" 2))))
+
+(defn- handle-skill-command [args]
+  (let [[subcommand name & input-parts] args
+        cfg (config/load-config)
+        skills-dir (fs/path (config/home) "skills")
+        skills (skill/discover-skills skills-dir)]
+    (case subcommand
+      "list"
+      (doseq [{:keys [name description]} skills]
+        (println (str name " - " description)))
+
+      "run"
+      (if (str/blank? name)
+        (usage! "Usage: bb skill run <name> [input...]" 2)
+        (if-let [selected (first (filter #(= name (:name %)) skills))]
+          (let [prompt (skill/compose-prompt selected (str/join " " input-parts))
+                turn (core/run-turn! (assoc cfg :session/id (str "skill-" name)) prompt)]
+            (println (rich/terminal (rich/final-message (:assistant/final turn)))))
+          (usage! (str "Unknown skill: " name) 1)))
+
+      (usage! "Usage: bb skill list | bb skill run <name> [input...]" 2))))
 
 (defn- handle-model-command [args]
   (let [[subcommand & rest-args] args]
@@ -270,6 +293,7 @@
     (case command
       "memory" (handle-memory-command rest-args)
       "session" (handle-session-command rest-args)
+      "skill" (handle-skill-command rest-args)
       "usage" (handle-usage-command rest-args)
       "model" (handle-model-command rest-args)
       "config" (handle-config-command rest-args)
