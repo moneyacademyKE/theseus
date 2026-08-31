@@ -421,3 +421,26 @@ across 25 suites.
 5. **Lost turns** — two turns died between announcing a command and its execution
    (provider switch mid-flight); one resume looped on re-verification. The loop-guard
    plus "state changes are tool calls" (#7) both apply.
+
+## 24. Telegram group and forum-topic parity (2026-08-31)
+
+**Trigger:** Eileen was promoted to administrator in a Telegram forum group. The supplied link resolved to **Sly Theseus**, chat `-1003995594829`; Bot API verification with Eileen's own token confirmed `type=supergroup`, `is_forum=true`, privacy disabled, and administrator status. Eileen can serve existing topics but cannot create/rename them (`can_manage_topics=false`), which remains outside this slice.
+
+**Gap:** the v1 adapter keyed everything on `chat_id`. That value names a conversation, not an actor. In a group the old gate either denied everyone or granted the whole room; all forum topics shared one session; replies landed in General; the agent could not identify speakers; ambient and bot messages could trigger turns.
+
+**Shape ported from OpenCrabs:**
+
+| Boundary | Theseus representation |
+|---|---|
+| authorization | `(user-id, chat-id, is-dm)` with global users, per-group users, explicit open groups, and legacy DM compatibility |
+| activation | per-group `:respond-to` (`:mention` default, `:all` opt-in); own mention/reply-to-bot activates; bot senders and redirected replies do not |
+| session | `telegram-<chat>` for DM/General/non-topic; `telegram-<chat>-topic-<thread>` only when `is_topic_message=true` |
+| delivery | `message_thread_id` on all topic replies/approvals; first final chunk uses `reply_parameters.message_id` |
+| context | bounded sender/group/topic/replied-to identity prepended to group input |
+| privacy | `:session/shared? true` blocks global/private memory retrieval and semantic indexing; the topic's own persisted turn history remains local to its session |
+
+**Verification:** red suite failed on the absent `bb-agent.telegram-group` namespace. Green focused suite: **10 tests / 55 assertions** including two-topic isolation, General-vs-topic separation, numeric/string config keys, sender ACL, open-group DM non-leak, bot suppression, mention/reply routing, command suffix normalization, topic-scoped approval replies, outbound thread/reply fields, and shared-memory isolation. Full gate: **26 suites / 147 tests / 613 assertions / 0 failures / 0 errors / exit 0**. Changed non-test modules: `telegram.clj` 163 LOC, `telegram_group.clj` 137, `telegram_guard.clj` 44, `core.clj` 181; zero dependencies.
+
+**Process notes:** the plan worker timed out at 60 seconds and produced no usable output; the parent continued inline. The overwrite guard twice flagged `telegram.clj` as changed after read even though its md5 was stable; switching to edit-time regex replacement avoided blind overwrite. A legacy compatibility regression showed that old DM updates may omit `:from`; `allowed-chat-ids` remains a DM compatibility gate, while groups never authorize by chat ID. The first shared-memory audit caught a privacy leak before publication and added the explicit session gate.
+
+**Rich Hickey certification:** the implementation is tuple-shaped data, not a channel framework. `chat-id` says where, `user-id` says who, and `topic-id` says which conversation. Keeping those facts apart removes the accidental reach of one overloaded identifier.

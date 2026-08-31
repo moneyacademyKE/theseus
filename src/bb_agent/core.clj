@@ -123,7 +123,8 @@
                          :assistant/final final-content)]
     (session/touch-metadata! id cfg)
     (session/append-turn! id completed)
-    (when (semantic-memory/enabled? cfg)
+    (when (and (semantic-memory/enabled? cfg)
+               (not (:session/shared? cfg)))
       (semantic-memory/index-session! id))
     (usage/append-event! (usage/event {:session-id id
                                        :provider (or (:provider turn) (:provider cfg))
@@ -144,8 +145,10 @@
         metadata (session/load-metadata id)
         cfg (cond-> cfg
               (:cwd metadata) (assoc :cwd (:cwd metadata)))
-        memory-matches (memory/attach-memories prompt)
-        semantic-ctx (semantic-memory/attach-context prompt cfg)
+        shared? (:session/shared? cfg)
+        memory-matches (if shared? [] (memory/attach-memories prompt))
+        semantic-ctx (when-not shared?
+                       (semantic-memory/attach-context prompt cfg))
         brain-ctx (brain/load-brain)]
     (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx)
            turn {:tool/requests []

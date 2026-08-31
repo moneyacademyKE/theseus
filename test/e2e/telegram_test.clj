@@ -29,12 +29,21 @@
                                             :method (:request-method req)
                                             :body (when-let [body (:body req)] (slurp body))})
                          (case uri
-                            "/botTESTTOKEN/getUpdates"
-                            {:status 200
-                             :headers {"content-type" "application/json"}
-                             :body (json/generate-string
-                                    {:ok true
-                                     :result [{:update_id 1
+                           "/botTESTTOKEN/getMe"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok true
+                                    :result {:id 8511646577
+                                             :is_bot true
+                                             :username "eileenslybot"}})}
+
+                           "/botTESTTOKEN/getUpdates"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok true
+                                    :result [{:update_id 1
                                               :message {:message_id 7
                                                         :chat {:id 4242}
                                                         :text "say pong"}}]})}
