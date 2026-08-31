@@ -1,6 +1,9 @@
 (ns e2e.telegram-group-test
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [bb-agent.core :as core]
+            [bb-agent.memory :as memory]
+            [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.telegram-group :as group]
             [bb-agent.telegram-guard :as guard]
             [cheshire.core :as json]
@@ -151,6 +154,29 @@
     (is (str/includes? input "Replying to assistant"))
     (is (str/includes? input "Earlier answer"))
     (is (str/ends-with? input "continue"))))
+
+(deftest shared-group-turns-do-not-read-or-index-private-memory
+  (let [memory-called? (atom false)
+        semantic-called? (atom false)
+        indexed? (atom false)
+        turn (with-redefs [memory/attach-memories
+                           (fn [_] (reset! memory-called? true) [{:memory/text "private"}])
+                           semantic-memory/attach-context
+                           (fn [_ _] (reset! semantic-called? true) "private context")
+                           semantic-memory/index-session!
+                           (fn [_] (reset! indexed? true))]
+               (core/run-turn! {:provider :fake
+                                :model "fake-deterministic"
+                                :session/id "telegram-shared-test"
+                                :session/shared? true
+                                :semantic-memory {:enabled true}}
+                               "say pong"))]
+    (is (= "pong" (:assistant/final turn)))
+    (is (not @memory-called?))
+    (is (not @semantic-called?))
+    (is (not @indexed?))
+    (is (empty? (:memory/matches turn)))
+    (is (nil? (:semantic/context turn)))))
 
 (deftest telegram-command-suffix-is-normalized
   (is (= "/approve" (group/normalize-command "/approve@eileenslybot" (bot-info))))
