@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Telegram gateway tier 1 (`bb-agent.telegram-render`, `bb-agent.telegram-guard`): md→HTML rendering with 4096-char splitting, fail-closed owner allowlist (`:allowed-chat-ids`), HTML `parse_mode` on gateway replies, continuous `bb telegram poll` loop, and a deny-path e2e asserting denied chats get no reply and no session. Suites: telegram-rich 5/8, telegram-guard 4/7, gateway 4/22, all in `test:e2e:all` (GAP_ANALYSIS §23).
+
 ## v0.8.0 - 2026-08-30
 
 ### Added

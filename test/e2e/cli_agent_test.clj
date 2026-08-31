@@ -166,6 +166,56 @@
          (stop-server)
          (fs/delete-tree home)))))
 
+(deftest openai-compatible-provider-continues-when-text-accompanies-tool-calls
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-http-mixed-tools-e2e-"})
+        port (free-port)
+        calls (atom 0)
+        stop-server (server/run-server
+                     (fn [_req]
+                       (let [n (swap! calls inc)]
+                         {:status 200
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string
+                                 (if (= 1 n)
+                                   {:choices [{:message
+                                               {:role "assistant"
+                                                :content "Checking the file now."
+                                                :tool_calls
+                                                [{:function
+                                                  {:name "read_file"
+                                                   :arguments (json/generate-string
+                                                               {:path (str (fs/path home "note.txt"))})}}]}}]}
+                                   {:choices [{:message {:role "assistant"
+                                                         :content "read complete after tool"}}]}))}))
+                     {:port port})
+        config-file (fs/path home "config.edn")
+        session-file (fs/path home "state" "sessions" "http-mixed-tools.edn")]
+    (try
+      (fs/create-dirs home)
+      (spit (str (fs/path home "note.txt")) "hello from mixed tool response")
+      (fs/create-dirs (fs/path home "brain"))
+      (spit (str (fs/path home "brain" "rules.clj"))
+            "{:rules [{:name \"allow-read\" :pred (fn [tool _] (= tool \"read_file\")) :decision :allow}]}\n")
+      (spit (str config-file)
+            (pr-str {:provider :openai-compatible
+                     :model "test-model"
+                     :session/id "http-mixed-tools"
+                     :policy {:enabled true}
+                     :providers {:openai-compatible
+                                 {:base-url (str "http://127.0.0.1:" port "/v1")
+                                  :api-key "test-key"}}}))
+      (let [result (run-agent home "read note with explanation")
+            turn (first (edn/read-string (slurp (str session-file))))]
+        (is (= 0 (:exit result)) (:err result))
+        (is (= "read complete after tool\n" (:out result)))
+        (is (= 2 @calls))
+        (is (= ["read_file"] (mapv :tool/name (:tool/requests turn))))
+        (is (= [:ok] (mapv :status (:tool/results turn))))
+        (is (= "read complete after tool" (:assistant/final turn))))
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))
+
 (deftest session-metadata-and-usage-report-are-persisted
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-session-usage-"})
         workspace (fs/path home "workspace")]

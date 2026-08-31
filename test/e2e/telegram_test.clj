@@ -56,7 +56,8 @@
             (pr-str {:provider :fake
                      :model "fake-deterministic"
                      :telegram {:token "TESTTOKEN"
-                                :base-url (str "http://127.0.0.1:" port)}}))
+                                :base-url (str "http://127.0.0.1:" port)
+                                :allowed-chat-ids [4242]}}))
       (let [result (shell! home "telegram" "poll-once")
             send-call (some #(when (= "/botTESTTOKEN/sendMessage" (:uri %)) %) @calls)
             updates-call (some #(when (= "/botTESTTOKEN/getUpdates" (:uri %)) %) @calls)
@@ -111,7 +112,8 @@
             (pr-str {:provider :fake
                      :model "fake-deterministic"
                      :telegram {:token "TESTTOKEN"
-                                :base-url (str "http://127.0.0.1:" port)}}))
+                                :base-url (str "http://127.0.0.1:" port)
+                                :allowed-chat-ids [4242]}}))
       (let [result (shell! home "telegram" "poll-once")
             send-call (some #(when (= "/botTESTTOKEN/sendMessage" (:uri %)) %) @calls)
             send-body (some-> send-call :body (json/parse-string keyword))]
@@ -155,7 +157,8 @@
             (pr-str {:provider :fake
                      :model "fake-deterministic"
                      :telegram {:token "TESTTOKEN"
-                                :base-url (str "http://127.0.0.1:" port)}}))
+                                :base-url (str "http://127.0.0.1:" port)
+                                :allowed-chat-ids [4242]}}))
       (fs/create-dirs (fs/parent approvals-file))
       (spit (str approvals-file)
             (pr-str {:pending {"p1" {:approval/id "p1"
@@ -171,6 +174,48 @@
         (is (str/includes? (:text send-body) "Approved pending tool"))
         (is (empty? (:pending state)))
         (is (= :approve (get-in state [:decisions "p1"]))))
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))
+
+(deftest telegram-denies-chats-outside-allowlist
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-deny-"})
+        port (free-port)
+        calls (atom [])
+        stop-server (server/run-server
+                     (fn [req]
+                       (swap! calls conj {:uri (:uri req)})
+                       (case (:uri req)
+                         "/botTESTTOKEN/getUpdates"
+                         {:status 200
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string
+                                 {:ok true
+                                  :result [{:update_id 20
+                                            :message {:message_id 90
+                                                      :chat {:id 9999}
+                                                      :text "say pong"}}]})}
+                         {:status 404
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string {:ok false})}))
+                     {:port port})
+        config-file (fs/path home "config.edn")]
+    (try
+      (spit (str config-file)
+            (pr-str {:provider :fake
+                     :model "fake-deterministic"
+                     :telegram {:token "TESTTOKEN"
+                                :base-url (str "http://127.0.0.1:" port)
+                                :allowed-chat-ids [4242]}}))
+      (let [result (shell! home "telegram" "poll-once")
+            uris (map :uri @calls)]
+        (is (= 0 (:exit result)) (:err result))
+        (is (str/includes? (:out result) "telegram-updates=1"))
+        (is (some #(str/includes? % "getUpdates") uris))
+        (is (not-any? #(str/includes? % "sendMessage") uris)
+            "denied chat must never receive a reply")
+        (is (not (fs/exists? (fs/path home "state" "sessions" "telegram-9999.edn")))
+            "denied chat must not get a session"))
       (finally
         (stop-server)
         (fs/delete-tree home)))))

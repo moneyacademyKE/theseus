@@ -182,7 +182,10 @@
       (let [{:keys [updates]} (telegram/poll-once!)]
         (println (str "telegram-updates=" updates)))
 
-      (usage! "Usage: bb telegram poll-once" 2))))
+      "poll"
+      (telegram/poll-loop!)
+
+      (usage! "Usage: bb telegram poll-once | poll" 2))))
 
 (defn- handle-slack-command [args]
   (let [[subcommand] args]

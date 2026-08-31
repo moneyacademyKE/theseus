@@ -167,12 +167,12 @@
                     (assoc :fallback/tried (:fallback/tried response))
                     (:fallback/served-by response)
                     (assoc :provider (:fallback/served-by response)))]
-        (if-let [content (:content response)]
-          (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
-          (if (seq tool-requests)
-            (if (every? #(= :denied (:status %)) tool-results)
-              (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
-              (recur (continue-messages messages response tool-results)
-                     turn*
-                     (dec rounds-left)))
+        (if (seq tool-requests)
+          (if (every? #(= :denied (:status %)) tool-results)
+            (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
+            (recur (continue-messages messages response tool-results)
+                   turn*
+                   (dec rounds-left)))
+          (if-let [content (:content response)]
+            (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
             (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (tool-error-summary (:tool/results turn*)) (:usage response))))))))

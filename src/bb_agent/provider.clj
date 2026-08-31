@@ -138,8 +138,7 @@
                             {:headers {"authorization" (str "Bearer " api-key)
                                        "content-type" "application/json"}
                              :throw false
-                             :connect-timeout 2000
-                             :request-timeout 5000
+                             :timeout 60000
                              :body (json/generate-string {:model model
                                                           :messages messages
                                                           :tools tools/definitions})})
@@ -195,8 +194,7 @@
                                        "anthropic-version" "2023-06-01"
                                        "content-type" "application/json"}
                              :throw false
-                             :connect-timeout 2000
-                             :request-timeout 5000
+                             :timeout 60000
                              :body (json/generate-string {:model model
                                                           :max_tokens 4096
                                                           :messages messages})})
