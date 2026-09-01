@@ -289,5 +289,13 @@
                                 (t/run-tests 'e2e.provider-wire-test)]
                              (when (pos? (+ fail error))
                                (System/exit 1)))}
+   test:e2e:provider-timeout {:doc "Run provider timeout e2e tests."
+                    :extra-paths ["test"]
+                    :requires ([clojure.test :as t]
+                               [e2e.provider-timeout-test])
+                    :task (let [{:keys [fail error]}
+                                (t/run-tests 'e2e.provider-timeout-test)]
+                             (when (pos? (+ fail error))
+                               (System/exit 1)))}
    test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
-                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:policy test:e2e:rtk test:e2e:rsi test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:skill test:e2e:skill-research test:e2e:provider-wire verify:rewrite-docs]}}}
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:policy test:e2e:rtk test:e2e:rsi test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:skill test:e2e:skill-research test:e2e:provider-wire test:e2e:provider-timeout verify:rewrite-docs]}}}

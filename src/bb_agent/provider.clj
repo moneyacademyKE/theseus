@@ -178,7 +178,7 @@
                             {:headers {"authorization" (str "Bearer " api-key)
                                        "content-type" "application/json"}
                              :throw false
-                             :timeout 60000
+                             :timeout (or (:timeout-ms config) 60000)
                              :body (json/generate-string {:model model
                                                           :messages (openai-wire-messages messages)
                                                           :tools tools/definitions})})
