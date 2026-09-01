@@ -76,6 +76,31 @@ This slice is deliberately narrower than OpenCrabs' `send_markdown_outbox`: Thes
 | Holding or rewinding the Bot API update offset until delivery succeeds | Reprocessing an inbound update can rerun tools and duplicate side effects. Honest send failure is safer than replaying the agent turn. |
 | MTProto userbot, media download/STT, voice, passive group history, auto-registration, and topic administration | These require new transport, storage, or authority boundaries and were already excluded from group/topic parity. |
 
+## Implemented result
+
+The selected delivery spine is implemented on `fix/telegram-delivery-integrity` in commit `e68f3f0870d11cdf7f03bc4a044a4e33a0eda14a`:
+
+- `bb-agent.telegram-delivery` owns HTTP/Bot API validation, three bounded 429 attempts, the 30-second per-wait cap, markup-specific HTML-to-plain fallback, topic/reply preservation, and terminal failure data;
+- `bb-agent.telegram-attachment` persists authorized documents and supported media as inert bytes under `channel_attachments/telegram/<chat-id>/topic-<thread-id>/`; authorization precedes `getFile`, paths and names are sanitized, and `:attachment-max-bytes` defaults to 20 MiB;
+- `bb-agent.telegram` remains the adapter: it supplies chat/topic/message identity, invokes persistence only for an authorized responding message, and sends finals plus approvals through the checked delivery module;
+- no dependency, outbox worker, parser, evaluator, STT path, or replay mechanism was added.
+
+Measured verification on 2026-09-01:
+
+| Gate | Result |
+|---|---|
+| Focused adapter/delivery/attachment | 10 tests / 60 assertions / 0 failures/errors |
+| Group/topic regression | 10 / 55 / 0 |
+| Rich rendering | 5 / 8 / 0 |
+| Authorization guard | 4 / 7 / 0 |
+| Full `bb test:e2e:all` | 31 test namespaces / 170 tests / 763 assertions / 0 failures/errors; rewrite docs verified |
+| Source size | adapter 160 LOC; delivery 179; attachment 154 |
+| Hygiene | `git diff --check` exit 0; zero new dependencies |
+
+## Remaining parity gaps
+
+This change improves final-mile reliability; it does not make Theseus a clone of OpenCrabs. Remaining separate decisions include callbacks/reactions and inline keyboards, streaming/edit-in-place status, outbound media/tools and scheduled sends, correlation telemetry or a durable outbox, voice/STT interpretation, MTProto userbot behavior, and automatic group/member administration. Add one only when its own authority, persistence, and failure contract is explicit.
+
 ## Outcome
 
-Build **reliable final-mile sending before adding more Telegram surfaces**. The slice copies OpenCrabs' hard-won invariant—one bounded, fallback-capable send ladder—while retaining Theseus' current one-file, zero-dependency shape. Success means a transient flood limit delays a reply within a strict budget, malformed HTML gets one safe plain-text path, and terminal loss is explicit rather than silently recorded as a completed turn.
+Build **reliable final-mile sending before adding more Telegram surfaces**. The branch now copies OpenCrabs' hard-won invariant—one bounded, fallback-capable send ladder—while keeping delivery, authorization, persistence, and interpretation distinct. A transient flood limit delays within a strict budget, malformed HTML gets one safe plain-text path, authorized files persist inertly, and terminal loss is explicit rather than silently recorded as delivery.
