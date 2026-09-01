@@ -13,6 +13,8 @@
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
             [bb-agent.skill :as skill]
+            [bb-agent.skill-research :as skill-research]
+            [bb-agent.skill-research-github :as skill-research-github]
             [bb-agent.slack :as slack]
             [bb-agent.telegram :as telegram]
             [bb-agent.ui :as ui]
@@ -128,7 +130,34 @@
             (println (rich/terminal (rich/final-message (:assistant/final turn)))))
           (usage! (str "Unknown skill: " name) 1)))
 
-      (usage! "Usage: bb skill list | bb skill run <name> [input...]" 2))))
+      "research"
+      (let [query (str/join " " (remove str/blank? (cons name input-parts)))]
+        (if (str/blank? query)
+          (usage! "Usage: bb skill research <query>" 2)
+          (try
+            (let [result (skill-research-github/research!
+                          (config/home) query
+                          {:limit 5 :transport skill-research-github/github-transport})]
+              (if (= :ok (:status result))
+                (do
+                  (doseq [{:keys [proposal-id status]} (:proposals result)]
+                    (println (str proposal-id " - " (clojure.core/name status))))
+                  (doseq [rejection (:rejections result)]
+                    (binding [*out* *err*]
+                      (println (pr-str rejection)))))
+                (usage! (str "Skill research rejected: " (pr-str (:reasons result))) 1)))
+            (catch Exception e
+              (usage! (str "Skill research failed: " (ex-message e)) 1)))))
+
+      "promote"
+      (if (str/blank? name)
+        (usage! "Usage: bb skill promote <proposal-id>" 2)
+        (let [result (skill-research/promote! (config/home) name {:approved? true})]
+          (if (= :promoted (:status result))
+            (println (pr-str result))
+            (usage! (str "Skill promotion failed: " (pr-str result)) 1))))
+
+      (usage! "Usage: bb skill list | bb skill run <name> [input...] | bb skill research <query> | bb skill promote <proposal-id>" 2))))
 
 (defn- handle-model-command [args]
   (let [[subcommand & rest-args] args]
