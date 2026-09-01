@@ -19,3 +19,4 @@
 - §19. Port proposal: OpenCrabs RSI + RTK (2026-08-30, investigation) — Analysis of token filters and self-improvement loop ports
 - 20. V5 execution record — RTK filters + RSI v1 (2026-08-30) — Both ports shipped; five defects self-caught
 - 21. v0.7.0 release + jar defect — 2026-08-30 — Release shipped; broken jar caught only by cold-run smoke
+- Telegram delivery integrity — bounded Retry-After, HTML-to-plain fallback, and authorized inert attachments (`TELEGRAM_DELIVERY_INTEGRITY_PARITY.md`)

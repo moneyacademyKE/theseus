@@ -34,7 +34,7 @@ bb usage report
 - `bb session set-cwd <session-id> <cwd>` updates session working directory.
 - `bb schedule add/list/remove/run ...` manages scheduled prompts.
 - `bb daemon start [--once] [--max-runs n] [--interval-ms n]` runs schedules.
-- `bb telegram poll-once` polls Telegram updates once.
+- `bb telegram poll-once` polls Telegram updates once. Replies use bounded 429 retry and HTML-to-plain fallback; authorized inbound files persist inertly under `channel_attachments/telegram/`.
 - `bb slack poll-once` polls Slack history once.
 - `bb usage report` summarizes persisted usage events.
 - `bb config doctor` validates configuration.
@@ -54,6 +54,7 @@ Important files:
 - `state/usage.edn`
 - `state/telegram-offset.edn`
 - `state/telegram-seen.edn`
+- `channel_attachments/telegram/<chat-id>/[topic-<thread-id>/]` (authorized inbound files, inert bytes)
 - `state/schedules.edn`
 - `state/schedule-runs.edn`
 

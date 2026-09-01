@@ -4,6 +4,15 @@
 
 ### Added
 
+- Telegram delivery integrity (`bb-agent.telegram-delivery`): all finals and approval replies now validate both HTTP and Bot API success, retry only 429/`retry_after` failures for at most 3 attempts, cap each inline wait at 30 seconds, preserve chat/topic/reply routing on every attempt, fall back once from a rejected HTML chunk to plain text through the same checked path, stop later chunks after terminal failure, and surface structured failure context without message content or credentials (issue #25; `docs/TELEGRAM_DELIVERY_INTEGRITY_PARITY.md`).
+- Authorized inbound Telegram attachments (`bb-agent.telegram-attachment`): documents and supported media persist as inert bytes under `channel_attachments/telegram/<chat-id>/topic-<thread-id>/` before the agent turn. Authorization runs before `getFile` or download; filenames and Telegram paths are sanitized; size is bounded by `:attachment-max-bytes` (20 MiB default). No STT, parsing, execution, or automatic trust is implied.
+
+### Verification
+
+- `bb test:e2e:all`: 31 test namespaces / 171 tests / 765 assertions, 0 failures/errors; rewrite docs verified.
+- Focused Telegram adapter/delivery/attachment suite: 11 tests / 62 assertions; group/topic 10/55; rich 5/8; guard 4/7 — all green.
+- Zero new dependencies. Changed source modules: `telegram.clj` 160 LOC, `telegram-delivery.clj` 179 LOC, `telegram-attachment.clj` 154 LOC.
+
 - Telegram gateway tier 2 (`bb-agent.telegram-group` + adapter/guard wiring): sender-scoped group ACLs, per-group `:open`/`:respond-to` policy, mention/reply activation, bot-loop suppression, genuine forum-topic session keys (`chat-id + topic-id`), topic-preserving final/approval replies, sender/reply context, command-suffix normalization, and a shared-session privacy gate that blocks private/global memory attachment and semantic indexing in groups. Verified live against the target shape: **Sly Theseus** (`-1003995594829`), forum-enabled with `@eileenslybot` as admin. Group suite 10/55; full gate 26 suites, 147 tests / 613 assertions, zero failures/errors (issue #18; `docs/TELEGRAM_GROUP_PARITY.md`).
 - Telegram gateway tier 1 (`bb-agent.telegram-render`, `bb-agent.telegram-guard`): md→HTML rendering with 4096-char splitting, fail-closed owner allowlist (`:allowed-chat-ids`), HTML `parse_mode` on gateway replies, continuous `bb telegram poll` loop, and a deny-path e2e asserting denied chats get no reply and no session. Suites: telegram-rich 5/8, telegram-guard 4/7, gateway 4/22, all in `test:e2e:all` (GAP_ANALYSIS §23).
 
