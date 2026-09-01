@@ -127,9 +127,15 @@
 
 (defn- markup-rejection?
   [error]
-  (let [data (ex-data error)]
+  (let [data (ex-data error)
+        description (str/lower-case (or (:failure/description data) ""))]
     (and (= :terminal (:failure/kind data))
-         (= 400 (:failure/status data)))))
+         (= 400 (:failure/status data))
+         (or (str/includes? description "parse entities")
+             (str/includes? description "can't parse")
+             (str/includes? description "unsupported start tag")
+             (str/includes? description "wrong tag")
+             (str/includes? description "entity")))))
 
 (defn- send-with-fallback
   [cfg chat-id text {:keys [parse-mode] :as opts} runtime]

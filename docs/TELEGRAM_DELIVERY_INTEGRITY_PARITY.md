@@ -89,11 +89,11 @@ Measured verification on 2026-09-01:
 
 | Gate | Result |
 |---|---|
-| Focused adapter/delivery/attachment | 10 tests / 60 assertions / 0 failures/errors |
+| Focused adapter/delivery/attachment | 11 tests / 62 assertions / 0 failures/errors |
 | Group/topic regression | 10 / 55 / 0 |
 | Rich rendering | 5 / 8 / 0 |
 | Authorization guard | 4 / 7 / 0 |
-| Full `bb test:e2e:all` | 31 test namespaces / 170 tests / 763 assertions / 0 failures/errors; rewrite docs verified |
+| Full `bb test:e2e:all` | 31 test namespaces / 171 tests / 765 assertions / 0 failures/errors; rewrite docs verified |
 | Source size | adapter 160 LOC; delivery 179; attachment 154 |
 | Hygiene | `git diff --check` exit 0; zero new dependencies |
 

@@ -9,8 +9,8 @@
 
 ### Verification
 
-- `bb test:e2e:all`: 31 test namespaces / 170 tests / 763 assertions, 0 failures/errors; rewrite docs verified.
-- Focused Telegram adapter/delivery/attachment suite: 10 tests / 60 assertions; group/topic 10/55; rich 5/8; guard 4/7 — all green.
+- `bb test:e2e:all`: 31 test namespaces / 171 tests / 765 assertions, 0 failures/errors; rewrite docs verified.
+- Focused Telegram adapter/delivery/attachment suite: 11 tests / 62 assertions; group/topic 10/55; rich 5/8; guard 4/7 — all green.
 - Zero new dependencies. Changed source modules: `telegram.clj` 160 LOC, `telegram-delivery.clj` 179 LOC, `telegram-attachment.clj` 154 LOC.
 
 - Telegram gateway tier 2 (`bb-agent.telegram-group` + adapter/guard wiring): sender-scoped group ACLs, per-group `:open`/`:respond-to` policy, mention/reply activation, bot-loop suppression, genuine forum-topic session keys (`chat-id + topic-id`), topic-preserving final/approval replies, sender/reply context, command-suffix normalization, and a shared-session privacy gate that blocks private/global memory attachment and semantic indexing in groups. Verified live against the target shape: **Sly Theseus** (`-1003995594829`), forum-enabled with `@eileenslybot` as admin. Group suite 10/55; full gate 26 suites, 147 tests / 613 assertions, zero failures/errors (issue #18; `docs/TELEGRAM_GROUP_PARITY.md`).

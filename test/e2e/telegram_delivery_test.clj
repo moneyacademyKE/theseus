@@ -122,6 +122,23 @@
         (is (= :terminal (:failure/kind (ex-data error))))))
     (is (= 1 (count @calls)))))
 
+(deftest unrelated-http-400-does-not-trigger-plain-fallback
+  (let [responses (atom [(response 400 {:ok false
+                                         :error_code 400
+                                         :description "Bad Request: chat not found"})
+                         (response 200 {:ok true})])
+        calls (atom [])]
+    (try
+      (delivery/send-html!
+       telegram-config 42 "<b>hello</b>"
+       {:transport (scripted-transport responses calls)
+        :sleep-fn (fn [_])})
+      (is false "destination failures must not retry as plain text")
+      (catch Exception error
+        (is (= "Bad Request: chat not found"
+               (:failure/description (ex-data error))))))
+    (is (= 1 (count @calls)))))
+
 (deftest a-terminal-chunk-failure-stops-the-sequence
   (let [responses (atom [(response 500 {:ok false :description "server error"})])
         calls (atom [])]
