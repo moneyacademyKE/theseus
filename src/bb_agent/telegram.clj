@@ -8,6 +8,7 @@
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-group :as group]
             [bb-agent.telegram-guard :as guard]
+            [bb-agent.telegram-presence :as presence]
             [bb-agent.telegram-rich :as tr]
             [cheshire.core :as json]
             [clojure.edn :as edn]
@@ -100,6 +101,8 @@
                (or (approval/telegram-approval-reply text)
                    (group/should-respond? cfg bot (assoc message :text text))))
       (let [telegram-cfg (:telegram cfg)]
+        (when (:react-ack telegram-cfg true)
+          (presence/reaction! telegram-cfg chat-id (:message_id message)))
         (if-let [decision (approval/telegram-approval-reply text)]
           (delivery/send-message!
            telegram-cfg chat-id
@@ -110,6 +113,8 @@
           (let [saved (attachment/persist! (config/home) telegram-cfg message)
                 input-message (assoc message :text
                                      (str text (attachment-context saved)))
+                _ (when (:typing-indicator telegram-cfg true)
+                    (presence/typing! telegram-cfg chat-id {:thread-id thread-id}))
                 turn (core/run-turn!
                       (assoc cfg
                              :session/id session-id

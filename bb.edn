@@ -111,11 +111,13 @@
                       :requires ([clojure.test :as t]
                                  [e2e.telegram-test]
                                  [e2e.telegram-delivery-test]
-                                 [e2e.telegram-attachment-test])
+                                 [e2e.telegram-attachment-test]
+                                 [e2e.telegram-presence-test])
                       :task (let [{:keys [fail error]}
                                   (t/run-tests 'e2e.telegram-test
                                                'e2e.telegram-delivery-test
-                                               'e2e.telegram-attachment-test)]
+                                               'e2e.telegram-attachment-test
+                                               'e2e.telegram-presence-test)]
                               (when (pos? (+ fail error))
                                 (System/exit 1)))}
    test:e2e:phase6 {:doc "Run Phase 6 extension e2e tests."
