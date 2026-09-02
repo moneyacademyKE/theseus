@@ -7,6 +7,8 @@
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-group :as group]
+            [bb-agent.telegram-media :as media]
+            [bb-agent.telegram-notes :as notes]
             [bb-agent.telegram-extract :as extract]
             [bb-agent.telegram-guard :as guard]
             [bb-agent.telegram-presence :as presence]
@@ -93,6 +95,20 @@
                "[text extraction unavailable; the persisted bytes remain available at the path above]")
            "\n[Attachment content end]"))))
 
+(defn- handle-edited!
+  "Record a bounded edit note. An edit is context, never a new turn."
+  [cfg edited]
+  (when (and edited (guard/message-allowed? cfg edited))
+    (notes/add! (config/home) (group/session-id edited) edited)))
+
+(defn- edit-notes-context
+  "Consume pending edit notes for a session; include the newest three."
+  [session-id]
+  (let [taken (notes/take! (config/home) session-id)]
+    (when (seq taken)
+      (str "\n[Context: the sender edited earlier messages since your last reply]\n"
+           (str/join "\n" (->> taken reverse (take 3) reverse))))))
+
 (defn- send-approval-request!
   [cfg chat-id thread-id pending]
   (delivery/send-message!
@@ -124,9 +140,12 @@
             (approval/resolve! session-id decision)
             decision)
            {:thread-id thread-id})
-          (let [saved (attachment/persist! (config/home) telegram-cfg message)
+          (let [edit-context (or (edit-notes-context session-id) "")
+                saved (attachment/persist! (config/home) telegram-cfg message)
                 input-message (assoc message :text
-                                     (str text (attachment-context telegram-cfg saved)))
+                                     (str edit-context
+                                          text
+                                          (attachment-context telegram-cfg saved)))
                 _ (when (:typing-indicator telegram-cfg true)
                     (presence/typing! telegram-cfg chat-id {:thread-id thread-id}))
                 turn (core/run-turn!
@@ -147,6 +166,48 @@
              {:thread-id thread-id
               :reply-to-message-id (:message_id message)})))))))
 
+(defn- process-album!
+  "Run one turn for a media-group batch. The captioned member activates the
+   turn; every member persists, including captionless ones."
+  [cfg bot batch]
+  (let [telegram-cfg (:telegram cfg)
+        messages (:messages batch)
+        primary (or (first (filter #(seq (str/trim (str (or (:text %) (:caption %) ""))))
+                                   messages))
+                    (first messages))
+        text (group/normalize-command (or (media/activation-text messages) "") bot)]
+    (when (and primary
+               (guard/message-allowed? cfg primary)
+               (group/should-respond? cfg bot (assoc primary :text text)))
+      (let [chat-id (get-in primary [:chat :id])
+            thread-id (group/topic-id primary)
+            session-id (group/session-id primary)
+            edit-context (or (edit-notes-context session-id) "")
+            _ (when (:react-ack telegram-cfg true)
+                (presence/reaction! telegram-cfg chat-id (:message_id primary)))
+            saved (keep #(attachment/persist! (config/home) telegram-cfg %) messages)
+            contexts (apply str (map #(attachment-context telegram-cfg %) saved))
+            _ (when (:typing-indicator telegram-cfg true)
+                (presence/typing! telegram-cfg chat-id {:thread-id thread-id}))
+            turn (core/run-turn!
+                  (assoc cfg
+                         :session/id session-id
+                         :session/shared? (group/group-chat? primary)
+                         :approval/ask
+                         (approval/waiting-approver
+                          {:session-id session-id
+                           :channel :telegram
+                           :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
+                           :notify #(send-approval-request!
+                                     telegram-cfg chat-id thread-id %)}))
+                  (group/agent-input bot
+                                     (assoc primary :text (str edit-context text contexts))))]
+        (delivery/send-html!
+         telegram-cfg chat-id
+         (tr/to-html (:assistant/final turn))
+         {:thread-id thread-id
+          :reply-to-message-id (:message_id primary)})))))
+
 (defn poll-once! []
   (let [cfg (config/load-config)
         telegram-cfg (:telegram cfg)
@@ -157,14 +218,18 @@
         {:keys [updates conflict?]} (get-updates telegram-cfg)
         seen (atom (load-seen))
         processed (atom 0)]
-    (doseq [update updates]
-      (when-not (contains? @seen (:update_id update))
-        (when-let [message (:message update)]
-          (process-message! cfg bot message))
+    (let [fresh (remove #(contains? @seen (:update_id %)) updates)]
+      (doseq [update fresh]
+        (when (= :edited (media/update-kind update))
+          (handle-edited! cfg (media/edited-message update)))
         (swap! seen conj (:update_id update))
         (save-seen! @seen)
         (save-offset! (inc (:update_id update)))
-        (swap! processed inc)))
+        (swap! processed inc))
+      (doseq [batch (media/batches (filter #(some? (:message %)) fresh))]
+        (if (:album? batch)
+          (process-album! cfg bot batch)
+          (process-message! cfg bot (:message (first (:updates batch)))))))
     {:updates @processed :conflict? conflict?}))
 
 (defn poll-loop!
