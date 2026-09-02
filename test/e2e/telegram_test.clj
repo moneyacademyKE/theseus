@@ -322,3 +322,53 @@
     (let [observed (run-presence-scenario! 400)]
       (is (= 0 (:exit observed)) (:err observed))
       (is (= "pong" (:text (:reply observed)))))))
+
+(deftest get-updates-conflict-is-surfaced-not-fatal
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-conflict-"})
+        port (free-port)
+        calls (atom [])
+        stop-server (server/run-server
+                     (fn [req]
+                       (let [uri (:uri req)]
+                         (when (= :post (:request-method req))
+                           (swap! calls conj {:uri uri}))
+                         (case uri
+                           "/botTESTTOKEN/getMe"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok true
+                                    :result {:id 8511646577
+                                             :is_bot true
+                                             :username "eileenslybot"}})}
+
+                           "/botTESTTOKEN/getUpdates"
+                           {:status 409
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok false
+                                    :error_code 409
+                                    :description "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"})}
+
+                           {:status 404
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string {:ok false})})))
+                     {:port port})
+        config-file (fs/path home "config.edn")]
+    (try
+      (spit (str config-file)
+            (pr-str {:provider :fake
+                     :model "fake-deterministic"
+                     :telegram {:token "TESTTOKEN"
+                                :base-url (str "http://127.0.0.1:" port)
+                                :allowed-chat-ids [4242]}}))
+      (let [result (shell! home "telegram" "poll-once")]
+        (is (= 0 (:exit result)) (:err result))
+        (is (str/includes? (:out result) "telegram-updates=0"))
+        (is (str/includes? (:out result) "telegram-conflict=1")
+            "a getUpdates 409 must be visible in the poll result")
+        (is (not-any? #(str/includes? % "sendMessage") (map :uri @calls))
+            "a conflict must not trigger any turn"))
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))

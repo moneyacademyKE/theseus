@@ -68,7 +68,12 @@
   (let [body (api-get cfg "getUpdates"
                       (cond-> {:headers {"accept" "application/json"}}
                         (load-offset) (assoc :query-params {:offset (load-offset)})))]
-    (or (:result body) [])))
+    (if (and (map? body) (true? (:ok body)))
+      {:updates (or (:result body) []) :conflict? false}
+      {:updates []
+       :conflict? (boolean
+                   (str/includes? (str/lower-case (str (:description body)))
+                                  "conflict"))})))
 
 (defn- attachment-context
   [saved]
@@ -140,7 +145,7 @@
         telegram-cfg (assoc telegram-cfg :token token)
         cfg (assoc cfg :telegram telegram-cfg)
         bot (get-bot telegram-cfg)
-        updates (get-updates telegram-cfg)
+        {:keys [updates conflict?]} (get-updates telegram-cfg)
         seen (atom (load-seen))
         processed (atom 0)]
     (doseq [update updates]
@@ -151,15 +156,18 @@
         (save-seen! @seen)
         (save-offset! (inc (:update_id update)))
         (swap! processed inc)))
-    {:updates @processed}))
+    {:updates @processed :conflict? conflict?}))
 
 (defn poll-loop!
-  "Continuous polling with a sleep between cycles. Stop with ctrl-c."
+  "Continuous polling with a sleep between cycles. Stop with ctrl-c.
+   A getUpdates conflict (another active client) backs off 5x for one
+   cycle instead of hammering the API."
   [& {:keys [interval-ms] :or {interval-ms 2000}}]
   (loop []
     (try
-      (poll-once!)
+      (let [{:keys [conflict?]} (poll-once!)]
+        (Thread/sleep (long (if conflict? (* 5 interval-ms) interval-ms))))
       (catch Exception e
-        (println (str "telegram poll error: " (.getMessage e)))))
-    (Thread/sleep (long interval-ms))
+        (println (str "telegram poll error: " (.getMessage e)))
+        (Thread/sleep (long interval-ms))))
     (recur)))
