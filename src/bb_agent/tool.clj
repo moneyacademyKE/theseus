@@ -3,14 +3,15 @@
             [bb-agent.rtk :as rtk]
             [bb-agent.tool.common :as common]
             [bb-agent.tool.file :as file]
-            [bb-agent.tool.process :as process]))
+            [bb-agent.tool.process :as process]
+            [bb-agent.tool.telegram :as telegram]))
 
 (def normalize-request common/normalize-request)
 (def approval-decision common/approval-decision)
 (def deny-result common/deny-result)
 
 (def ^:private handlers
-  (merge file/handlers process/handlers))
+  (merge file/handlers process/handlers telegram/handlers))
 
 (defn execute-tool-request [request]
   (let [{:tool/keys [name args]} request
@@ -35,9 +36,15 @@
    (let [request (normalize-request request)
          request (cond-> request
                    (and (:cwd cfg)
-                        (contains? #{"shell" "git_status"} (:tool/name request))
+                        (contains? #{"shell" "git_status" "telegram_send_file"}
+                                   (:tool/name request))
                         (nil? (get-in request [:tool/args :cwd])))
-                   (assoc-in [:tool/args :cwd] (:cwd cfg)))
+                   (assoc-in [:tool/args :cwd] (:cwd cfg))
+                   (and (map? (:telegram/send-context cfg))
+                        (= "telegram_send_file" (:tool/name request)))
+                   (assoc-in [:tool/args :telegram-session]
+                             (select-keys (:telegram/send-context cfg)
+                                          [:chat-id :thread-id])))
          approver (:approval/ask cfg)
          result (if-let [verdict (policy/verdict request cfg)]
                   (case verdict

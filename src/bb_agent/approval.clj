@@ -51,6 +51,21 @@
         (assoc pending :approval/decision decision))
       nil)))
 
+(defn resolve-by-id!
+  "Resolve one specific pending approval by id, but only when it belongs
+   to the expected session. Returns the pending with its decision, or nil.
+   Button callbacks bind to a single approval instead of FIFO order."
+  [approval-id session-id decision]
+  (let [state (load-state)
+        pending (get-in state [:pending approval-id])]
+    (when (and pending (= session-id (:session/id pending)))
+      (save-state! (-> state
+                       (assoc-in [:decisions approval-id] decision)
+                       (update :pending dissoc approval-id)
+                       (cond-> (= decision :approve-rest)
+                         (update :approve-rest conj session-id))))
+      (assoc pending :approval/decision decision))))
+
 (defn- consume-decision! [id]
   (let [state (load-state)
         decision (get-in state [:decisions id])]

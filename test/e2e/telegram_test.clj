@@ -4,7 +4,7 @@
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [org.httpkit.server :as server]))
 
 (defn- shell! [home & args]
@@ -225,6 +225,150 @@
             "denied chat must never receive a reply")
         (is (not (fs/exists? (fs/path home "state" "sessions" "telegram-9999.edn")))
             "denied chat must not get a session"))
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))
+
+(defn- run-presence-scenario!
+  "Boot a fake Bot API where setMessageReaction answers with the given
+   status, run one poll-once against a temp home, and return the observed
+   outbound calls as parsed bodies."
+  [reaction-status]
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-presence-"})
+        port (free-port)
+        calls (atom [])
+        stop-server (server/run-server
+                     (fn [req]
+                       (let [uri (:uri req)]
+                         (when (= :post (:request-method req))
+                           (swap! calls conj {:uri uri
+                                              :body (some-> (:body req) slurp)}))
+                         (case uri
+                           "/botTESTTOKEN/getMe"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok true
+                                    :result {:id 8511646577
+                                             :is_bot true
+                                             :username "eileenslybot"}})}
+
+                           "/botTESTTOKEN/getUpdates"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok true
+                                    :result [{:update_id 1
+                                              :message {:message_id 7
+                                                        :chat {:id 4242}
+                                                        :text "say pong"}}]})}
+
+                           "/botTESTTOKEN/sendChatAction"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string {:ok true})}
+
+                           "/botTESTTOKEN/setMessageReaction"
+                           {:status reaction-status
+                            :headers {"content-type" "application/json"}
+                            :body (if (= 200 reaction-status)
+                                    (json/generate-string {:ok true})
+                                    (json/generate-string
+                                     {:ok false
+                                      :error_code 400
+                                      :description "Bad Request: REACTION_INVALID"}))}
+
+                           "/botTESTTOKEN/sendMessage"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string {:ok true :result {:message_id 8}})}
+
+                           {:status 404
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string {:ok false})})))
+                     {:port port})]
+    (try
+      (spit (str (fs/path home "config.edn"))
+            (pr-str {:provider :fake
+                     :model "fake-deterministic"
+                     :telegram {:token "TESTTOKEN"
+                                :base-url (str "http://127.0.0.1:" port)
+                                :allowed-chat-ids [4242]
+                                :typing-indicator true
+                                :react-ack true}}))
+      (let [result (shell! home "telegram" "poll-once")
+            body-for (fn [method]
+                       (some-> (some #(when (str/includes? (:uri %) (str "/" method)) %) @calls)
+                               :body
+                               (json/parse-string keyword)))]
+        {:exit (:exit result)
+         :err (:err result)
+         :typing (body-for "sendChatAction")
+         :reaction (body-for "setMessageReaction")
+         :reply (body-for "sendMessage")})
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))
+
+(deftest presence-signals-accompany-turns-and-never-block-them
+  (let [observed (run-presence-scenario! 200)]
+    (is (= 0 (:exit observed)) (:err observed))
+    (is (= {:chat_id 4242 :action "typing"} (:typing observed)))
+    (is (= {:chat_id 4242 :message_id 7
+            :reaction [{:type "emoji" :emoji "👌"}]}
+           (:reaction observed)))
+    (is (= "pong" (:text (:reply observed)))))
+  (testing "a rejected reaction ack never blocks the turn"
+    (let [observed (run-presence-scenario! 400)]
+      (is (= 0 (:exit observed)) (:err observed))
+      (is (= "pong" (:text (:reply observed)))))))
+
+(deftest get-updates-conflict-is-surfaced-not-fatal
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-conflict-"})
+        port (free-port)
+        calls (atom [])
+        stop-server (server/run-server
+                     (fn [req]
+                       (let [uri (:uri req)]
+                         (when (= :post (:request-method req))
+                           (swap! calls conj {:uri uri}))
+                         (case uri
+                           "/botTESTTOKEN/getMe"
+                           {:status 200
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok true
+                                    :result {:id 8511646577
+                                             :is_bot true
+                                             :username "eileenslybot"}})}
+
+                           "/botTESTTOKEN/getUpdates"
+                           {:status 409
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string
+                                   {:ok false
+                                    :error_code 409
+                                    :description "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"})}
+
+                           {:status 404
+                            :headers {"content-type" "application/json"}
+                            :body (json/generate-string {:ok false})})))
+                     {:port port})
+        config-file (fs/path home "config.edn")]
+    (try
+      (spit (str config-file)
+            (pr-str {:provider :fake
+                     :model "fake-deterministic"
+                     :telegram {:token "TESTTOKEN"
+                                :base-url (str "http://127.0.0.1:" port)
+                                :allowed-chat-ids [4242]}}))
+      (let [result (shell! home "telegram" "poll-once")]
+        (is (= 0 (:exit result)) (:err result))
+        (is (str/includes? (:out result) "telegram-updates=0"))
+        (is (str/includes? (:out result) "telegram-conflict=1")
+            "a getUpdates 409 must be visible in the poll result")
+        (is (not-any? #(str/includes? % "sendMessage") (map :uri @calls))
+            "a conflict must not trigger any turn"))
       (finally
         (stop-server)
         (fs/delete-tree home)))))

@@ -231,8 +231,10 @@
   (let [[subcommand] args]
     (case subcommand
       "poll-once"
-      (let [{:keys [updates]} (telegram/poll-once!)]
-        (println (str "telegram-updates=" updates)))
+      (let [{:keys [updates conflict?]} (telegram/poll-once!)]
+        (println (str "telegram-updates=" updates))
+        (when conflict?
+          (println "telegram-conflict=1 (another getUpdates client is active)")))
 
       "poll"
       (telegram/poll-loop!)

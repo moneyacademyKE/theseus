@@ -114,7 +114,7 @@
                              (filter fs/regular-file?)
                              vec)
             turn (-> session-file str slurp edn/read-string first)]
-        (is (= {:updates 2} result))
+        (is (= 2 (:updates result)))
         (is (= 1 (count get-file-calls)) "denied attachment must not reach getFile")
         (is (not (str/includes? (str (get-in (first get-file-calls) [:query])) "DENIED")))
         (is (= "file_id=AUTHORIZED" (:query (first get-file-calls))))

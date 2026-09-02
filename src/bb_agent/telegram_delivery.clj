@@ -7,7 +7,9 @@
    chunk to plain text, and surface terminal failures as data so callers
    never mistake silence for delivery. HTTP and sleep are injectable for
    deterministic tests."
-  (:require [babashka.http-client :as http]
+  (:require [babashka.fs :as fs]
+            [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [bb-agent.telegram-rich :as tr]
             [cheshire.core :as json]
             [clojure.string :as str]))
@@ -56,45 +58,114 @@
                  (>= status 200)
                  (< status 300))]
     (if ok?
-      {:ok true}
+      {:ok true
+       :message-id (get-in parsed [:result :message_id])}
       {:ok false
        :status status
        :retry-after (safe-long (get-in parsed [:parameters :retry_after]))
        :description (:description parsed)})))
 
 (defn- request-body
-  [chat-id text {:keys [parse-mode thread-id reply-to-message-id]}]
+  [chat-id text {:keys [parse-mode thread-id reply-to-message-id reply-markup]}]
   (cond-> {:chat_id chat-id
            :text text}
     parse-mode (assoc :parse_mode parse-mode)
     thread-id (assoc :message_thread_id thread-id)
-    reply-to-message-id (assoc :reply_parameters {:message_id reply-to-message-id})))
+    reply-to-message-id (assoc :reply_parameters {:message_id reply-to-message-id})
+    reply-markup (assoc :reply_markup (json/generate-string reply-markup))))
+
+(defn- api-request-url
+  [{:keys [base-url token]} method]
+  (str (str/replace (or base-url "https://api.telegram.org") #"/+$" "")
+       "/bot" token "/" method))
+
+(defn- post-api
+  "One result-aware ladder for any Bot API POST: validate the response,
+   retry only Retry-After failures, throw structured terminal data.
+   `request` is the raw http-client request map (JSON body or multipart)."
+  [cfg method request {:keys [chat-id thread-id]} {:keys [transport sleep-fn]}]
+  (loop [attempt 1]
+    (let [failure (parse-response
+                   (transport (api-request-url cfg method)
+                              (assoc request :throw false)))]
+      (cond
+        (:ok failure)
+        {:attempts attempt :message-id (:message-id failure)}
+
+        (and (rate-limit? failure) (< attempt max-attempts))
+        (do (sleep-fn (min (* 1000 (or (:retry-after failure) 5))
+                           max-inline-wait-ms))
+            (recur (inc attempt)))
+
+        :else
+        (deliver-failure failure
+                         {:chat-id chat-id
+                          :thread-id thread-id
+                          :attempts attempt})))))
 
 (defn- post-message
   [cfg chat-id text opts {:keys [transport sleep-fn]}]
-  (let [{:keys [base-url token]} cfg]
-    (loop [attempt 1]
-      (let [failure (parse-response
-                     (transport (str (str/replace (or base-url "https://api.telegram.org") #"/+$" "")
-                                     "/bot" token "/sendMessage")
-                                {:throw false
-                                 :headers {"content-type" "application/json"}
-                                 :body (json/generate-string
-                                        (request-body chat-id text opts))}))]
-        (cond
-          (:ok failure)
-          {:attempts attempt}
+  (post-api cfg "sendMessage"
+            {:headers {"content-type" "application/json"}
+             :body (json/generate-string
+                    (request-body chat-id text opts))}
+            {:chat-id chat-id :thread-id (:thread-id opts)}
+            {:transport transport :sleep-fn sleep-fn}))
 
-          (and (rate-limit? failure) (< attempt max-attempts))
-          (do (sleep-fn (min (* 1000 (or (:retry-after failure) 5))
-                             max-inline-wait-ms))
-              (recur (inc attempt)))
+(def document-max-bytes 52428800)
+(def photo-max-bytes 10485760)
+(def max-caption-chars 1024)
 
-          :else
-          (deliver-failure failure
-                           {:chat-id chat-id
-                            :thread-id (:thread-id opts)
-                            :attempts attempt}))))))
+(def ^:private kind-caps {:document document-max-bytes :photo photo-max-bytes})
+(def ^:private kind-endpoints {:document "sendDocument" :photo "sendPhoto"})
+(def ^:private kind-fields {:document "document" :photo "photo"})
+
+(defn- validate-local-file
+  [path kind max-bytes]
+  (let [file (io/file (str path))]
+    (if (or (str/blank? (str path))
+            (not (fs/exists? file))
+            (not (fs/regular-file? file)))
+      (throw (ex-info (str "Telegram send-file: file not found: " (pr-str (str path)))
+                      {:telegram/send-file? true :kind kind}))
+      (let [size (fs/size file)]
+        (when (> size max-bytes)
+          (throw (ex-info (str "Telegram send-file exceeds the " (name kind)
+                               " byte limit")
+                          {:telegram/send-file? true
+                           :file-size size
+                           :max-bytes max-bytes})))
+        file))))
+
+(defn send-file!
+  "Send one local file as a document or photo through the bounded ladder.
+   Existence, size, and caption length are validated before any network
+   call. Returns {:attempts n :message-id id} or throws structured
+   delivery failure data."
+  ([cfg chat-id path kind] (send-file! cfg chat-id path kind {}))
+  ([cfg chat-id path kind
+    {:keys [caption thread-id max-bytes transport sleep-fn]
+     :or {max-bytes (get kind-caps kind)}
+     :as opts}]
+   (when-not (contains? kind-caps kind)
+     (throw (ex-info (str "Telegram send-file: unsupported kind " (pr-str kind))
+                     {:telegram/send-file? true :kind kind})))
+   (when (and caption (> (count caption) max-caption-chars))
+     (throw (ex-info (str "Telegram send-file caption exceeds "
+                          max-caption-chars " characters")
+                     {:telegram/send-file? true
+                      :caption-chars (count caption)})))
+   (let [file (validate-local-file path kind max-bytes)
+         runtime (merge default-runtime (select-keys opts [:transport :sleep-fn]))
+         parts (cond-> [{:name "chat_id" :content (str chat-id)}]
+                 caption (conj {:name "caption" :content caption})
+                 thread-id (conj {:name "message_thread_id"
+                                  :content (str thread-id)})
+                 :always (conj {:name (get kind-fields kind) :content file}))]
+     (post-api cfg (get kind-endpoints kind)
+               {:multipart parts}
+               {:chat-id chat-id :thread-id thread-id}
+               runtime))))
 
 (def ^:private pre-code-re #"(?s)<(pre|code)[^>]*>(.*?)</\1>")
 (def ^:private link-re #"(?s)<a\s+href=\"([^\"]+)\"[^>]*>(.*?)</a>")
@@ -148,14 +219,42 @@
         (throw error)))))
 
 (defn send-message!
-  "Send one plain text message through the bounded ladder. Returns
-   {:attempts n} or throws structured delivery failure data."
+  "Send one plain text message through the bounded ladder. `:reply-markup`
+   attaches an inline keyboard (serialized once, on the JSON body).
+   Returns {:attempts n :message-id id} or throws structured failure data."
   ([cfg chat-id text] (send-message! cfg chat-id text {}))
   ([cfg chat-id text opts]
    (let [runtime (select-keys opts [:transport :sleep-fn])
          delivery-opts (apply dissoc opts (keys runtime))]
      (post-message cfg chat-id text delivery-opts
                    (merge default-runtime runtime)))))
+
+(defn answer-callback-query!
+  "Answer a callback query so the clicker's spinner stops. The text is the
+   truthful receipt shown as a toast. Rides the bounded ladder."
+  ([cfg callback-query-id text] (answer-callback-query! cfg callback-query-id text {}))
+  ([cfg callback-query-id text {:keys [transport sleep-fn] :as opts}]
+   (post-api cfg "answerCallbackQuery"
+             {:headers {"content-type" "application/json"}
+              :body (json/generate-string
+                     {:callback_query_id callback-query-id :text text})}
+             {}
+             (merge default-runtime (select-keys opts [:transport :sleep-fn])))))
+
+(defn edit-message-text!
+  "Replace a sent message's text and drop its inline keyboard, so a decided
+   approval can never be clicked twice. Rides the bounded ladder."
+  ([cfg chat-id message-id text] (edit-message-text! cfg chat-id message-id text {}))
+  ([cfg chat-id message-id text {:keys [transport sleep-fn] :as opts}]
+   (post-api cfg "editMessageText"
+             {:headers {"content-type" "application/json"}
+              :body (json/generate-string
+                     {:chat_id chat-id
+                      :message_id message-id
+                      :text text
+                      :reply_markup {}})}
+             {:chat-id chat-id}
+             (merge default-runtime (select-keys opts [:transport :sleep-fn])))))
 
 (defn send-html!
   "Send an HTML message, split into Telegram-safe chunks. Every chunk rides
