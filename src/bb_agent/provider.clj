@@ -2,7 +2,8 @@
   (:require [babashka.http-client :as http]
             [cheshire.core :as json]
             [clojure.string :as str]
-            [bb-agent.tools :as tools]))
+            [bb-agent.tools :as tools]
+            [bb-agent.vision :as vision]))
 
 (defmulti complete (fn [provider _request] provider))
 
@@ -171,18 +172,39 @@
                  [] next-id))
         out))))
 
-(defmethod complete :openai-compatible [_ {:keys [model messages provider/config]}]
+(defn- vision-rejection?
+  "True only when a request that carried images is 400'd AND the error body
+   itself names image/vision handling. Unrelated 400s must not degrade —
+   they fail loudly, exactly like the delivery fallback boundary."
+  [status body images]
+  (and (seq images)
+       (= 400 (long (or status 0)))
+       (boolean
+        (re-find #"(?i)image|vision|multimodal"
+                 (pr-str body)))))
+
+(defmethod complete :openai-compatible [_ {:keys [model messages images provider/config]}]
   (let [_base-url (require-config config :base-url)
         api-key (require-config config :api-key)
-        response (http/post (openai-url config)
-                            {:headers {"authorization" (str "Bearer " api-key)
-                                       "content-type" "application/json"}
-                             :throw false
-                             :timeout (or (:timeout-ms config) 60000)
-                             :body (json/generate-string {:model model
-                                                          :messages (openai-wire-messages messages)
-                                                          :tools tools/definitions})})
-        body (json/parse-string (:body response) keyword)
+        post! (fn [imgs]
+                (http/post (openai-url config)
+                           {:headers {"authorization" (str "Bearer " api-key)
+                                      "content-type" "application/json"}
+                            :throw false
+                            :timeout (or (:timeout-ms config) 60000)
+                            :body (json/generate-string
+                                   {:model model
+                                    :messages (openai-wire-messages
+                                               (vision/attach-to-first-user messages imgs :openai))
+                                    :tools tools/definitions})}))
+        first-resp (post! images)
+        first-body (json/parse-string (:body first-resp) keyword)
+        [response body vision-degraded?]
+        (if (vision-rejection? (:status first-resp) first-body images)
+          (let [r (post! nil)
+                b (json/parse-string (:body r) keyword)]
+            [r b true])
+          [first-resp first-body false])
         status (:status response)
         message (get-in body [:choices 0 :message])
         content (:content message)
@@ -196,7 +218,8 @@
     (cond-> {:role :assistant}
       (not (str/blank? content)) (assoc :content content)
       (:usage body) (assoc :usage (openai-usage body))
-      (seq tool-calls) (assoc :tool/requests (mapv openai-tool-request tool-calls)))))
+      (seq tool-calls) (assoc :tool/requests (mapv openai-tool-request tool-calls))
+      vision-degraded? (assoc :vision/degraded true))))
 
 (defn- anthropic-url [{:keys [base-url]}]
   (str (str/replace (or base-url "") #"/+$" "") "/messages"))
@@ -226,19 +249,29 @@
      :tokens/cache-read (or (:cache_read_input_tokens usage) 0)
      :tokens/cache-write (or (:cache_creation_input_tokens usage) 0)}))
 
-(defmethod complete :anthropic-compatible [_ {:keys [model messages provider/config]}]
+(defmethod complete :anthropic-compatible [_ {:keys [model messages images provider/config]}]
   (let [_base-url (require-config config :base-url)
         api-key (require-config config :api-key)
-        response (http/post (anthropic-url config)
-                            {:headers {"x-api-key" api-key
-                                       "anthropic-version" "2023-06-01"
-                                       "content-type" "application/json"}
-                             :throw false
-                             :timeout 60000
-                             :body (json/generate-string {:model model
-                                                          :max_tokens 4096
-                                                          :messages messages})})
-        body (json/parse-string (:body response) keyword)
+        post! (fn [imgs]
+                (http/post (anthropic-url config)
+                           {:headers {"x-api-key" api-key
+                                      "anthropic-version" "2023-06-01"
+                                      "content-type" "application/json"}
+                            :throw false
+                            :timeout 60000
+                            :body (json/generate-string
+                                   {:model model
+                                    :max_tokens 4096
+                                    :messages (vision/attach-to-first-user
+                                               messages imgs :anthropic)})}))
+        first-resp (post! images)
+        first-body (json/parse-string (:body first-resp) keyword)
+        [response body vision-degraded?]
+        (if (vision-rejection? (:status first-resp) first-body images)
+          (let [r (post! nil)
+                b (json/parse-string (:body r) keyword)]
+            [r b true])
+          [first-resp first-body false])
         status (:status response)
         content-blocks (:content body)]
     (when (or (nil? status) (>= status 400))
@@ -248,7 +281,8 @@
       (throw (ex-info "Provider response did not include content"
                       {:status status})))
     (cond-> (anthropic-extract content-blocks)
-      (:usage body) (assoc :usage (anthropic-usage body)))))
+      (:usage body) (assoc :usage (anthropic-usage body))
+      vision-degraded? (assoc :vision/degraded true))))
 
 (defmethod complete :default [provider _]
   (throw (ex-info (str "Unsupported provider: " provider)

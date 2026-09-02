@@ -142,6 +142,7 @@
         provider (:provider cfg)
         model (:model cfg)
         id (:session/id cfg)
+        user-images (:user/images cfg)
         metadata (session/load-metadata id)
         cfg (cond-> cfg
               (:cwd metadata) (assoc :cwd (:cwd metadata)))
@@ -161,6 +162,7 @@
                      :messages messages
                      :memory/matches memory-matches
                      :provider/config (get-in cfg [:providers provider])}
+            request (cond-> request (seq user-images) (assoc :images user-images))
             response (complete-chain cfg request)
             tool-requests (:tool/requests response)
             tool-results (when (seq tool-requests)
