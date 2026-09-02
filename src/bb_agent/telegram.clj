@@ -7,6 +7,7 @@
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-group :as group]
+            [bb-agent.telegram-extract :as extract]
             [bb-agent.telegram-guard :as guard]
             [bb-agent.telegram-presence :as presence]
             [bb-agent.telegram-rich :as tr]
@@ -76,13 +77,21 @@
                                   "conflict"))})))
 
 (defn- attachment-context
-  [saved]
+  [telegram-cfg saved]
   (when saved
-    (str "\n[Telegram attachment: " (:path saved)
-         "; kind=" (name (:kind saved))
-         (when-let [mime-type (:mime-type saved)]
-           (str "; mime=" mime-type))
-         "; bytes=" (:bytes saved) "]")))
+    (let [text (extract/extract-text
+                saved
+                {:max-chars (or (:attachment-text-max-chars telegram-cfg)
+                                20000)})]
+      (str "\n[Telegram attachment: " (:path saved)
+           "; kind=" (name (:kind saved))
+           (when-let [mime-type (:mime-type saved)]
+             (str "; mime=" mime-type))
+           "; bytes=" (:bytes saved) "]"
+           "\n[Attachment content begin]\n"
+           (or text
+               "[text extraction unavailable; the persisted bytes remain available at the path above]")
+           "\n[Attachment content end]"))))
 
 (defn- send-approval-request!
   [cfg chat-id thread-id pending]
@@ -117,7 +126,7 @@
            {:thread-id thread-id})
           (let [saved (attachment/persist! (config/home) telegram-cfg message)
                 input-message (assoc message :text
-                                     (str text (attachment-context saved)))
+                                     (str text (attachment-context telegram-cfg saved)))
                 _ (when (:typing-indicator telegram-cfg true)
                     (presence/typing! telegram-cfg chat-id {:thread-id thread-id}))
                 turn (core/run-turn!
