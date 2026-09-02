@@ -50,4 +50,14 @@
      :parameters
      {:type "object"
       :properties {"cwd" {:type "string" :description "Repository directory (optional)"}}
-      :required []}}}])
+      :required []}}}
+   {:type "function"
+    :function
+    {:name "telegram_send_file"
+     :description "Send a local file to the current Telegram chat as a document or photo (Telegram sessions only)."
+     :parameters
+     {:type "object"
+      :properties {"path" {:type "string" :description "Local file path to send"}
+                   "caption" {:type "string" :description "Optional caption (max 1024 characters)"}
+                   "photo?" {:type "boolean" :description "Send as photo instead of document (optional)"}}
+      :required ["path"]}}}])

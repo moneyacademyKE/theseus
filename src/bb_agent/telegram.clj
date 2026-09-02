@@ -152,6 +152,8 @@
                       (assoc cfg
                              :session/id session-id
                              :session/shared? (group/group-chat? message)
+                             :telegram/send-context {:chat-id chat-id
+                                                     :thread-id thread-id}
                              :approval/ask
                              (approval/waiting-approver
                               {:session-id session-id
@@ -193,6 +195,8 @@
                   (assoc cfg
                          :session/id session-id
                          :session/shared? (group/group-chat? primary)
+                         :telegram/send-context {:chat-id chat-id
+                                                 :thread-id thread-id}
                          :approval/ask
                          (approval/waiting-approver
                           {:session-id session-id
