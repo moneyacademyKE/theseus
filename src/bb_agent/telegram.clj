@@ -13,6 +13,7 @@
             [bb-agent.telegram-guard :as guard]
             [bb-agent.telegram-presence :as presence]
             [bb-agent.telegram-rich :as tr]
+            [bb-agent.telegram-voice :as voice]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]))
@@ -81,18 +82,21 @@
 (defn- attachment-context
   [telegram-cfg saved]
   (when saved
-    (let [text (extract/extract-text
-                saved
-                {:max-chars (or (:attachment-text-max-chars telegram-cfg)
-                                20000)})]
+    (let [voice-kind? (contains? #{:voice} (:kind saved))
+          body (if voice-kind?
+                 (voice/annotation telegram-cfg saved)
+                 (or (extract/extract-text
+                      saved
+                      {:max-chars (or (:attachment-text-max-chars telegram-cfg)
+                                      20000)})
+                     "[text extraction unavailable; the persisted bytes remain available at the path above]"))]
       (str "\n[Telegram attachment: " (:path saved)
            "; kind=" (name (:kind saved))
            (when-let [mime-type (:mime-type saved)]
              (str "; mime=" mime-type))
            "; bytes=" (:bytes saved) "]"
            "\n[Attachment content begin]\n"
-           (or text
-               "[text extraction unavailable; the persisted bytes remain available at the path above]")
+           body
            "\n[Attachment content end]"))))
 
 (defn- handle-edited!
