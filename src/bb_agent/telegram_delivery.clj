@@ -66,12 +66,13 @@
        :description (:description parsed)})))
 
 (defn- request-body
-  [chat-id text {:keys [parse-mode thread-id reply-to-message-id]}]
+  [chat-id text {:keys [parse-mode thread-id reply-to-message-id reply-markup]}]
   (cond-> {:chat_id chat-id
            :text text}
     parse-mode (assoc :parse_mode parse-mode)
     thread-id (assoc :message_thread_id thread-id)
-    reply-to-message-id (assoc :reply_parameters {:message_id reply-to-message-id})))
+    reply-to-message-id (assoc :reply_parameters {:message_id reply-to-message-id})
+    reply-markup (assoc :reply_markup (json/generate-string reply-markup))))
 
 (defn- api-request-url
   [{:keys [base-url token]} method]
@@ -218,14 +219,42 @@
         (throw error)))))
 
 (defn send-message!
-  "Send one plain text message through the bounded ladder. Returns
-   {:attempts n} or throws structured delivery failure data."
+  "Send one plain text message through the bounded ladder. `:reply-markup`
+   attaches an inline keyboard (serialized once, on the JSON body).
+   Returns {:attempts n :message-id id} or throws structured failure data."
   ([cfg chat-id text] (send-message! cfg chat-id text {}))
   ([cfg chat-id text opts]
    (let [runtime (select-keys opts [:transport :sleep-fn])
          delivery-opts (apply dissoc opts (keys runtime))]
      (post-message cfg chat-id text delivery-opts
                    (merge default-runtime runtime)))))
+
+(defn answer-callback-query!
+  "Answer a callback query so the clicker's spinner stops. The text is the
+   truthful receipt shown as a toast. Rides the bounded ladder."
+  ([cfg callback-query-id text] (answer-callback-query! cfg callback-query-id text {}))
+  ([cfg callback-query-id text {:keys [transport sleep-fn] :as opts}]
+   (post-api cfg "answerCallbackQuery"
+             {:headers {"content-type" "application/json"}
+              :body (json/generate-string
+                     {:callback_query_id callback-query-id :text text})}
+             {}
+             (merge default-runtime (select-keys opts [:transport :sleep-fn])))))
+
+(defn edit-message-text!
+  "Replace a sent message's text and drop its inline keyboard, so a decided
+   approval can never be clicked twice. Rides the bounded ladder."
+  ([cfg chat-id message-id text] (edit-message-text! cfg chat-id message-id text {}))
+  ([cfg chat-id message-id text {:keys [transport sleep-fn] :as opts}]
+   (post-api cfg "editMessageText"
+             {:headers {"content-type" "application/json"}
+              :body (json/generate-string
+                     {:chat_id chat-id
+                      :message_id message-id
+                      :text text
+                      :reply_markup {}})}
+             {:chat-id chat-id}
+             (merge default-runtime (select-keys opts [:transport :sleep-fn])))))
 
 (defn send-html!
   "Send an HTML message, split into Telegram-safe chunks. Every chunk rides

@@ -116,7 +116,8 @@
                                  [e2e.telegram-presence-test]
                                  [e2e.telegram-media-test]
                                  [e2e.telegram-send-file-test]
-                                 [e2e.telegram-voice-test])
+                                 [e2e.telegram-voice-test]
+                                 [e2e.telegram-approvals-test])
                       :task (let [{:keys [fail error]}
                                   (t/run-tests 'e2e.telegram-test
                                                'e2e.telegram-delivery-test
@@ -125,9 +126,18 @@
                                                'e2e.telegram-presence-test
                                                'e2e.telegram-media-test
                                                'e2e.telegram-send-file-test
-                                               'e2e.telegram-voice-test)]
+                                               'e2e.telegram-voice-test
+                                               'e2e.telegram-approvals-test)]
                               (when (pos? (+ fail error))
                                 (System/exit 1)))}
+   test:e2e:telegram-approvals {:doc "Run Telegram inline-button approval tests."
+                                :extra-paths ["test"]
+                                :requires ([clojure.test :as t]
+                                           [e2e.telegram-approvals-test])
+                                :task (let [{:keys [fail error]}
+                                            (t/run-tests 'e2e.telegram-approvals-test)]
+                                        (when (pos? (+ fail error))
+                                          (System/exit 1)))}
    test:e2e:telegram-send-file {:doc "Run Telegram outbound send-file tests."
                                 :extra-paths ["test"]
                                 :requires ([clojure.test :as t]
