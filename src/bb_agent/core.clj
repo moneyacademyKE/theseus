@@ -1,6 +1,7 @@
 (ns bb-agent.core
   (:require [bb-agent.brain :as brain]
             [bb-agent.circuit-breaker :as cb]
+            [bb-agent.compression :as compression]
             [bb-agent.fallback :as fallback]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
@@ -85,11 +86,43 @@
   {:role :system
    :content (str "Agent brain (identity & conventions):\n" brain)})
 
-(defn- initial-messages [prompt memory-matches semantic-ctx brain-ctx]
+(defn- history-messages
+  "Prior session turns as alternating user/assistant wire messages.
+   Bounded by :history-budget-chars (default 24000): over budget, old
+   middle turns are compacted by bb-agent.compression — head kept, the
+   most recent ~25% kept verbatim, tool payloads pruned, the middle
+   summarized through the provider chain."
+  [cfg session-id]
+  (when session-id
+    (let [pairs (->> (session/load-turns session-id)
+                     (keep (fn [{:keys [user/input assistant/final]}]
+                             (when (and (seq input) (seq final))
+                               [{:role :user :content input}
+                                {:role :assistant :content final}])))
+                     (apply concat)
+                     vec)]
+      (when (seq pairs)
+        (let [budget (or (:history-budget-chars cfg) 24000)]
+          (if (<= (compression/count-chars pairs) budget)
+            pairs
+            (compression/compress pairs
+                                  {:protect-first 0
+                                   :tail-char-budget (max 200 (quot budget 4))
+                                   :call-llm-fn (fn [prompt]
+                                                  (:content
+                                                   (complete-chain
+                                                    cfg
+                                                    {:provider (:provider cfg)
+                                                     :model (:model cfg)
+                                                     :messages [{:role :user :content prompt}]
+                                                     :provider/config (get-in cfg [:providers (:provider cfg)])})))})))))))
+
+(defn- initial-messages [prompt memory-matches semantic-ctx brain-ctx history]
   (cond-> []
     (seq memory-matches) (conj (memory-system-message memory-matches))
     semantic-ctx (conj (semantic-system-message semantic-ctx))
     (seq brain-ctx) (conj (brain-system-message brain-ctx))
+    true (into (or history []))
     true (conj {:role :user :content prompt})))
 
 (defn- tool-call-message [tool-requests]
@@ -157,7 +190,8 @@
         semantic-ctx (when-not shared?
                        (semantic-memory/attach-context prompt cfg))
         brain-ctx (brain/load-brain)]
-    (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx)
+    (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx
+                                      (history-messages cfg id))
            turn {:tool/requests []
                  :tool/results []}
            rounds-left max-tool-rounds]
