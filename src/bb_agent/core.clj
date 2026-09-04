@@ -140,9 +140,11 @@
 (defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
   (let [cfg (model/effective-config cfg)
         provider (:provider cfg)
-        model (:model cfg)
         id (:session/id cfg)
         user-images (:user/images cfg)
+        model (if (and (seq user-images) (:vision-model cfg))
+                (:vision-model cfg)
+                (:model cfg))
         metadata (session/load-metadata id)
         cfg (cond-> cfg
               (:cwd metadata) (assoc :cwd (:cwd metadata)))

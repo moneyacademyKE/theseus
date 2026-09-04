@@ -252,3 +252,29 @@
       (is (= "image/jpeg" (:mime-type (first (:images (first @captured))))))
       (finally
         (fs/delete-tree home)))))
+
+(deftest run-turn-uses-vision-model-for-image-turns-only
+  (let [home (fs/create-temp-dir {:prefix "theseus-vision-model-"})
+        captured (atom [])]
+    (try
+      (with-redefs [config/home (fn [] (str home))
+                    provider/complete (fn [_ request]
+                                        (swap! captured conj request)
+                                        {:role :assistant :content "ok"})]
+        (core/run-turn! {:provider :fake
+                         :model "primary-multimodal"
+                         :vision-model "zai/glm-4.6v"
+                         :session/id "vision-model-img"
+                         :user/images [(temp-image home)]}
+                        "describe")
+        (core/run-turn! {:provider :fake
+                         :model "primary-multimodal"
+                         :vision-model "zai/glm-4.6v"
+                         :session/id "vision-model-plain"}
+                        "no images here"))
+      (is (= "zai/glm-4.6v" (:model (first @captured)))
+          "image turns ride the vision model")
+      (is (= "primary-multimodal" (:model (second @captured)))
+          "text turns keep the primary model")
+      (finally
+        (fs/delete-tree home)))))
