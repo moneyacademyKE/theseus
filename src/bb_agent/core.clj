@@ -146,8 +146,12 @@
                 (:vision-model cfg)
                 (:model cfg))
         metadata (session/load-metadata id)
-        cfg (cond-> cfg
-              (:cwd metadata) (assoc :cwd (:cwd metadata)))
+        cfg (-> cfg
+                (cond-> (:cwd metadata) (assoc :cwd (:cwd metadata)))
+                ;; Record the model that will actually serve the turn —
+                ;; image turns use :vision-model, and usage stats must not
+                ;; credit the primary model for a fallback/vision serving.
+                (assoc :model model))
         shared? (:session/shared? cfg)
         memory-matches (if shared? [] (memory/attach-memories prompt))
         semantic-ctx (when-not shared?
