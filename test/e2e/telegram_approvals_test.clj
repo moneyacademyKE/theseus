@@ -3,6 +3,7 @@
             [bb-agent.approval :as approval]
             [bb-agent.config :as config]
             [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-guard :as guard]
             [cheshire.core :as json]
@@ -37,16 +38,16 @@
 (deftest callback-data-parses-to-bounded-actions
   (testing "approve, deny, and approve-rest parse with their approval id"
     (is (= {:action :approve :approval-id approval-id}
-           (telegram/parse-callback-data (str "appr:" approval-id))))
+           (approval-ui/parse-callback-data (str "appr:" approval-id))))
     (is (= {:action :deny :approval-id approval-id}
-           (telegram/parse-callback-data (str "deny:" approval-id))))
+           (approval-ui/parse-callback-data (str "deny:" approval-id))))
     (is (= {:action :approve-rest :approval-id approval-id}
-           (telegram/parse-callback-data (str "apprrest:" approval-id)))))
+           (approval-ui/parse-callback-data (str "apprrest:" approval-id)))))
   (testing "anything else is not an approval callback"
-    (is (nil? (telegram/parse-callback-data "junk")))
-    (is (nil? (telegram/parse-callback-data "appr:")))
-    (is (nil? (telegram/parse-callback-data "")))
-    (is (nil? (telegram/parse-callback-data nil)))))
+    (is (nil? (approval-ui/parse-callback-data "junk")))
+    (is (nil? (approval-ui/parse-callback-data "appr:")))
+    (is (nil? (approval-ui/parse-callback-data "")))
+    (is (nil? (approval-ui/parse-callback-data nil)))))
 
 (deftest resolve-by-id-applies-only-the-matching-session
   (let [home (fs/create-temp-dir {:prefix "theseus-approvals-unit-"})]
@@ -119,7 +120,7 @@
          {:port port})]
     (try
       (with-redefs [config/home (fn [] (str home))]
-        (telegram/send-approval-request!
+        (approval-ui/send-approval-request!
          {:token "TESTTOKEN" :base-url (str "http://127.0.0.1:" port)}
          group-id topic-id
          {:approval/id approval-id :tool/name "shell"
@@ -144,7 +145,7 @@
                         (mapv :callback_data buttons))))
           (testing "every button data parses back to its action"
             (is (= [:approve :deny :approve-rest]
-                   (mapv #(-> % :callback_data telegram/parse-callback-data :action)
+                   (mapv #(-> % :callback_data approval-ui/parse-callback-data :action)
                          buttons))))
           (testing "the text names the tool and the id"
             (is (str/includes? (:text send) "shell"))

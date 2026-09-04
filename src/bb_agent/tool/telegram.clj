@@ -7,6 +7,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.telegram-delivery :as delivery]
+            [bb-agent.telegram-upload :as upload]
             [bb-agent.tool.common :as common]
             [clojure.string :as str]))
 
@@ -29,7 +30,7 @@
                      raw-path
                      (str (fs/file (or (some-> (arg args :cwd) str) ".") raw-path)))
               kind (if (arg args :photo?) :photo :document)
-              result (delivery/send-file!
+              result (upload/send-file!
                       (:telegram (config/load-config)) chat-id path kind
                       {:caption (arg args :caption)
                        :thread-id (:thread-id session)})]

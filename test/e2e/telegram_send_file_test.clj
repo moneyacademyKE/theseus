@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.telegram-delivery :as delivery]
+            [bb-agent.telegram-upload :as upload]
             [bb-agent.tool :as tool]
             [bb-agent.tools :as tools]
             [cheshire.core :as json]
@@ -37,7 +38,7 @@
           _ (spit (str path) "report body")
           responses (atom [(response 200 {:ok true :result {:message_id 77}})])
           calls (atom [])
-          result (delivery/send-file!
+          result (upload/send-file!
                   telegram-config -1001 (str path) :document
                   {:caption "probe report"
                    :thread-id 4721
@@ -57,7 +58,7 @@
           _ (spit (str path) "png")
           responses (atom [(response 200 {:ok true :result {:message_id 8}})])
           calls (atom [])
-          _ (delivery/send-file!
+          _ (upload/send-file!
              telegram-config 42 (str path) :photo
              {:transport (scripted-transport responses calls)})]
       (is (str/ends-with? (:url (first @calls)) "/botTESTTOKEN/sendPhoto"))
@@ -74,7 +75,7 @@
                            (response 200 {:ok true :result {:message_id 5}})])
           calls (atom [])
           sleeps (atom [])
-          result (delivery/send-file!
+          result (upload/send-file!
                   telegram-config 42 (str path) :document
                   {:transport (scripted-transport responses calls)
                    :sleep-fn #(swap! sleeps conj %)})]
@@ -91,7 +92,7 @@
                                           :description "FILE_PARTS_INVALID"})])
           calls (atom [])]
       (try
-        (delivery/send-file!
+        (upload/send-file!
          telegram-config 42 (str path) :document
          {:transport (scripted-transport responses calls)})
         (is false "terminal failure must throw")
@@ -105,7 +106,7 @@
   (testing "a missing file is refused without touching the network"
     (let [calls (atom [])]
       (try
-        (delivery/send-file!
+        (upload/send-file!
          telegram-config 42 "/nonexistent/report.pdf" :document
          {:transport (scripted-transport (atom []) calls)})
         (is false "missing file must be refused")
@@ -119,7 +120,7 @@
           _ (spit (str path) (apply str (repeat 100 "x")))
           calls (atom [])]
       (try
-        (delivery/send-file!
+        (upload/send-file!
          telegram-config 42 (str path) :document
          {:max-bytes 10
           :transport (scripted-transport (atom []) calls)})
@@ -135,7 +136,7 @@
           _ (spit (str path) "x")
           calls (atom [])]
       (try
-        (delivery/send-file!
+        (upload/send-file!
          telegram-config 42 (str path) :document
          {:caption (apply str (repeat 1025 "x"))
           :transport (scripted-transport (atom []) calls)})
