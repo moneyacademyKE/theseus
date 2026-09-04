@@ -1,6 +1,7 @@
 (ns e2e.telegram-media-only-test
   "Media-only messages (no text, no caption) must persist and run a turn.
-   Regression guard: these were silently consumed before bk-f48b."
+   Regression guard: these were silently consumed before bk-f48b.
+   Photo turns must also carry the image into the provider (vision path)."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.telegram :as telegram]
@@ -62,6 +63,7 @@
       (spit (str config-file)
             (pr-str {:provider :fake
                      :model "fake-deterministic"
+                     :vision-model "fake-vision"
                      :telegram {:token "TESTTOKEN"
                                 :base-url (str "http://127.0.0.1:" port)
                                 :attachment-max-bytes 10240
@@ -84,12 +86,19 @@
        (filter #(str/includes? (:uri %) "sendMessage"))
        (mapv #(json/parse-string (:body %) keyword))))
 
-(defn- turn-input
+(defn- turn-map
   [result]
   (when-let [session-file (:session-file result)]
     (when (fs/exists? session-file)
-      (let [turns (edn/read-string (slurp (str session-file)))]
-        (:user/input (first turns))))))
+      (first (edn/read-string (slurp (str session-file)))))))
+
+(defn- turn-input
+  [result]
+  (:user/input (turn-map result)))
+
+(defn- turn-model
+  [result]
+  (:model (turn-map result)))
 
 (deftest captionless-photo-runs-a-turn-and-persists
   (let [result (run-media-only-poll
@@ -113,7 +122,10 @@
             "reply should quote the photo message")))
     (testing "the session records the turn with the persisted path"
       (is (some? input) "expected a recorded turn")
-      (is (every? #(str/includes? input (str %)) saved)))))
+      (is (every? #(str/includes? input (str %)) saved)))
+    (testing "the photo reaches the provider as a vision image"
+      (is (= "fake-vision" (turn-model result))
+          "image turns must switch to the vision model (only happens when :user/images is attached)"))))
 
 (deftest voice-note-runs-a-turn-with-honest-annotation
   (let [result (run-media-only-poll
@@ -134,4 +146,7 @@
       (is (some? input) "expected a recorded turn")
       (is (str/includes? input "[Telegram attachment")
           "expected the attachment envelope in the turn input")
-      (is (every? #(str/includes? input (str %)) saved)))))
+      (is (every? #(str/includes? input (str %)) saved)))
+    (testing "voice turns keep the primary model"
+      (is (= "fake-deterministic" (turn-model result))
+          "no images present: the primary model must serve the turn"))))

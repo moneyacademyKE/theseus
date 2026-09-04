@@ -124,6 +124,12 @@
                              :session/shared? (group/group-chat? message)
                              :telegram/send-context {:chat-id chat-id
                                                      :thread-id thread-id}
+                             :user/images (when (and saved
+                                                     (str/starts-with?
+                                                      (or (:mime-type saved) "")
+                                                      "image/"))
+                                            [{:path (:path saved)
+                                              :mime-type (:mime-type saved)}])
                              :approval/ask
                              (approval/waiting-approver
                               {:session-id session-id
