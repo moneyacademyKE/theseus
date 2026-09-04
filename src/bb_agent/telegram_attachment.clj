@@ -152,3 +152,9 @@
                   :chat-id (get-in message [:chat :id])
                   :thread-id (when (true? (:is_topic_message message))
                                (:message_thread_id message)))))))))
+
+(defn persistable?
+  "True when the message carries media that persist! can store (any of the
+   normalized kinds: document, photo, video, audio, voice, animation, note)."
+  [message]
+  (some? (attachment message)))

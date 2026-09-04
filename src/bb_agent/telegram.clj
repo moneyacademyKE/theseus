@@ -89,13 +89,20 @@
   (let [chat-id (get-in message [:chat :id])
         thread-id (group/topic-id message)
         session-id (group/session-id message)
-        text (group/normalize-command (or (:text message) (:caption message)) bot)]
-    (when (and (seq text)
-               (guard/message-allowed? cfg message)
+        text (group/normalize-command (or (:text message) (:caption message)) bot)
+        telegram-cfg (:telegram cfg)
+        authorized? (guard/message-allowed? cfg message)
+        ;; Authorized media persists even without text — voice notes and bare
+        ;; photos are real inputs, not noise (and voice gets transcribed by
+        ;; attachment-context via stt-bin).
+        saved (when (and authorized? (attachment/persistable? message))
+                (attachment/persist! (config/home) telegram-cfg message))]
+    (when (and authorized?
+               (or (seq text) saved)
                (or (approval/telegram-approval-reply text)
-                   (group/should-respond? cfg bot (assoc message :text text))))
-      (let [telegram-cfg (:telegram cfg)]
-        (when (:react-ack telegram-cfg true)
+                   (group/should-respond?
+                    cfg bot (assoc message :text (or (not-empty text) "[media]")))))
+      (when (:react-ack telegram-cfg true)
           (presence/reaction! telegram-cfg chat-id (:message_id message)))
         (if-let [decision (approval/telegram-approval-reply text)]
           (delivery/send-message!
@@ -105,7 +112,6 @@
             decision)
            {:thread-id thread-id})
           (let [edit-context (or (edit-notes-context session-id) "")
-                saved (attachment/persist! (config/home) telegram-cfg message)
                 input-message (assoc message :text
                                      (str edit-context
                                           text
@@ -129,8 +135,8 @@
             (delivery/send-html!
              telegram-cfg chat-id
              (tr/to-html (:assistant/final turn))
-             {:thread-id thread-id
-              :reply-to-message-id (:message_id message)})))))))
+              {:thread-id thread-id
+               :reply-to-message-id (:message_id message)}))))))
 
 (defn- process-album!
   "Run one turn for a media-group batch. The captioned member activates the
