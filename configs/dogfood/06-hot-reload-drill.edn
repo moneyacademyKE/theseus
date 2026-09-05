@@ -1,0 +1,24 @@
+{:comment "Dogfood L6 -- hot-reload drill. Use opencode to improve or repair hot-reload behavior under the existing integration tests."
+ :name "dogfood-06-hot-reload-drill"
+ :workdir "."
+ :lock "./.axiom-dogfood-06.lock"
+ :log-dir "./.axiom-logs-dogfood-06"
+ :models ["opencode-default" "opencode-strong"]
+ :hot-reload true
+ :observers {:hotreload-tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.phase4-hotreload-test >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :full-tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.config 'axiom.core)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+             :hotreload-coverage {:sh "grep -R -E \"hot-reload|maybe-reload|config-path\" -n src/axiom test/axiom | wc -l | tr -d ' '" :parse :int}}
+ :goal {:op :and
+        :exprs [{:op := :ref :hotreload-tests-ok :value "pass"}
+                {:op := :ref :full-tests-ok :value "pass"}]}
+ :axiom-bundle :clj-build
+ :progress [:hotreload-tests-ok :hotreload-coverage]
+ :act {:harness :opencode
+       :prompt "Exercise and harden Axiom hot-reload semantics. Preserve opt-in behavior, validate swapped configs before use, keep run-owned fields fixed, and preserve run-state counters across swaps. Update tests only to capture real semantics, not to hide failures. Current hot-reload tests={{hotreload-tests-ok}}, full suite={{full-tests-ok}}."}
+ :checkpoint {:tag-prefix "axiom-dogfood-06"}
+ :stall-after 3
+ :thrash-after 4
+ :max-rollbacks 2
+ :identical-retry-guard true}

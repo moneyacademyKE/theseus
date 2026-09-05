@@ -1,0 +1,26 @@
+{:comment "Dogfood L1 -- use opencode for low-risk documentation/reference drift. Success is objective: required docs exist and mention core release surfaces. Harness self-report is ignored."
+ :name "dogfood-01-doc-link-check"
+ :workdir "."
+ :lock "./.axiom-dogfood-01.lock"
+ :log-dir "./.axiom-logs-dogfood-01"
+ :models ["opencode-default"]
+ :observers {:readme-has-config {:sh "grep -q 'CONFIG.md' README.md && echo pass || echo fail" :parse :string}
+             :readme-has-release {:sh "grep -q 'RELEASE.md' README.md && echo pass || echo fail" :parse :string}
+             :config-has-harness {:sh "grep -q 'Harness act' CONFIG.md && grep -q 'opencode' CONFIG.md && echo pass || echo fail" :parse :string}
+             :release-has-gate {:sh "grep -q 'Release gate' RELEASE.md && echo pass || echo fail" :parse :string}
+             :tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.core)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}}
+ :goal {:op :and
+        :exprs [{:op := :ref :readme-has-config :value "pass"}
+                {:op := :ref :readme-has-release :value "pass"}
+                {:op := :ref :config-has-harness :value "pass"}
+                {:op := :ref :release-has-gate :value "pass"}]}
+ :axiom-bundle :clj-build
+ :progress [:readme-has-config :readme-has-release :config-has-harness :release-has-gate]
+ :act {:harness :opencode
+       :prompt "You are being supervised by Axiom. Fix only documentation/reference drift so README.md, CONFIG.md, and RELEASE.md consistently describe config references, release validation, and opencode harness usage. Do not claim success; make the files satisfy the checks. Keep source code untouched unless a doc statement is provably impossible. Current facts: README CONFIG={{readme-has-config}}, README RELEASE={{readme-has-release}}, CONFIG harness={{config-has-harness}}, RELEASE gate={{release-has-gate}}."}
+ :checkpoint {:tag-prefix "axiom-dogfood-01"}
+ :stall-after 2
+ :thrash-after 3
+ :max-rollbacks 1
+ :identical-retry-guard true}

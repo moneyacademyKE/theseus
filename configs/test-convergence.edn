@@ -1,0 +1,15 @@
+{:comment    "test-convergence -- run a test suite until it converges green. Integrity = :clj-build (build + tests green), dogfooding Axiom's own Babashka toolchain."
+ :name        "test-convergence"
+ :workdir     "."
+ :lock        "./.axiom.lock"
+ :log-dir     "./.axiom-logs-convergence"
+ :observers   {:tests-ok  {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+               :build-ok  {:sh "./.tools/bin/bb -e \"(require 'axiom.core)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+               :fails     {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests 2>&1 | grep -c 'FAIL\\|ERROR' | tr -d ' '" :parse :int}}
+ :goal        {:op := :ref :tests-ok :value "pass"}
+ :axiom-bundle :clj-build
+ :progress    :fails
+ :act         {:sh "./scripts/fix_flaky_test.sh {{attempt}}"}
+ :checkpoint  {:tag-prefix "axiom-convergence"}
+ :stall-after 3
+ :max-rollbacks 2}

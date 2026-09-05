@@ -1,0 +1,24 @@
+{:comment "Dogfood L2 -- ask opencode to tighten the EDN config library. Success is every top-level and dogfood config loading through axiom.config/load-config."
+ :name "dogfood-02-config-library-tighten"
+ :workdir "."
+ :lock "./.axiom-dogfood-02.lock"
+ :log-dir "./.axiom-logs-dogfood-02"
+ :models ["opencode-default"]
+ :observers {:top-config-loads {:sh "./.tools/bin/bb -cp src -e \"(require '[axiom.config :as c]) (doseq [f (.listFiles (java.io.File. \\\"configs\\\")) :when (.endsWith (.getName f) \\\".edn\\\")] (c/load-config (.getPath f))) (println \\\"pass\\\")\" 2>/dev/null || echo fail" :parse :last-line}
+             :dogfood-config-loads {:sh "./.tools/bin/bb -cp src -e \"(require '[axiom.config :as c]) (doseq [f (.listFiles (java.io.File. \\\"configs/dogfood\\\")) :when (.endsWith (.getName f) \\\".edn\\\")] (c/load-config (.getPath f))) (println \\\"pass\\\")\" 2>/dev/null || echo fail" :parse :last-line}
+             :dogfood-doc-present {:sh "test -f docs/opencode-dogfood.md && echo pass || echo fail" :parse :string}
+             :tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.config)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}}
+ :goal {:op :and
+        :exprs [{:op := :ref :top-config-loads :value "pass"}
+                {:op := :ref :dogfood-config-loads :value "pass"}
+                {:op := :ref :dogfood-doc-present :value "pass"}]}
+ :axiom-bundle :clj-build
+ :progress [:top-config-loads :dogfood-config-loads :dogfood-doc-present]
+ :act {:harness :opencode
+       :prompt "Tighten Axiom's EDN config library. Make every configs/*.edn and configs/dogfood/*.edn load via axiom.config/load-config. Preserve EDN-as-data, bounded budgets, explicit log dirs, and objective observers. Do not remove scenarios to make checks pass. Current facts: top configs={{top-config-loads}}, dogfood configs={{dogfood-config-loads}}, doc={{dogfood-doc-present}}."}
+ :checkpoint {:tag-prefix "axiom-dogfood-02"}
+ :stall-after 2
+ :thrash-after 3
+ :max-rollbacks 1
+ :identical-retry-guard true}

@@ -1,0 +1,22 @@
+{:comment "Dogfood L4 -- improve operator status UX while preserving pure facts and status tests."
+ :name "dogfood-04-operator-status-ux"
+ :workdir "."
+ :lock "./.axiom-dogfood-04.lock"
+ :log-dir "./.axiom-logs-dogfood-04"
+ :models ["opencode-default"]
+ :observers {:operator-tests-ok {:sh "./.tools/bin/bb -cp src:test -e \"(require 'axiom.phase6-operator-test 'axiom.phase6-operator-ux-test 'axiom.status-test 'clojure.test) (let [r (clojure.test/run-tests 'axiom.phase6-operator-test 'axiom.phase6-operator-ux-test 'axiom.status-test)] (System/exit (+ (:fail r) (:error r))))\" >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.status)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+             :status-lines {:sh "grep -R -E \"defn.*operator|format-summary|latest|hot-reload\" -n src/axiom test/axiom 2>/dev/null | wc -l | tr -d ' '" :parse :int}}
+ :goal {:op :and
+        :exprs [{:op := :ref :operator-tests-ok :value "pass"}
+                {:op := :ref :tests-ok :value "pass"}]}
+ :axiom-bundle :clj-build
+ :progress [:operator-tests-ok :status-lines]
+ :act {:harness :opencode
+       :prompt "Improve Axiom operator/status UX in a small, test-backed way. Good targets: clearer latest event display, active config/hot-reload wording, or harness/model visibility when present. Preserve pure operator facts and update tests. Do not add a TUI. Current operator tests={{operator-tests-ok}}, full suite={{tests-ok}}."}
+ :checkpoint {:tag-prefix "axiom-dogfood-04"}
+ :stall-after 3
+ :thrash-after 4
+ :max-rollbacks 2
+ :identical-retry-guard true}

@@ -1,0 +1,33 @@
+{:comment "Dogfood L8 -- release-candidate sweep. Highest blast radius; use near the end only."
+ :name "dogfood-08-release-candidate-sweep"
+ :workdir "."
+ :lock "./.axiom-dogfood-08.lock"
+ :log-dir "./.axiom-logs-dogfood-08"
+ :models ["opencode-default" "opencode-strong"]
+ :observers {:tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.core 'axiom.config 'axiom.harness 'axiom.status 'axiom.taxonomy)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+             :top-config-loads {:sh "./.tools/bin/bb -cp src -e \"(require '[axiom.config :as c]) (doseq [f (.listFiles (java.io.File. \\\"configs\\\")) :when (.endsWith (.getName f) \\\".edn\\\")] (c/load-config (.getPath f))) (println \\\"pass\\\")\" 2>/dev/null || echo fail" :parse :last-line}
+             :dogfood-config-loads {:sh "./.tools/bin/bb -cp src -e \"(require '[axiom.config :as c]) (doseq [f (.listFiles (java.io.File. \\\"configs/dogfood\\\")) :when (.endsWith (.getName f) \\\".edn\\\")] (c/load-config (.getPath f))) (println \\\"pass\\\")\" 2>/dev/null || echo fail" :parse :last-line}
+             :docs-present {:sh "test -f README.md && test -f CONFIG.md && test -f RELEASE.md && test -f docs/opencode-dogfood.md && echo pass || echo fail" :parse :string}
+             :steady-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/steady.edn >/dev/null 2>&1; echo $?" :parse :int}
+             :stall-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/stall.edn >/dev/null 2>&1; echo $?" :parse :int}
+             :corrupt-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/corrupt.edn >/dev/null 2>&1; echo $?" :parse :int}
+             :recover-exit {:sh "bash examples/demo-recover/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/recover.edn >/dev/null 2>&1; echo $?" :parse :int}}
+ :goal {:op :and
+        :exprs [{:op := :ref :tests-ok :value "pass"}
+                {:op := :ref :top-config-loads :value "pass"}
+                {:op := :ref :dogfood-config-loads :value "pass"}
+                {:op := :ref :docs-present :value "pass"}
+                {:op := :ref :steady-exit :value 0}
+                {:op := :ref :stall-exit :value 1}
+                {:op := :ref :corrupt-exit :value 1}
+                {:op := :ref :recover-exit :value 0}]}
+ :axiom-bundle :clj-build
+ :progress [:tests-ok :top-config-loads :dogfood-config-loads :docs-present :steady-exit :stall-exit :corrupt-exit :recover-exit]
+ :act {:harness :opencode
+       :prompt "Release-candidate sweep for Axiom. Inspect failing checks, docs, configs, tests, and demos. Make the smallest release-readiness fixes. Do not perform openspeq permanent-record merge, do not port to Go, and do not add a GUI. Axiom will verify suite, demo exits, config loads, and docs."}
+ :checkpoint {:tag-prefix "axiom-dogfood-08"}
+ :stall-after 3
+ :thrash-after 5
+ :max-rollbacks 2
+ :identical-retry-guard true}

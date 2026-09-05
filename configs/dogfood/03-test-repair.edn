@@ -1,0 +1,19 @@
+{:comment "Dogfood L3 -- targeted test repair. Use after deliberately breaking a small test on a disposable branch. Success is the full Babashka suite green."
+ :name "dogfood-03-test-repair"
+ :workdir "."
+ :lock "./.axiom-dogfood-03.lock"
+ :log-dir "./.axiom-logs-dogfood-03"
+ :models ["opencode-default"]
+ :observers {:tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.core)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+             :fail-lines {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests 2>&1 | grep -E -c 'FAIL in|ERROR in|expected:|actual:' | tr -d ' '" :parse :int}}
+ :goal {:op := :ref :tests-ok :value "pass"}
+ :axiom-bundle :clj-build
+ :progress :fail-lines
+ :act {:harness :opencode
+       :prompt "Repair the Axiom test suite. Run ./.tools/bin/bb -cp src:test -m axiom.run-tests, inspect the failing test, and make the smallest correct code or test-fixture fix. Do not weaken assertions just to pass. Axiom will ignore your self-report and rerun the suite. Current failing signal count={{fail-lines}}."}
+ :checkpoint {:tag-prefix "axiom-dogfood-03"}
+ :stall-after 3
+ :thrash-after 4
+ :max-rollbacks 2
+ :identical-retry-guard true}

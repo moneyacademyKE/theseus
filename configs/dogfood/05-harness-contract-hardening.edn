@@ -1,0 +1,24 @@
+{:comment "Dogfood L5 -- harden the opencode harness boundary. Success is harness/config validation coverage green; opencode self-report remains advisory."
+ :name "dogfood-05-harness-contract-hardening"
+ :workdir "."
+ :lock "./.axiom-dogfood-05.lock"
+ :log-dir "./.axiom-logs-dogfood-05"
+ :models ["opencode-default" "opencode-strong"]
+ :observers {:harness-tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.phase7-harness-test >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :full-tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.harness)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+             :harness-test-count {:sh "grep -c 'deftest' test/axiom/phase7_harness_test.clj | tr -d ' '" :parse :int}}
+ :goal {:op :and
+        :exprs [{:op := :ref :harness-tests-ok :value "pass"}
+                {:op := :ref :full-tests-ok :value "pass"}
+                {:op :>= :ref :harness-test-count :value 4}]}
+ :axiom-bundle :clj-build
+ :progress [:harness-tests-ok :harness-test-count]
+ :act {:harness :opencode
+       :prompt "Harden Axiom's external harness contract for opencode-style runners. Add or improve tests around argv-safe invocation, custom harness profiles, act-level args overrides, blank/malformed prompt rejection, and ignoring harness self-report. Keep harness invocation argv-based; do not introduce shell-string execution. Current harness tests={{harness-tests-ok}}, test count={{harness-test-count}}."}
+ :checkpoint {:tag-prefix "axiom-dogfood-05"}
+ :stall-after 3
+ :thrash-after 4
+ :max-rollbacks 2
+ :identical-retry-guard true}
