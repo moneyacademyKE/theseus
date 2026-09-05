@@ -1,6 +1,6 @@
 {:comment "Dogfood L2 -- ask opencode to tighten the EDN config library. Success is every top-level and dogfood config loading through axiom.config/load-config."
  :name "dogfood-02-config-library-tighten"
- :workdir "."
+ :workdir "../axiom-workspace"
  :lock "./.axiom-dogfood-02.lock"
  :log-dir "./.axiom-logs-dogfood-02"
  :models ["opencode-default"]

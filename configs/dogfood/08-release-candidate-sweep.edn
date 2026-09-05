@@ -1,6 +1,6 @@
 {:comment "Dogfood L8 -- release-candidate sweep. Highest blast radius; use near the end only."
  :name "dogfood-08-release-candidate-sweep"
- :workdir "."
+ :workdir "../axiom-workspace"
  :lock "./.axiom-dogfood-08.lock"
  :log-dir "./.axiom-logs-dogfood-08"
  :models ["opencode-default" "opencode-strong"]

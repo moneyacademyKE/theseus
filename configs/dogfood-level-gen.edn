@@ -1,6 +1,6 @@
 {:comment    "dogfood-level-gen -- an AI agent generates test levels for a Gleam project until level-count >= N. Integrity = :gleam-build (build must stay green)."
  :name        "dogfood-level-gen"
- :workdir     "."
+ :workdir     "../axiom-workspace"
  :lock        "./.axiom.lock"
  :log-dir     "./.axiom-logs-levelgen"
  :observers   {:level-count {:sh "ls test/level_*.gleam 2>/dev/null | wc -l | tr -d ' '" :parse :int}

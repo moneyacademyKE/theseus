@@ -1,6 +1,6 @@
 {:comment "Dogfood L7 -- cross-cutting refactor. High-risk: ask for simplification only, with full suite and demos as gates."
  :name "dogfood-07-cross-cutting-refactor"
- :workdir "."
+ :workdir "../axiom-workspace"
  :lock "./.axiom-dogfood-07.lock"
  :log-dir "./.axiom-logs-dogfood-07"
  :models ["opencode-default" "opencode-strong"]

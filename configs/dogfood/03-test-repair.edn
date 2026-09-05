@@ -1,6 +1,6 @@
 {:comment "Dogfood L3 -- targeted test repair. Use after deliberately breaking a small test on a disposable branch. Success is the full Babashka suite green."
  :name "dogfood-03-test-repair"
- :workdir "."
+ :workdir "../axiom-workspace"
  :lock "./.axiom-dogfood-03.lock"
  :log-dir "./.axiom-logs-dogfood-03"
  :models ["opencode-default"]

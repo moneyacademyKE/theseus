@@ -1,6 +1,6 @@
 {:comment "Dogfood L5 -- harden the opencode harness boundary. Success is harness/config validation coverage green; opencode self-report remains advisory."
  :name "dogfood-05-harness-contract-hardening"
- :workdir "."
+ :workdir "../axiom-workspace"
  :lock "./.axiom-dogfood-05.lock"
  :log-dir "./.axiom-logs-dogfood-05"
  :models ["opencode-default" "opencode-strong"]

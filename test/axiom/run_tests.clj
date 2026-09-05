@@ -141,6 +141,21 @@
     (is (not= (predicates/progress-sig {:a 1} nil)
               (predicates/progress-sig {:a 2} nil)))))
 
+(deftest load-config-refuses-host-repo-workdir
+  (testing ":workdir resolving to the runner's own repo is rejected at load"
+    (let [tmp (java.io.File/createTempFile "guard" ".edn")]
+      (spit tmp (pr-str {:name "guard" :observers [] :goal :ready?
+                         :progress :ready? :act {:sh "true"} :workdir "."}))
+      (is (thrown? Exception (config/load-config (.getPath tmp))))
+      (.delete tmp)))
+  (testing "a dedicated workdir loads fine"
+    (let [tmp  (java.io.File/createTempFile "ws-ok" ".edn")
+          ws   (.getParentFile tmp)]
+      (spit tmp (pr-str {:name "ok" :observers [] :goal :ready?
+                         :progress :ready? :act {:sh "true"} :workdir (.getPath ws)}))
+      (is (config/load-config (.getPath tmp)))
+      (.delete tmp))))
+
 (def base-cfg
   {:goal        {:op :>= :ref :level-count :value 3}
    :integrity   [{:op := :ref :build-ok :value "pass"}]

@@ -25,7 +25,7 @@
 
 (defn- write-config!
   [path cfg]
-  (spit path (pr-str (dissoc cfg :workdir :lock :log-dir))))
+  (spit path (pr-str (dissoc cfg :lock :log-dir))))
 
 (deftest maybe-reload-keeps-current-config-when-mtime-unchanged
   (let [dir (str (fs/create-temp-dir))

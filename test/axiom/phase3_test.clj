@@ -97,7 +97,7 @@
   [cfg]
   (let [dir (str (fs/create-temp-dir))
         f   (str dir "/config.edn")]
-    (spit f (pr-str cfg))
+    (spit f (pr-str (assoc cfg :workdir dir)))
     f))
 
 (deftest load-config-throws-on-invalid-config

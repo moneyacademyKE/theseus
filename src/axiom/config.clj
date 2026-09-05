@@ -74,6 +74,17 @@
       (seq bundles) (into (mapcat identity bundles))
       :always       (into explicit))))
 
+(defn- host-repo-workdir?
+  "True when `workdir` resolves to the repo this runner executes from (the
+  directory containing the bb.edn that launched `bb goal`). Rollback is a
+  hard `git reset --hard`, so a host-repo workspace would destroy
+  uncommitted work on halt (2026-09-04 stress test)."
+  [workdir]
+  (let [bb-edn (io/file "bb.edn")]
+    (and (.exists bb-edn)
+         (= (.getCanonicalPath (io/file workdir))
+            (.getCanonicalPath (.getParentFile (.getAbsoluteFile bb-edn)))))))
+
 (defn validate-config
   "Pure: returns a vector of validation error maps for `cfg`, empty when valid."
   [cfg]
@@ -126,6 +137,9 @@
         (when-not (contains? cfg k)
           (throw (ex-info (str "Config missing required key: " k)
                           {:key k :present (keys cfg)}))))
+      (when (host-repo-workdir? (get cfg :workdir "."))
+        (throw (ex-info "Refusing :workdir that resolves to the host repo — rollback hard-resets it; point :workdir at a dedicated clone or worktree"
+                        {:workdir (get cfg :workdir ".")})))
       (let [cfg    (assoc cfg :integrity (expand-axioms cfg))
             errors (validate-config cfg)]
         (when (seq errors)

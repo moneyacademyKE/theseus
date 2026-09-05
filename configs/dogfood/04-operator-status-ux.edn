@@ -1,6 +1,6 @@
 {:comment "Dogfood L4 -- improve operator status UX while preserving pure facts and status tests."
  :name "dogfood-04-operator-status-ux"
- :workdir "."
+ :workdir "../axiom-workspace"
  :lock "./.axiom-dogfood-04.lock"
  :log-dir "./.axiom-logs-dogfood-04"
  :models ["opencode-default"]

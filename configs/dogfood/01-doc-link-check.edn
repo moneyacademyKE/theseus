@@ -1,6 +1,6 @@
 {:comment "Dogfood L1 -- use opencode for low-risk documentation/reference drift. Success is objective: required docs exist and mention core release surfaces. Harness self-report is ignored."
  :name "dogfood-01-doc-link-check"
- :workdir "."
+ :workdir "../axiom-workspace"
  :lock "./.axiom-dogfood-01.lock"
  :log-dir "./.axiom-logs-dogfood-01"
  :models ["opencode-default"]

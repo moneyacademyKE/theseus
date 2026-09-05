@@ -1,6 +1,6 @@
 {:comment    "benchmark-chase -- keep regenerating a Rust benchmark until perf improves. Integrity = :rust-build + :clean-tree (green build AND a spotless git tree), composable vector form."
  :name        "benchmark-chase"
- :workdir     "."
+ :workdir     "../axiom-workspace"
  :lock        "./.axiom.lock"
  :log-dir     "./.axiom-logs-bench"
  :observers   {:us-per-op {:sh "grep 'us/op' bench.out 2>/dev/null | tail -1 | awk '{print $1}'" :parse :int}
