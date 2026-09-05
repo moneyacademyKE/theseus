@@ -17,6 +17,8 @@
             [bb-agent.telegram-rich :as tr]
             [bb-agent.telegram-state :as state]
             [bb-agent.telegram-voice :as voice]
+            [bb-agent.session :as session]
+            [bb-agent.usage :as usage]
             [cheshire.core :as json]
             [clojure.string :as str]))
 
@@ -86,6 +88,28 @@
       (str "\n[Context: the sender edited earlier messages since your last reply]\n"
            (str/join "\n" (->> taken reverse (take 3) reverse))))))
 
+(defn- chat-command
+  "Session-level commands answered without an LLM turn."
+  [text]
+  (case text
+    ("/new" "/reset") :new
+    ("/usage" "/stats") :usage
+    nil))
+
+(defn- handle-chat-command
+  [cmd session-id]
+  (case cmd
+    :new (do (session/reset! session-id)
+             "🧹 Session reset — fresh context from here.")
+    :usage (let [r (usage/report)
+                 by-provider (->> (:by-provider r)
+                                  (map (fn [[p v]] (str (name p) ": " (:tokens/total v) " tok")))
+                                  (str/join ", "))]
+             (str "📊 Usage: " (:usage/events r) " events, "
+                  (:tokens/total r) " tokens"
+                  (format ", ~$%.4f" (double (or (:cost/estimate-usd r) 0)))
+                  (when (seq by-provider) (str " (" by-provider ")"))))))
+
 (defn- notify-turn-failure!
   "A dead turn must never be silent: swap the ack reaction to a failure
    signal and send one bounded error reply. The notice itself failing
@@ -136,6 +160,12 @@
             (approval/resolve! session-id decision)
             decision)
            {:thread-id thread-id})
+          (if-let [cmd (chat-command text)]
+            (delivery/send-message!
+             telegram-cfg chat-id
+             (handle-chat-command cmd session-id)
+             {:thread-id thread-id
+              :reply-to-message-id (:message_id message)})
           (let [edit-context (or (edit-notes-context session-id) "")
                 history-context (if (and (:group-context telegram-cfg true)
                                          (group/group-chat? message))
@@ -182,7 +212,7 @@
              telegram-cfg chat-id
              (tr/to-html (:assistant/final turn))
               {:thread-id thread-id
-               :reply-to-message-id (:message_id message)}))))
+               :reply-to-message-id (:message_id message)})))))
       (catch Exception e
         (flow/settle! turn-flow telegram-cfg chat-id false)
         (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id message) e)))))

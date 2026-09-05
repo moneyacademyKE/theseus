@@ -92,3 +92,12 @@
                            (load-metadata session-id)
                            {:cwd (str path)
                             :updated/at (str (java.time.Instant/now))}))))
+
+(defn reset!
+  "Archive the session's turn history: the file moves aside with a
+   timestamp suffix, never deleted. The next turn starts fresh."
+  [session-id]
+  (let [f (session-file session-id)]
+    (when (fs/exists? f)
+      (fs/move f (fs/path (str f ".archived-" (System/currentTimeMillis))))
+      true)))
