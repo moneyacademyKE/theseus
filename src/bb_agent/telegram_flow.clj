@@ -17,6 +17,7 @@
      blocks the turn (try/catch at every Telegram call)."
   (:require [bb-agent.session :as session]
             [bb-agent.telegram-delivery :as delivery]
+            [bb-agent.telegram-presence :as presence]
             [clojure.string :as str]))
 
 (def ^:private context-cap 64)
@@ -89,19 +90,24 @@
 
 (defn- upsert!
   "Send the flow message on first entry, edit it in place after. Never
-   throws into the turn — a broken status surface must not kill work."
+   throws into the turn — a broken status surface must not kill work.
+   Re-asserts typing immediately so flow edits do not cancel the client's
+   active typing indicator."
   [flow telegram-cfg chat-id thread-id]
   (try
     (let [state @flow
           html (render-flow state)]
       (if-let [mid (:msg-id state)]
-        (delivery/edit-message-text! telegram-cfg chat-id mid html {:parse-mode "HTML"})
+        (do
+          (delivery/edit-message-text! telegram-cfg chat-id mid html {:parse-mode "HTML"})
+          (presence/typing! telegram-cfg chat-id {:thread-id thread-id}))
         (when (seq (:entries state))
           (let [{:keys [message-id]} (delivery/send-message! telegram-cfg chat-id html
                                                              {:thread-id thread-id
                                                               :parse-mode "HTML"})]
             (when message-id
-              (swap! flow assoc :msg-id message-id))))))
+              (swap! flow assoc :msg-id message-id))
+            (presence/typing! telegram-cfg chat-id {:thread-id thread-id})))))
     (catch Exception e
       (binding [*out* *err*]
         (println (str "telegram flow upsert failed: " (.getMessage e)))))))

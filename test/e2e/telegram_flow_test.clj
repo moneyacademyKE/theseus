@@ -147,7 +147,11 @@
       (is (str/includes? (or (:text settled) "") "Finished (2 tool calls")))
     (testing "the final answer is a separate clean message"
       (is (= "both done" (:text final-send)))
-      (is (not (str/includes? (:text final-send) "blockquote"))))))
+      (is (not (str/includes? (:text final-send) "blockquote"))))
+    (testing "typing indicator is refreshed on flow edits"
+      (let [actions (bodies calls "/sendChatAction")]
+        (is (>= (count actions) 2)
+            "typing is sent initially and re-asserted on tool flow updates")))))
 
 (deftest denied-tool-renders-a-clean-rejection-never-raw-edn
   (let [provider-impl
