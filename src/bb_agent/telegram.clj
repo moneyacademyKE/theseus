@@ -9,6 +9,7 @@
             [bb-agent.telegram-extract :as extract]
             [bb-agent.telegram-flow :as flow]
             [bb-agent.telegram-group :as group]
+            [bb-agent.telegram-group-context :as gctx]
             [bb-agent.telegram-guard :as guard]
             [bb-agent.telegram-media :as media]
             [bb-agent.telegram-notes :as notes]
@@ -136,8 +137,15 @@
             decision)
            {:thread-id thread-id})
           (let [edit-context (or (edit-notes-context session-id) "")
+                history-context (if (and (:group-context telegram-cfg true)
+                                         (group/group-chat? message))
+                                  (or (gctx/history-block chat-id (:message_id message)
+                                                          :size (or (:group-context-size telegram-cfg) 30))
+                                      "")
+                                  "")
                 input-message (assoc message :text
-                                     (str edit-context
+                                     (str history-context
+                                          edit-context
                                           text
                                           (attachment-context telegram-cfg saved)))
                 turn (presence/with-typing-heartbeat
@@ -198,6 +206,11 @@
             thread-id (group/topic-id primary)
             session-id (group/session-id primary)
             edit-context (or (edit-notes-context session-id) "")
+            history-context (if (:group-context telegram-cfg true)
+                              (or (gctx/history-block chat-id (:message_id primary)
+                                                      :size (or (:group-context-size telegram-cfg) 30))
+                                  "")
+                              "")
             _ (when (:react-ack telegram-cfg true)
                 (presence/reaction! telegram-cfg chat-id (:message_id primary)))
             saved (keep #(attachment/persist! (config/home) telegram-cfg %) messages)
@@ -225,7 +238,7 @@
                                               telegram-cfg chat-id mid
                                               (:approval/id pending))))}))
                      (group/agent-input bot
-                                        (assoc primary :text (str edit-context text contexts))))))]
+                                        (assoc primary :text (str history-context edit-context text contexts))))))]
         (flow/settle! turn-flow telegram-cfg chat-id true)
         (delivery/send-html!
          telegram-cfg chat-id
@@ -256,6 +269,18 @@
         (state/save-offset! (inc (:update_id update)))
         (swap! processed inc))
       (doseq [batch (media/batches (filter #(some? (:message %)) fresh))]
+        ;; Record every observed group message so future turns have
+        ;; conversational context — independent of whether we respond.
+        (when (:group-context telegram-cfg true)
+          (doseq [u (:updates batch)]
+            (let [m (:message u)
+                  cid (get-in m [:chat :id])]
+              (when (and cid (neg? (long cid)))
+                (gctx/record! cid {:message-id (:message_id m)
+                                   :from (or (get-in m [:from :first_name])
+                                             (get-in m [:from :username]))
+                                   :text (or (:text m) (:caption m))}
+                              :size (or (:group-context-size telegram-cfg) 30))))))
         (if (:album? batch)
           (process-album! cfg bot batch)
           (process-message! cfg bot (:message (first (:updates batch))))))
