@@ -30,3 +30,17 @@
                   (or (nil? prev)
                       (= \newline (last prev))))
                 (map vector chunks (cons nil (butlast chunks)))))))
+
+(deftest split-message-never-breaks-a-surrogate-pair
+  ;; Telegram's 4096 limit counts UTF-16 units (we match), but a hard
+  ;; boundary must not land between a high and low surrogate: each chunk
+  ;; must be well-formed UTF-16 on its own.
+  (let [line (str (apply str (repeat 4095 "a")) "🦀" "tail")
+        chunks (rich/split-message line)
+        bad? (fn [^String c]
+               (let [last-u (.charAt c (dec (count c)))]
+                 (Character/isHighSurrogate last-u)))]
+    (is (not-any? bad? chunks)
+        "no chunk may end on a lone high surrogate")
+    (is (= line (apply str chunks))
+        "chunks still concatenate back to the original")))

@@ -53,13 +53,21 @@
 ;; ---------- message splitting ----------
 
 (defn- hard-split
-  "Split s into pieces of at most n chars (no preferred break available)."
+  "Split s into pieces of at most n UTF-16 units (no preferred break
+   available). Never cut inside a surrogate pair: a boundary that would
+   separate a high surrogate from its low surrogate backs off one unit,
+   leaving the pair whole at the start of the next chunk."
   [^String s n]
   (loop [acc [] i 0]
     (if (>= i (.length s))
       acc
-      (recur (conj acc (subs s i (min (.length s) (+ i n))))
-             (+ i n)))))
+      (let [raw-end (min (.length s) (+ i n))
+            end (if (and (< raw-end (.length s))
+                         (Character/isHighSurrogate (.charAt s (dec raw-end)))
+                         (Character/isLowSurrogate (.charAt s raw-end)))
+                  (dec raw-end)
+                  raw-end)]
+        (recur (conj acc (subs s i end)) end)))))
 
 (defn- flush-chunk
   "Close a chunk. The break lands where the original text had a newline,
