@@ -11,6 +11,7 @@
             [clojure.string :as str]))
 
 (def default-max-bytes (* 20 1024 1024))
+(def default-turn-max-bytes (* 50 1024 1024))
 
 (defn- api-root
   [{:keys [base-url]}]
@@ -159,3 +160,28 @@
    normalized kinds: document, photo, video, audio, voice, animation, note)."
   [message]
   (some? (attachment message)))
+
+(defn persist-batch!
+  "Persist a sequence of messages (e.g. from an album or turn batch),
+   enforcing both individual :attachment-max-bytes and cumulative
+   :attachment-turn-max-bytes. Stops persisting further items once the
+   cumulative byte budget is reached, returning {:keys [persisted skipped total-bytes]}."
+  ([home cfg messages] (persist-batch! home cfg messages {}))
+  ([home cfg messages opts]
+   (let [turn-max (or (:attachment-turn-max-bytes cfg) default-turn-max-bytes)
+         accum-bytes (atom 0)
+         persisted (atom [])
+         skipped (atom 0)]
+     (doseq [msg messages]
+       (if-let [att (attachment msg)]
+         (let [fsize (or (:file-size att) 0)]
+           (if (> (+ @accum-bytes fsize) turn-max)
+             (swap! skipped inc)
+             (if-let [saved (persist! home cfg msg opts)]
+               (do
+                 (swap! accum-bytes + (:bytes saved))
+                 (swap! persisted conj saved))
+               (swap! skipped inc))))))
+     {:persisted @persisted
+      :total-bytes @accum-bytes
+      :skipped @skipped})))

@@ -269,8 +269,10 @@
                               "")
             _ (when (:react-ack telegram-cfg true)
                 (presence/reaction! telegram-cfg chat-id (:message_id primary)))
-            saved (keep #(attachment/persist! (config/home) telegram-cfg %) messages)
-            contexts (apply str (map #(attachment-context telegram-cfg %) saved))
+            {:keys [persisted skipped]} (attachment/persist-batch! (config/home) telegram-cfg messages)
+            contexts (str (apply str (map #(attachment-context telegram-cfg %) persisted))
+                          (when (pos? skipped)
+                            (str "\n[" skipped " attachment(s) skipped: cumulative turn media limit exceeded]")))
             turn (presence/with-typing-heartbeat
                   telegram-cfg chat-id {:thread-id thread-id}
                   (fn []

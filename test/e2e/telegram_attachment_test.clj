@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-attachment :as attachment]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -127,4 +128,35 @@
         (is (= {:message_id 11} (:reply_parameters send-body))))
       (finally
         (stop-server)
+        (fs/delete-tree home)))))
+
+(deftest persist-batch-enforces-cumulative-turn-limit
+  (let [home (fs/create-temp-dir {:prefix "theseus-batch-media-"})
+        calls (atom [])
+        transport (fn [url opts]
+                    (swap! calls conj {:url url :opts opts})
+                    (if (str/includes? url "getFile")
+                      {:status 200
+                       :body (json/generate-string
+                              {:ok true :result {:file_path "doc/data.bin"}})}
+                      {:status 200
+                       :body (.getBytes "1234567890")}))
+        cfg {:token "TESTTOKEN"
+             :attachment-max-bytes 100
+             :attachment-turn-max-bytes 25}
+        make-msg (fn [id size]
+                   {:chat {:id 100}
+                    :document {:file_id (str "FILE-" id)
+                               :file_unique_id (str "U-" id)
+                               :file_name (str "doc" id ".bin")
+                               :file_size size}})]
+    (try
+      (let [messages [(make-msg 1 10)
+                      (make-msg 2 10)
+                      (make-msg 3 10)] ;; total 30 > 25
+            result (attachment/persist-batch! home cfg messages {:transport transport})]
+        (is (= 2 (count (:persisted result))) "first two files fit in budget (20 <= 25)")
+        (is (= 1 (:skipped result)) "third file exceeded budget and was skipped")
+        (is (= 20 (:total-bytes result))))
+      (finally
         (fs/delete-tree home)))))
