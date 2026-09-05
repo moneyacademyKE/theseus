@@ -4,3 +4,7 @@ target/
 tmp/
 *.log
 bin/
+.axiom.lock
+.axiom-logs*/
+.tools/
+.axiom-state/

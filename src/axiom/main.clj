@@ -3,9 +3,9 @@
   "Axiom -- autonomous goal-fulfillment runner.
 
   Usage:
-    bb axiom.clj <config.edn> [--max-iters N] [--once]
-    bb axiom.clj status <config.edn> [--last N]
-    bb axiom.clj pause|resume|stop <config.edn>
+    bb goal <config.edn> [--max-iters N] [--once]
+    bb goal status <config.edn> [--last N]
+    bb goal pause|resume|stop <config.edn>
 
   Exits 0 if the goal was fulfilled, 1 on halt (stall/integrity/max-iters),
   2 on usage error. The `status`, `pause`, `resume`, and `stop` subcommands
@@ -48,7 +48,7 @@
 (defn- status! [args]
   (let [opts (parse-run-args args)]
     (when-not (:config opts)
-      (usage! "Usage: bb axiom.clj status <config.edn> [--last N]"))
+      (usage! "Usage: bb goal status <config.edn> [--last N]"))
     ;; Read config as raw EDN (no validation) so a partially-broken or
     ;; stale config can still report its last-known run state.
     (status/summarize! (load-flat-config (:config opts)) {:last (:last opts 20)})
@@ -57,7 +57,7 @@
 (defn- control! [command args]
   (let [opts (parse-run-args args)]
     (when-not (:config opts)
-      (usage! "Usage: bb axiom.clj pause|resume|stop <config.edn>"))
+      (usage! "Usage: bb goal pause|resume|stop <config.edn>"))
     (let [result (control/apply-command! (load-flat-config (:config opts)) command)]
       (println (str (name (:command result)) " -> " (name (:state result))))
       (when-let [path (:path result)]
@@ -69,7 +69,7 @@
 (defn- run! [args]
   (let [opts (parse-run-args args)]
     (when-not (:config opts)
-      (usage! "Usage: bb axiom.clj <config.edn> [--max-iters N] [--once]"))
+      (usage! "Usage: bb goal <config.edn> [--max-iters N] [--once]"))
     (let [cfg (-> (config/load-config (:config opts))
                   (merge (when (:once opts) {:max-iters-override 1})))
           run-opts {:max-iters (if (:once opts) 1 (:max-iters opts))
