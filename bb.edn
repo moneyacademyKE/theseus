@@ -360,6 +360,14 @@
                                (t/run-tests 'e2e.skill-test)]
                            (when (pos? (+ fail error))
                              (System/exit 1)))}
+   test:e2e:loop-guard {:doc "Run repetition-aware loop guard e2e tests."
+                        :extra-paths ["test"]
+                        :requires ([clojure.test :as t]
+                                   [e2e.loop-guard-test])
+                        :task (let [{:keys [fail error]}
+                                    (t/run-tests 'e2e.loop-guard-test)]
+                                (when (pos? (+ fail error))
+                                  (System/exit 1)))}
    test:e2e:skill-research {:doc "Run skill autoresearch e2e tests."
                             :extra-paths ["test"]
                             :requires ([clojure.test :as t]

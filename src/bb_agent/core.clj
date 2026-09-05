@@ -15,6 +15,20 @@
 
 (def ^:private max-tool-rounds 8)
 
+(def ^:private default-loop-guard-threshold 3)
+
+(defn- canonical-args
+  "Stable identity for a tool call's args — repetition detection keys on
+   this, so key order and formatting must not matter."
+  [args]
+  (pr-str (if (map? args) (sort-by (comp str key) args) args)))
+
+(defn- loop-guard-message
+  [[tool-name args]]
+  (str "⚠️ Loop guard: `" tool-name "` repeated with identical arguments "
+       "(" args ") — stopping this turn instead of burning more rounds. "
+       "Narrow or rephrase the request."))
+
 (def ^:private provider-breaker
   "Shared per-provider breaker threaded through retry calls. The
   breaker modules stay pure; this atom is the one mutable seam."
@@ -209,7 +223,8 @@
                                       (history-messages cfg id))
            turn {:tool/requests []
                  :tool/results []}
-           rounds-left max-tool-rounds]
+           rounds-left max-tool-rounds
+           seen-calls {}]
       (when (neg? rounds-left)
         (throw (ex-info "Exceeded tool rounds" {:rounds max-tool-rounds})))
       (let [request {:provider provider
@@ -220,30 +235,47 @@
             request (cond-> request (seq user-images) (assoc :images user-images))
             response (complete-chain cfg request)
             tool-requests (:tool/requests response)
-            ;; One event before each call and one after its outcome — the
-            ;; channel flips ⚙️→✅/❌ live inside a single flow message.
-            tool-results (when (seq tool-requests)
-                           (mapv (fn [req]
-                                   (safe-emit cfg {:status :tool/call
-                                                   :tool (:tool/name req)
-                                                   :args (:tool/args req)})
-                                   (let [result (tool/handle-tool-request req cfg)]
-                                     (safe-emit cfg {:status :tool/done
-                                                     :tool (:tool/name req)
-                                                     :args {:ok? (= :ok (:status result))}})
-                                     result))
-                                 tool-requests))
-            turn* (cond-> (append-tool-round turn response (or tool-results []))
-                    (:fallback/tried response)
-                    (assoc :fallback/tried (:fallback/tried response))
-                    (:fallback/served-by response)
-                    (assoc :provider (:fallback/served-by response)))]
-        (if (seq tool-requests)
-          (if (every? #(= :denied (:status %)) tool-results)
-            (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
-            (recur (continue-messages messages response tool-results)
-                   turn*
-                   (dec rounds-left)))
-          (if-let [content (:content response)]
-            (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
-            (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (tool-error-summary (:tool/results turn*)) (:usage response))))))))
+            threshold (or (:loop-guard-threshold cfg) default-loop-guard-threshold)
+            repeated (some (fn [req]
+                             (let [k [(:tool/name req) (canonical-args (:tool/args req))]]
+                               (when (>= (get seen-calls k 0) (dec threshold)) k)))
+                           tool-requests)]
+        (if repeated
+          ;; Identical call Nth time: stop gracefully, execute nothing.
+          (finish-turn id cfg prompt memory-matches semantic-ctx
+                       (assoc turn :turn/ok false)
+                       (loop-guard-message repeated)
+                       (:usage response))
+          (let [;; One event before each call and one after its outcome — the
+                ;; channel flips ⚙️→✅/❌ live inside a single flow message.
+                tool-results (when (seq tool-requests)
+                               (mapv (fn [req]
+                                       (safe-emit cfg {:status :tool/call
+                                                       :tool (:tool/name req)
+                                                       :args (:tool/args req)})
+                                       (let [result (tool/handle-tool-request req cfg)]
+                                         (safe-emit cfg {:status :tool/done
+                                                         :tool (:tool/name req)
+                                                         :args {:ok? (= :ok (:status result))}})
+                                         result))
+                                     tool-requests))
+                turn* (cond-> (append-tool-round turn response (or tool-results []))
+                        (:fallback/tried response)
+                        (assoc :fallback/tried (:fallback/tried response))
+                        (:fallback/served-by response)
+                        (assoc :provider (:fallback/served-by response)))
+                seen-calls* (reduce (fn [m req]
+                                      (update m [(:tool/name req) (canonical-args (:tool/args req))]
+                                              (fnil inc 0)))
+                                    seen-calls (or tool-requests []))]
+            (if (seq tool-requests)
+              (if (every? #(= :denied (:status %)) tool-results)
+                (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
+                (recur (continue-messages messages response tool-results)
+                       turn*
+                       (dec rounds-left)
+                       seen-calls*))
+              (if-let [content (:content response)]
+                (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
+                (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (tool-error-summary (:tool/results turn*)) (:usage response)))))))))
+)
