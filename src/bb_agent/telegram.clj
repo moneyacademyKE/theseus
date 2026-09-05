@@ -3,6 +3,7 @@
             [bb-agent.approval :as approval]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
+            [bb-agent.session :as session]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
@@ -84,6 +85,44 @@
       (str "\n[Context: the sender edited earlier messages since your last reply]\n"
            (str/join "\n" (->> taken reverse (take 3) reverse))))))
 
+(defn- status-emit
+  "Render turn-status events as compact channel messages: one bounded,
+   redacted line per tool call. Status is presence, not content — a
+   failed send never touches the turn."
+  [telegram-cfg chat-id thread-id]
+  (fn [{:keys [status tool args]}]
+    (when (= :tool/call status)
+      (let [raw (session/redact-secrets (pr-str args))
+            detail (if (> (count raw) 72) (str (subs raw 0 72) "…") raw)]
+        (try
+          (delivery/send-message! telegram-cfg chat-id
+                                  (str "🔧 " tool " " detail)
+                                  {:thread-id thread-id})
+          (catch Exception e
+            (binding [*out* *err*]
+              (println (str "telegram status emit failed: " (.getMessage e))))))))))
+
+(defn- notify-turn-failure!
+  "A dead turn must never be silent: swap the ack reaction to a failure
+   signal and send one bounded error reply. The notice itself failing
+   degrades to a log line, never a poll crash."
+  [telegram-cfg chat-id thread-id message-id e]
+  (binding [*out* *err*]
+    (println (str "telegram turn failed: " (.getMessage e))))
+  (try
+    (when (:react-ack telegram-cfg true)
+      (presence/reaction! telegram-cfg chat-id message-id {:emoji "🤯"}))
+    (let [m (or (.getMessage e) (str (type e)))
+          summary (if (> (count m) 300) (str (subs m 0 300) "…") m)]
+      (delivery/send-message! telegram-cfg chat-id
+                              (str "⚠️ Turn failed: " summary)
+                              {:thread-id thread-id
+                               :reply-to-message-id message-id}))
+    (catch Exception notice-failure
+      (binding [*out* *err*]
+        (println (str "telegram failure notice failed: "
+                      (.getMessage notice-failure)))))))
+
 (defn- process-message!
   [cfg bot message]
   (let [chat-id (get-in message [:chat :id])
@@ -97,7 +136,8 @@
         ;; attachment-context via stt-bin).
         saved (when (and authorized? (attachment/persistable? message))
                 (attachment/persist! (config/home) telegram-cfg message))]
-    (when (and authorized?
+    (try
+      (when (and authorized?
                (or (seq text) saved)
                (or (approval/telegram-approval-reply text)
                    (group/should-respond?
@@ -116,14 +156,16 @@
                                      (str edit-context
                                           text
                                           (attachment-context telegram-cfg saved)))
-                _ (when (:typing-indicator telegram-cfg true)
-                    (presence/typing! telegram-cfg chat-id {:thread-id thread-id}))
-                turn (core/run-turn!
-                      (assoc cfg
-                             :session/id session-id
-                             :session/shared? (group/group-chat? message)
-                             :telegram/send-context {:chat-id chat-id
-                                                     :thread-id thread-id}
+                turn (presence/with-typing-heartbeat
+                      telegram-cfg chat-id {:thread-id thread-id}
+                      (fn []
+                        (core/run-turn!
+                         (assoc cfg
+                                :session/id session-id
+                                :session/shared? (group/group-chat? message)
+                                :status/emit (status-emit telegram-cfg chat-id thread-id)
+                                :telegram/send-context {:chat-id chat-id
+                                                        :thread-id thread-id}
                              :user/images (when (and saved
                                                      (str/starts-with?
                                                       (or (:mime-type saved) "")
@@ -136,13 +178,20 @@
                                :channel :telegram
                                :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
                                :notify #(approval-ui/send-approval-request!
-                                         telegram-cfg chat-id thread-id %)}))
-                      (group/agent-input bot input-message))]
+                                         telegram-cfg chat-id thread-id %)
+                               :on-expire (fn [pending sent]
+                                            (when-let [mid (:message-id sent)]
+                                              (approval-ui/expire-keyboard!
+                                               telegram-cfg chat-id mid
+                                               (:approval/id pending))))}))
+                         (group/agent-input bot input-message))))]
             (delivery/send-html!
              telegram-cfg chat-id
              (tr/to-html (:assistant/final turn))
               {:thread-id thread-id
-               :reply-to-message-id (:message_id message)}))))))
+               :reply-to-message-id (:message_id message)}))))
+      (catch Exception e
+        (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id message) e)))))
 
 (defn- process-album!
   "Run one turn for a media-group batch. The captioned member activates the
@@ -154,7 +203,8 @@
                                    messages))
                     (first messages))
         text (group/normalize-command (or (media/activation-text messages) "") bot)]
-    (when (and primary
+    (try
+      (when (and primary
                (guard/message-allowed? cfg primary)
                (group/should-respond? cfg bot (assoc primary :text text)))
       (let [chat-id (get-in primary [:chat :id])
@@ -165,28 +215,38 @@
                 (presence/reaction! telegram-cfg chat-id (:message_id primary)))
             saved (keep #(attachment/persist! (config/home) telegram-cfg %) messages)
             contexts (apply str (map #(attachment-context telegram-cfg %) saved))
-            _ (when (:typing-indicator telegram-cfg true)
-                (presence/typing! telegram-cfg chat-id {:thread-id thread-id}))
-            turn (core/run-turn!
-                  (assoc cfg
-                         :session/id session-id
-                         :session/shared? (group/group-chat? primary)
-                         :telegram/send-context {:chat-id chat-id
-                                                 :thread-id thread-id}
-                         :approval/ask
-                         (approval/waiting-approver
-                          {:session-id session-id
-                           :channel :telegram
-                           :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
-                           :notify #(approval-ui/send-approval-request!
-                                     telegram-cfg chat-id thread-id %)}))
-                  (group/agent-input bot
-                                     (assoc primary :text (str edit-context text contexts))))]
+            turn (presence/with-typing-heartbeat
+                  telegram-cfg chat-id {:thread-id thread-id}
+                  (fn []
+                    (core/run-turn!
+                     (assoc cfg
+                            :session/id session-id
+                            :session/shared? (group/group-chat? primary)
+                            :status/emit (status-emit telegram-cfg chat-id thread-id)
+                            :telegram/send-context {:chat-id chat-id
+                                                    :thread-id thread-id}
+                            :approval/ask
+                            (approval/waiting-approver
+                             {:session-id session-id
+                              :channel :telegram
+                              :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
+                              :notify #(approval-ui/send-approval-request!
+                                        telegram-cfg chat-id thread-id %)
+                              :on-expire (fn [pending sent]
+                                           (when-let [mid (:message-id sent)]
+                                             (approval-ui/expire-keyboard!
+                                              telegram-cfg chat-id mid
+                                              (:approval/id pending))))}))
+                     (group/agent-input bot
+                                        (assoc primary :text (str edit-context text contexts))))))]
         (delivery/send-html!
          telegram-cfg chat-id
          (tr/to-html (:assistant/final turn))
          {:thread-id thread-id
-          :reply-to-message-id (:message_id primary)})))))
+          :reply-to-message-id (:message_id primary)})))
+      (catch Exception e
+        (notify-turn-failure! telegram-cfg (get-in primary [:chat :id])
+                              (group/topic-id primary) (:message_id primary) e)))))
 
 (defn poll-once! []
   (let [cfg (config/load-config)

@@ -76,13 +76,13 @@
 (defn- approve-rest? [session-id]
   (contains? (:approve-rest (load-state)) session-id))
 
-(defn waiting-approver [{:keys [session-id channel timeout-ms notify]}]
+(defn waiting-approver [{:keys [session-id channel timeout-ms notify on-expire]}]
   (fn [request]
     (if (approve-rest? session-id)
       :approved
       (let [pending (create-pending! session-id channel request)
-            deadline (+ (System/currentTimeMillis) (or timeout-ms 30000))]
-        (when notify (notify pending))
+            deadline (+ (System/currentTimeMillis) (or timeout-ms 30000))
+            sent (when notify (notify pending))]
         (loop []
           (if-let [decision (consume-decision! (:approval/id pending))]
             (case decision
@@ -92,7 +92,8 @@
               :denied)
             (if (< (System/currentTimeMillis) deadline)
               (do (Thread/sleep 200) (recur))
-              :denied)))))))
+              (do (when on-expire (on-expire pending sent))
+                  :denied))))))))
 
 (defn interactive-approver []
   (let [approve-rest? (atom false)]

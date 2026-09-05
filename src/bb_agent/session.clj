@@ -31,8 +31,10 @@
   [#"\d{8,}:AA[A-Za-z0-9_-]{20,}"          ; Telegram bot tokens
    #"sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}"])    ; API keys (sk-*, case-sensitive)
 
-(defn- redact-secrets
-  "Replace known secret shapes in s with a redaction marker. Pure."
+(defn redact-secrets
+  "Replace known secret shapes in s with a redaction marker. Pure. Used at
+   the persistence seam and by channel status renderers — a tool call's
+   args can carry a token, and no surface may ever show one."
   [s]
   (reduce (fn [acc pat] (str/replace acc pat "<REDACTED-SECRET>"))
           s secret-patterns))

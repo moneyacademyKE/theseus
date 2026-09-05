@@ -44,6 +44,19 @@
          {:text "❌ Deny" :callback_data (str "deny:" id)}]
         [{:text "✅ Approve rest" :callback_data (str "apprrest:" id)}]]}})))
 
+(defn expire-keyboard!
+  "Replace an expired approval prompt's text, which drops its inline
+   keyboard. Cosmetic: a failed edit never aborts the poll cycle."
+  [cfg chat-id message-id approval-id]
+  (try
+    (delivery/edit-message-text!
+     cfg chat-id message-id
+     (str "Approval expired\ntool request id=" approval-id))
+    (catch Exception e
+      (binding [*out* *err*]
+        (println (str "telegram approval expiry edit failed: "
+                      (.getMessage e)))))))
+
 (defn handle-callback!
   [cfg callback]
   (let [telegram-cfg (:telegram cfg)

@@ -114,7 +114,9 @@
                                  [e2e.telegram-media-test]
                                  [e2e.telegram-send-file-test]
                                  [e2e.telegram-voice-test]
-                                 [e2e.telegram-approvals-test])
+                                 [e2e.telegram-approvals-test]
+                                 [e2e.telegram-media-only-test]
+                                 [e2e.telegram-turn-status-test])
                       :task (let [{:keys [fail error]}
                                   (t/run-tests 'e2e.telegram-test
                                                'e2e.telegram-delivery-test
@@ -124,7 +126,9 @@
                                                'e2e.telegram-media-test
                                                'e2e.telegram-send-file-test
                                                'e2e.telegram-voice-test
-                                               'e2e.telegram-approvals-test)]
+                                               'e2e.telegram-approvals-test
+                                               'e2e.telegram-media-only-test
+                                               'e2e.telegram-turn-status-test)]
                               (when (pos? (+ fail error))
                                 (System/exit 1)))}
    test:e2e:telegram-approvals {:doc "Run Telegram inline-button approval tests."
@@ -167,6 +171,14 @@
                                              (t/run-tests 'e2e.telegram-media-only-test)]
                                          (when (pos? (+ fail error))
                                            (System/exit 1)))}
+   test:e2e:telegram-turn-status {:doc "Run turn-status (tool lines, typing, failure) e2e tests."
+                                  :extra-paths ["test"]
+                                  :requires ([clojure.test :as t]
+                                             [e2e.telegram-turn-status-test])
+                                  :task (let [{:keys [fail error]}
+                                              (t/run-tests 'e2e.telegram-turn-status-test)]
+                                          (when (pos? (+ fail error))
+                                            (System/exit 1)))}
    test:e2e:session-redaction {:doc "Run session persistence redaction e2e tests."
                                :extra-paths ["test"]
                                :requires ([clojure.test :as t]

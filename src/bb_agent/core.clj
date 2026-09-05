@@ -205,6 +205,19 @@
             request (cond-> request (seq user-images) (assoc :images user-images))
             response (complete-chain cfg request)
             tool-requests (:tool/requests response)
+            ;; Surface the turn's process, not just its result: channels
+            ;; render one compact line per tool call. A broken renderer
+            ;; must never kill the turn.
+            _ (when-let [emit (:status/emit cfg)]
+                (try
+                  (run! (fn [req]
+                          (emit {:status :tool/call
+                                 :tool (:tool/name req)
+                                 :args (:tool/args req)}))
+                        tool-requests)
+                  (catch Exception e
+                    (binding [*out* *err*]
+                      (println (str "status emit failed: " (.getMessage e)))))))
             tool-results (when (seq tool-requests)
                             (mapv #(tool/handle-tool-request % cfg) tool-requests))
             turn* (cond-> (append-tool-round turn response (or tool-results []))
