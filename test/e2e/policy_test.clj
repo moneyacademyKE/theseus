@@ -167,7 +167,8 @@
       (write-rules! home rules-deny-shell)
       (let [result (run-agent home "try approved shell touch e2e-denied-marker")]
         (is (= 0 (:exit result)) (:err result))
-        (is (str/includes? (:out result) ":status :denied") (:out result))
+        (is (str/includes? (:out result) "🚫 shell denied")
+            "user-facing denial is a clean sentence, never raw EDN")
         (is (not (fs/exists? (fs/path home "e2e-denied-marker")))))
       (finally
         (fs/delete-tree home)))))

@@ -3,11 +3,11 @@
             [bb-agent.approval :as approval]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
-            [bb-agent.session :as session]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-extract :as extract]
+            [bb-agent.telegram-flow :as flow]
             [bb-agent.telegram-group :as group]
             [bb-agent.telegram-guard :as guard]
             [bb-agent.telegram-media :as media]
@@ -85,23 +85,6 @@
       (str "\n[Context: the sender edited earlier messages since your last reply]\n"
            (str/join "\n" (->> taken reverse (take 3) reverse))))))
 
-(defn- status-emit
-  "Render turn-status events as compact channel messages: one bounded,
-   redacted line per tool call. Status is presence, not content — a
-   failed send never touches the turn."
-  [telegram-cfg chat-id thread-id]
-  (fn [{:keys [status tool args]}]
-    (when (= :tool/call status)
-      (let [raw (session/redact-secrets (pr-str args))
-            detail (if (> (count raw) 72) (str (subs raw 0 72) "…") raw)]
-        (try
-          (delivery/send-message! telegram-cfg chat-id
-                                  (str "🔧 " tool " " detail)
-                                  {:thread-id thread-id})
-          (catch Exception e
-            (binding [*out* *err*]
-              (println (str "telegram status emit failed: " (.getMessage e))))))))))
-
 (defn- notify-turn-failure!
   "A dead turn must never be silent: swap the ack reaction to a failure
    signal and send one bounded error reply. The notice itself failing
@@ -135,7 +118,8 @@
         ;; photos are real inputs, not noise (and voice gets transcribed by
         ;; attachment-context via stt-bin).
         saved (when (and authorized? (attachment/persistable? message))
-                (attachment/persist! (config/home) telegram-cfg message))]
+                (attachment/persist! (config/home) telegram-cfg message))
+        turn-flow (flow/make-flow)]
     (try
       (when (and authorized?
                (or (seq text) saved)
@@ -163,7 +147,7 @@
                          (assoc cfg
                                 :session/id session-id
                                 :session/shared? (group/group-chat? message)
-                                :status/emit (status-emit telegram-cfg chat-id thread-id)
+                                :status/emit (flow/flow-emit turn-flow telegram-cfg chat-id thread-id)
                                 :telegram/send-context {:chat-id chat-id
                                                         :thread-id thread-id}
                              :user/images (when (and saved
@@ -185,12 +169,14 @@
                                                telegram-cfg chat-id mid
                                                (:approval/id pending))))}))
                          (group/agent-input bot input-message))))]
+            (flow/settle! turn-flow telegram-cfg chat-id true)
             (delivery/send-html!
              telegram-cfg chat-id
              (tr/to-html (:assistant/final turn))
               {:thread-id thread-id
                :reply-to-message-id (:message_id message)}))))
       (catch Exception e
+        (flow/settle! turn-flow telegram-cfg chat-id false)
         (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id message) e)))))
 
 (defn- process-album!
@@ -202,7 +188,8 @@
         primary (or (first (filter #(seq (str/trim (str (or (:text %) (:caption %) ""))))
                                    messages))
                     (first messages))
-        text (group/normalize-command (or (media/activation-text messages) "") bot)]
+        text (group/normalize-command (or (media/activation-text messages) "") bot)
+        turn-flow (flow/make-flow)]
     (try
       (when (and primary
                (guard/message-allowed? cfg primary)
@@ -222,7 +209,7 @@
                      (assoc cfg
                             :session/id session-id
                             :session/shared? (group/group-chat? primary)
-                            :status/emit (status-emit telegram-cfg chat-id thread-id)
+                            :status/emit (flow/flow-emit turn-flow telegram-cfg chat-id thread-id)
                             :telegram/send-context {:chat-id chat-id
                                                     :thread-id thread-id}
                             :approval/ask
@@ -239,12 +226,14 @@
                                               (:approval/id pending))))}))
                      (group/agent-input bot
                                         (assoc primary :text (str edit-context text contexts))))))]
+        (flow/settle! turn-flow telegram-cfg chat-id true)
         (delivery/send-html!
          telegram-cfg chat-id
          (tr/to-html (:assistant/final turn))
          {:thread-id thread-id
           :reply-to-message-id (:message_id primary)})))
       (catch Exception e
+        (flow/settle! turn-flow telegram-cfg (get-in primary [:chat :id]) false)
         (notify-turn-failure! telegram-cfg (get-in primary [:chat :id])
                               (group/topic-id primary) (:message_id primary) e)))))
 

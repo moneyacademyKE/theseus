@@ -21,8 +21,9 @@
     (try
       (let [result (run-agent home (str "try denied shell " denied-command))]
         (is (= 0 (:exit result)) (:err result))
-        (is (str/includes? (:out result) "tool-results="))
-        (is (str/includes? (:out result) ":status :denied"))
+        (is (str/includes? (:out result) "🚫 shell denied"))
+        (is (not (str/includes? (:out result) "tool-results="))
+            "the user-facing text is a clean sentence, never raw EDN")
         (is (not (fs/exists? side-effect-file)))
         (let [turn (first (edn/read-string (slurp (str session-file))))]
           (is (= [{:tool/name "shell"

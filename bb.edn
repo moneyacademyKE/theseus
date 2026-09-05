@@ -116,7 +116,8 @@
                                  [e2e.telegram-voice-test]
                                  [e2e.telegram-approvals-test]
                                  [e2e.telegram-media-only-test]
-                                 [e2e.telegram-turn-status-test])
+                                 [e2e.telegram-turn-status-test]
+                                 [e2e.telegram-flow-test])
                       :task (let [{:keys [fail error]}
                                   (t/run-tests 'e2e.telegram-test
                                                'e2e.telegram-delivery-test
@@ -128,7 +129,8 @@
                                                'e2e.telegram-voice-test
                                                'e2e.telegram-approvals-test
                                                'e2e.telegram-media-only-test
-                                               'e2e.telegram-turn-status-test)]
+                                               'e2e.telegram-turn-status-test
+                                               'e2e.telegram-flow-test)]
                               (when (pos? (+ fail error))
                                 (System/exit 1)))}
    test:e2e:telegram-approvals {:doc "Run Telegram inline-button approval tests."
@@ -187,6 +189,14 @@
                                            (t/run-tests 'e2e.session-redaction-test)]
                                        (when (pos? (+ fail error))
                                          (System/exit 1)))}
+   test:e2e:telegram-flow {:doc "Run Telegram flow (one growing message) e2e tests."
+                           :extra-paths ["test"]
+                           :requires ([clojure.test :as t]
+                                      [e2e.telegram-flow-test])
+                           :task (let [{:keys [fail error]}
+                                       (t/run-tests 'e2e.telegram-flow-test)]
+                                   (when (pos? (+ fail error))
+                                     (System/exit 1)))}
    test:e2e:phase6 {:doc "Run Phase 6 extension e2e tests."
                     :extra-paths ["test"]
                     :requires ([clojure.test :as t]

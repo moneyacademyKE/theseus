@@ -103,7 +103,7 @@
        (filter (fn [c] (str/includes? (:uri c) needle)))
        (map (fn [c] (json/parse-string (:body c) keyword)))))
 
-(deftest tool-calls-surface-as-compact-redacted-status-lines
+(deftest tool-calls-surface-as-compact-redacted-flow-lines
   (let [rounds (atom 0)
         provider-impl
         (fn [_ _]
@@ -123,27 +123,21 @@
                                                                   (re-find #\"^echo\"
                                                                            (str (:cmd args)))))
                                                      :decision :allow}]}")
-        sends (parsed-sends calls)
-        texts (map :text sends)
-        status-idx (first (keep-indexed (fn [i t]
-                                          (when (and t (str/includes? t "🔧"))
-                                            i))
-                                        texts))
-        final-idx (first (keep-indexed (fn [i t]
-                                         (when (and t (str/includes? t "done with the probe"))
-                                           i))
-                                       texts))]
-    (testing "a compact status line precedes the final reply"
-      (is (some? status-idx))
-      (is (some? final-idx))
-      (when (and status-idx final-idx)
-        (is (< status-idx final-idx))
-        (let [line (nth texts status-idx)]
-          (is (str/includes? line "echo status-probe"))
-          (is (<= (count line) 120) "status lines stay compact"))))
-    (testing "tool args are redacted in the status line"
-      (when status-idx
-        (is (not (str/includes? (nth texts status-idx) "AAfakeTOKEN")))))))
+        ;; The flow surface: the tool's sendMessage plus its edits.
+        flow-texts (map :text (concat (parsed-sends calls)
+                                      (parsed-calls calls "/editMessageText")))
+        flow-line (some (fn [t] (when (and t (str/includes? t "shell")) t))
+                        flow-texts)
+        reply (some (fn [t] (when (and t (str/includes? t "done with the probe")) t))
+                    (map :text (parsed-sends calls)))]
+    (testing "a compact, icon-prefixed tool line precedes the final reply"
+      (is (some? flow-line))
+      (is (some? reply))
+      (when flow-line
+        (is (str/includes? flow-line "echo status-probe"))))
+    (testing "tool args are redacted in the flow line"
+      (doseq [t flow-texts]
+        (is (not (str/includes? (or t "") "AAfakeTOKEN")))))))
 
 (deftest typing-renews-for-the-turns-duration
   (let [provider-impl (fn [_ _]

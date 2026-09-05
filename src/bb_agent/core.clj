@@ -71,8 +71,23 @@
   (let [names (->> results (map :tool/name) (str/join ", "))]
     (str "Tool execution finished without final answer: " names)))
 
-(defn- tool-results-summary [results]
-  (str "tool-results=" (pr-str results)))
+(defn- tool-results-summary
+  "The user-facing line when every tool call was denied: a clean sentence,
+   never raw EDN. The provider wire keeps its own format; this text is the
+   reply the human reads."
+  [results]
+  (let [names (->> results (map :tool/name) distinct (str/join ", "))]
+    (str "🚫 " names " denied — needs explicit approval.")))
+
+(defn- safe-emit
+  "Best-effort status event. A broken status surface must never kill the turn."
+  [cfg event]
+  (when-let [emit (:status/emit cfg)]
+    (try
+      (emit event)
+      (catch Exception e
+        (binding [*out* *err*]
+          (println (str "status emit failed: " (.getMessage e))))))))
 
 (defn- memory-system-message [matches]
   {:role :system
@@ -205,21 +220,19 @@
             request (cond-> request (seq user-images) (assoc :images user-images))
             response (complete-chain cfg request)
             tool-requests (:tool/requests response)
-            ;; Surface the turn's process, not just its result: channels
-            ;; render one compact line per tool call. A broken renderer
-            ;; must never kill the turn.
-            _ (when-let [emit (:status/emit cfg)]
-                (try
-                  (run! (fn [req]
-                          (emit {:status :tool/call
-                                 :tool (:tool/name req)
-                                 :args (:tool/args req)}))
-                        tool-requests)
-                  (catch Exception e
-                    (binding [*out* *err*]
-                      (println (str "status emit failed: " (.getMessage e)))))))
+            ;; One event before each call and one after its outcome — the
+            ;; channel flips ⚙️→✅/❌ live inside a single flow message.
             tool-results (when (seq tool-requests)
-                            (mapv #(tool/handle-tool-request % cfg) tool-requests))
+                           (mapv (fn [req]
+                                   (safe-emit cfg {:status :tool/call
+                                                   :tool (:tool/name req)
+                                                   :args (:tool/args req)})
+                                   (let [result (tool/handle-tool-request req cfg)]
+                                     (safe-emit cfg {:status :tool/done
+                                                     :tool (:tool/name req)
+                                                     :args {:ok? (= :ok (:status result))}})
+                                     result))
+                                 tool-requests))
             turn* (cond-> (append-tool-round turn response (or tool-results []))
                     (:fallback/tried response)
                     (assoc :fallback/tried (:fallback/tried response))

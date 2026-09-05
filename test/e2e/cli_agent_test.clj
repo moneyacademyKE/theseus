@@ -157,7 +157,7 @@
       (let [result (run-agent home "read note")
             turn (first (edn/read-string (slurp (str session-file))))]
         (is (= 0 (:exit result)) (:err result))
-        (is (re-find #":status :denied" (:out result)))
+        (is (re-find #"🚫 read_file denied" (:out result)))
         (is (= 1 @calls))
         (is (= ["read_file"] (mapv :tool/name (:tool/requests turn))))
         (is (= [:denied] (mapv :status (:tool/results turn))))

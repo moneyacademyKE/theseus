@@ -3,6 +3,7 @@
             [babashka.process :as p]
             [clojure.edn :as edn]
             [cheshire.core :as json]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [org.httpkit.server :as server]))
 
@@ -98,7 +99,8 @@
       (let [result (run-agent home "read note")
             turn (first (edn/read-string (slurp (str session-file))))]
         (is (= 0 (:exit result)) (:err result))
-        (is (re-find #":status :denied" (:out result)))
+        (is (str/includes? (:out result) "🚫 read_file denied")
+            "user-facing denial is a clean sentence, never raw EDN")
         (is (= 1 @calls))
         (is (= ["read_file"] (mapv :tool/name (:tool/requests turn))))
         (is (= [:denied] (mapv :status (:tool/results turn))))

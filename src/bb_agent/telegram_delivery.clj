@@ -190,14 +190,15 @@
   "Replace a sent message's text and drop its inline keyboard, so a decided
    approval can never be clicked twice. Rides the bounded ladder."
   ([cfg chat-id message-id text] (edit-message-text! cfg chat-id message-id text {}))
-  ([cfg chat-id message-id text {:keys [transport sleep-fn] :as opts}]
+  ([cfg chat-id message-id text {:keys [transport sleep-fn parse-mode] :as opts}]
    (post-api cfg "editMessageText"
              {:headers {"content-type" "application/json"}
               :body (json/generate-string
-                     {:chat_id chat-id
-                      :message_id message-id
-                      :text text
-                      :reply_markup {}})}
+                     (cond-> {:chat_id chat-id
+                              :message_id message-id
+                              :text text
+                              :reply_markup {}}
+                       parse-mode (assoc :parse_mode parse-mode)))}
              {:chat-id chat-id}
              (merge default-runtime (select-keys opts [:transport :sleep-fn])))))
 
