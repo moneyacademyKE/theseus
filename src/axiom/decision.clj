@@ -27,7 +27,23 @@
 
 (defn decide
   "Pure: given config, world, and run-state, return the next action.
-  State: {:stall <n> :thrash <n> :attempt <n> :rollbacks <n> :perturb-index <n>}"
+
+  state: {:stall <n> :thrash <n> :attempt <n> :rollbacks <n> :perturb-index <n>}
+
+  Returns:
+    {:type :done}                                goal met
+    {:type :halt :reason :integrity ...}         axiom violated (halt NOW)
+    {:type :rollback ...}                        stall exhausted, rollbacks remain
+    {:type :escalate :rung :reseed ...}          no-convergence ladder rung
+    {:type :halt :reason :stall ...}             stall exhausted, no rollbacks left
+    {:type :halt :reason :no-convergence ...}    ladder exhausted
+    {:type :act}                                 perform the act
+
+  Order matters: integrity is checked BEFORE goal -- a broken system halts
+  even if the goal is coincidentally met (mission axiom #1: integrity is a
+  halt condition, not a retry condition). Rollback-as-recovery (Phase 1):
+  when the stall budget is exhausted but rollbacks remain, we reset to the
+  last-known-good checkpoint and retry instead of dying."
   [cfg world state]
   (let [violations    (predicates/integrity-violations world (:integrity cfg))
         stall-after   (:stall-after cfg 3)
