@@ -4,6 +4,8 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [bb-agent.config :as config]
+            [bb-agent.core :as core]
             [bb-agent.skill :as skill]))
 
 (defn- shell! [home & args]
@@ -141,3 +143,44 @@
       (is (= "verification-witness" (:name skill)))
       (is (= "Produce a witness" (:description skill)))
       (is (= "Body text here." (clojure.string/trim (:body skill)))))))
+
+(deftest skills-summary-and-discovery-across-dirs
+  (with-temp-home
+    (fn [home]
+      (let [skills-dir (fs/path home "skills")]
+        (fs/create-dirs (fs/path skills-dir "alpha"))
+        (fs/create-dirs (fs/path skills-dir "beta"))
+        (spit (str (fs/path skills-dir "alpha" "SKILL.md"))
+              "---\nname: alpha\ndescription: Alpha workflow\n---\nAlpha body\n")
+        (spit (str (fs/path skills-dir "beta" "SKILL.md"))
+              "---\nname: beta\ndescription: Beta workflow\n---\nBeta body\n")
+        (let [discovered (skill/discover-all-skills [skills-dir])
+              summary (skill/skills-summary [skills-dir])]
+          (is (= ["alpha" "beta"] (mapv :name discovered)))
+          (is (str/includes? summary "--- Available Skills ---"))
+          (is (str/includes? summary "- /alpha: Alpha workflow"))
+          (is (str/includes? summary "- /beta: Beta workflow")))))))
+
+(deftest skills-injected-into-turn-context
+  (with-temp-home
+    (fn [_home]
+      (let [skills-dir (fs/path (config/home) "skills")]
+        (fs/create-dirs (fs/path skills-dir "summarize"))
+        (spit (str (fs/path skills-dir "summarize" "SKILL.md"))
+              "---\nname: summarize\ndescription: Summarize text succinctly\n---\nSummarize instructions\n")
+        (let [captured (atom nil)]
+          (with-redefs [bb-agent.provider/complete
+                        (fn [_provider req]
+                          (reset! captured req)
+                          {:assistant/final "ok"
+                           :usage {:tokens/input 10 :tokens/output 2}})]
+            (core/run-turn! {:provider :fake
+                             :model "test-model"
+                             :session/id "test-skills"}
+                            "hello")
+            (let [msgs (:messages @captured)
+                  system-skills (first (filter #(and (= :system (:role %))
+                                                     (str/includes? (or (:content %) "") "Available Skills"))
+                                               msgs))]
+              (is (some? system-skills))
+              (is (str/includes? (:content system-skills) "- /summarize: Summarize text succinctly")))))))))

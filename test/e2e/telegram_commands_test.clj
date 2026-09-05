@@ -26,42 +26,45 @@
              :chat {:id owner-id :type "private"}
              :text text}})
 
-(defn- run-poll [updates]
-  (let [home (fs/create-temp-dir {:prefix "theseus-cmd-"})
-        port (free-port)
-        calls (atom [])
-        stop-server
-        (server/run-server
-         (fn [req]
-           (let [body (when-let [stream (:body req)] (slurp stream))]
-             (swap! calls conj {:uri (:uri req) :body body})
-             (case (:uri req)
-               "/botTESTTOKEN/getMe"
-               {:status 200 :headers {"content-type" "application/json"}
-                :body (json/generate-string {:ok true :result {:id 1 :username "eileenslybot" :is_bot true}})}
-               "/botTESTTOKEN/getUpdates"
-               {:status 200 :headers {"content-type" "application/json"}
-                :body (json/generate-string {:ok true :result updates})}
-               "/botTESTTOKEN/sendMessage"
-               {:status 200 :headers {"content-type" "application/json"}
-                :body (json/generate-string {:ok true :result {:message_id 90}})}
-               {:status 200 :headers {"content-type" "application/json"}
-                :body (json/generate-string {:ok true :result true})})))
-         {:port port})]
-    (try
-      (spit (str (fs/path home "config.edn"))
-            (pr-str {:provider :fake
-                     :model "fake-deterministic"
-                     :telegram {:token "TESTTOKEN"
-                                :base-url (str "http://127.0.0.1:" port)
-                                :react-ack false
-                                :typing-indicator false
-                                :allowed-user-ids [owner-id]}}))
-      (let [result (with-redefs [config/home (fn [] (str home))]
-                     (telegram/poll-once!))]
-        {:calls @calls :home (str home) :result result})
-      (finally
-        (stop-server)))))
+(defn- run-poll
+  ([updates] (run-poll updates nil))
+  ([updates setup-fn]
+   (let [home (fs/create-temp-dir {:prefix "theseus-cmd-"})
+         port (free-port)
+         calls (atom [])
+         stop-server
+         (server/run-server
+          (fn [req]
+            (let [body (when-let [stream (:body req)] (slurp stream))]
+              (swap! calls conj {:uri (:uri req) :body body})
+              (case (:uri req)
+                "/botTESTTOKEN/getMe"
+                {:status 200 :headers {"content-type" "application/json"}
+                 :body (json/generate-string {:ok true :result {:id 1 :username "eileenslybot" :is_bot true}})}
+                "/botTESTTOKEN/getUpdates"
+                {:status 200 :headers {"content-type" "application/json"}
+                 :body (json/generate-string {:ok true :result updates})}
+                "/botTESTTOKEN/sendMessage"
+                {:status 200 :headers {"content-type" "application/json"}
+                 :body (json/generate-string {:ok true :result {:message_id 90}})}
+                {:status 200 :headers {"content-type" "application/json"}
+                 :body (json/generate-string {:ok true :result true})})))
+          {:port port})]
+     (try
+       (spit (str (fs/path home "config.edn"))
+             (pr-str {:provider :fake
+                      :model "fake-deterministic"
+                      :telegram {:token "TESTTOKEN"
+                                 :base-url (str "http://127.0.0.1:" port)
+                                 :react-ack false
+                                 :typing-indicator false
+                                 :allowed-user-ids [owner-id]}}))
+       (when setup-fn (setup-fn home))
+       (let [result (with-redefs [config/home (fn [] (str home))]
+                      (telegram/poll-once!))]
+         {:calls @calls :home (str home) :result result})
+       (finally
+         (stop-server))))))
 
 (defn- replies [calls]
   (->> calls
@@ -99,5 +102,23 @@
       (try
         (is (str/includes? usage-reply "tokens") "usage reply mentions tokens")
         (is (str/includes? usage-reply "fake") "names the provider")
+        (finally
+          (fs/delete-tree home))))))
+
+(deftest slash-command-triggers-skill
+  (testing "typing /skill-name composes the skill prompt with input into the LLM turn"
+    (let [{:keys [home]} (run-poll [(dm-message 1 30 "/explain recursion")]
+                                   (fn [home]
+                                     (let [sdir (fs/path home "skills" "explain")]
+                                       (fs/create-dirs sdir)
+                                       (spit (str (fs/path sdir "SKILL.md"))
+                                             "---\nname: explain\ndescription: Explain concept\n---\nExplain concisely.\n"))))
+          session-file (fs/path home "state" "sessions" "telegram-1608111860.edn")]
+      (try
+        (is (fs/regular-file? session-file) "session recorded")
+        (let [turns (edn/read-string (slurp (str session-file)))
+              turn (first turns)]
+          (is (str/includes? (:user/input turn) "Explain concisely.") "contains skill body")
+          (is (str/includes? (:user/input turn) "recursion") "contains user input"))
         (finally
           (fs/delete-tree home))))))

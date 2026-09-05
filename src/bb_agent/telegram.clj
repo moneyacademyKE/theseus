@@ -18,6 +18,7 @@
             [bb-agent.telegram-state :as state]
             [bb-agent.telegram-voice :as voice]
             [bb-agent.session :as session]
+            [bb-agent.skill :as skill]
             [bb-agent.usage :as usage]
             [cheshire.core :as json]
             [clojure.string :as str]))
@@ -122,6 +123,18 @@
     ("/usage" "/stats") :usage
     nil))
 
+(defn- skill-command
+  "If text starts with /<skill-name>, returns composed prompt with skill body or nil."
+  [text]
+  (when (and text (str/starts-with? (str/trim text) "/"))
+    (let [trimmed (str/trim text)
+          parts (str/split trimmed #"\s+" 2)
+          cmd-name (subs (first parts) 1)
+          input (or (second parts) "")
+          skills (skill/discover-all-skills)]
+      (when-let [matched (first (filter #(= cmd-name (:name %)) skills))]
+        (skill/compose-prompt matched input)))))
+
 (defn- handle-chat-command
   [cmd session-id]
   (case cmd
@@ -192,7 +205,8 @@
              (handle-chat-command cmd session-id)
              {:thread-id thread-id
               :reply-to-message-id (:message_id message)})
-          (let [edit-context (or (edit-notes-context session-id) "")
+          (let [composed-text (or (skill-command text) text)
+                edit-context (or (edit-notes-context session-id) "")
                 history-context (if (and (:group-context telegram-cfg true)
                                          (group/group-chat? message))
                                   (or (gctx/history-block chat-id (:message_id message)
@@ -202,7 +216,7 @@
                 input-message (assoc message :text
                                      (str history-context
                                           edit-context
-                                          text
+                                          composed-text
                                           (attachment-context telegram-cfg saved)))
                 turn (presence/with-typing-heartbeat
                       telegram-cfg chat-id {:thread-id thread-id}

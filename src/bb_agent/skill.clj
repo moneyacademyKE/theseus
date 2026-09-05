@@ -1,5 +1,6 @@
 (ns bb-agent.skill
   (:require [babashka.fs :as fs]
+            [bb-agent.config :as config]
             [clojure.string :as str]))
 
 (def ^:private slug-pattern #"^[a-z0-9][a-z0-9_-]*$")
@@ -39,6 +40,31 @@
       (when-not (= (count names) (count (set names)))
         (throw (ex-info "Duplicate skill name" {:names names})))
       (vec (sort-by :name skills)))))
+
+(defn find-skills-dirs []
+  (let [h (config/home)]
+    (filterv fs/directory?
+             [(fs/path h "skills")
+              (fs/path h "theseus" "skills")])))
+
+(defn discover-all-skills
+  ([] (discover-all-skills (find-skills-dirs)))
+  ([dirs]
+   (let [dirs (if (coll? dirs) dirs [dirs])
+         all (mapcat (fn [d] (try (discover-skills d) (catch Exception _ []))) dirs)]
+     (->> (group-by :name all)
+          (map (fn [[_ sks]] (first sks)))
+          (sort-by :name)
+          vec))))
+
+(defn skills-summary
+  ([] (skills-summary (find-skills-dirs)))
+  ([dirs]
+   (let [skills (discover-all-skills dirs)]
+     (when (seq skills)
+       (str "\n--- Available Skills ---\n"
+            "Skills — saved workflows triggered by /<name>:\n"
+            (str/join "\n" (map #(str "- /" (:name %) ": " (:description %)) skills)))))))
 
 (defn compose-prompt [skill-or-body input]
   (let [body (if (map? skill-or-body) (:body skill-or-body) skill-or-body)]

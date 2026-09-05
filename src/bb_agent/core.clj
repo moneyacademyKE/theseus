@@ -9,6 +9,7 @@
             [bb-agent.retry :as retry]
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
+            [bb-agent.skill :as skill]
             [bb-agent.tool :as tool]
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
@@ -146,11 +147,16 @@
                                                      :messages [{:role :user :content prompt}]
                                                      :provider/config (get-in cfg [:providers (:provider cfg)])})))})))))))
 
-(defn- initial-messages [prompt memory-matches semantic-ctx brain-ctx history]
+(defn- skills-system-message [skills-ctx]
+  {:role :system
+   :content skills-ctx})
+
+(defn- initial-messages [prompt memory-matches semantic-ctx brain-ctx skills-ctx history]
   (cond-> []
     (seq memory-matches) (conj (memory-system-message memory-matches))
     semantic-ctx (conj (semantic-system-message semantic-ctx))
     (seq brain-ctx) (conj (brain-system-message brain-ctx))
+    (seq skills-ctx) (conj (skills-system-message skills-ctx))
     true (into (or history []))
     true (conj {:role :user :content prompt})))
 
@@ -218,8 +224,9 @@
         memory-matches (if shared? [] (memory/attach-memories prompt))
         semantic-ctx (when-not shared?
                        (semantic-memory/attach-context prompt cfg))
-        brain-ctx (brain/load-brain)]
-    (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx
+        brain-ctx (brain/load-brain)
+        skills-ctx (skill/skills-summary)]
+    (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
                                       (history-messages cfg id))
            turn {:tool/requests []
                  :tool/results []}
