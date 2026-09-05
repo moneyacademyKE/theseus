@@ -57,12 +57,13 @@
 (defn- media-entry
   [message key kind default-name]
   (when-let [media (get message key)]
-    {:kind kind
-     :file-id (:file_id media)
-     :unique-id (:file_unique_id media)
-     :file-name (or (:file_name media) default-name)
-     :mime-type (:mime_type media)
-     :file-size (:file_size media)}))
+    (cond-> {:kind kind
+             :file-id (:file_id media)
+             :unique-id (:file_unique_id media)
+             :file-name (or (:file_name media) default-name)
+             :mime-type (:mime_type media)
+             :file-size (:file_size media)}
+      (:duration media) (assoc :duration (:duration media)))))
 
 (defn attachment
   "Return one normalized attachment descriptor from a Telegram message.

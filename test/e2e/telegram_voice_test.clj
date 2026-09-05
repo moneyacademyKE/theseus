@@ -41,7 +41,23 @@
                                     :exec (fn [_bin _args]
                                             {:exit 0 :out (apply str (repeat 100 "x"))})})]
       (is (true? (:transcribed? result)))
-      (is (= 10 (count (:text result)))))))
+      (is (= 10 (count (:text result))))))
+
+  (testing "audio exceeding max duration is honestly declined before execution"
+    (let [exec-called? (atom false)
+          result (voice/transcribe {:path "/tmp/clip.ogg" :duration 180}
+                                   {:resolve-bin (constantly "/bin/echo-thing")
+                                    :max-duration-secs 120
+                                    :exec (fn [_ _] (reset! exec-called? true))})]
+      (is (false? (:transcribed? result)))
+      (is (= :duration-exceeded (:reason result)))
+      (is (= 180 (:duration result)))
+      (is (= 120 (:max-duration-secs result)))
+      (is (false? @exec-called?) "exec is not even spawned when duration exceeds limit"))
+    (let [ann (voice/annotation {:stt-max-duration-secs 60}
+                                {:path "/tmp/clip.ogg" :duration 90})]
+      (is (str/includes? ann "duration exceeds limit (90s > 60s)"))
+      (is (str/includes? ann "audio saved but not transcribed")))))
 
 (def group-id -1003995594829)
 (def owner-id 1608111860)
