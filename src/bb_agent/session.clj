@@ -25,11 +25,25 @@
       (edn/read-string (slurp (str path)))
       [])))
 
+(def ^:private secret-patterns
+  "Secret shapes that must never persist in session records. Kept as data:
+   extend by appending a pattern, never by special-casing call sites."
+  [#"\d{8,}:AA[A-Za-z0-9_-]{20,}"          ; Telegram bot tokens
+   #"sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}"])    ; API keys (sk-*, case-sensitive)
+
+(defn- redact-secrets
+  "Replace known secret shapes in s with a redaction marker. Pure."
+  [s]
+  (reduce (fn [acc pat] (str/replace acc pat "<REDACTED-SECRET>"))
+          s secret-patterns))
+
 (defn append-turn! [session-id turn]
   (let [path (session-file session-id)
         turns (conj (load-turns session-id) turn)]
     (fs/create-dirs (fs/parent path))
-    (spit (str path) (pr-str turns))
+    (spit (str path) (redact-secrets (pr-str turns)))
+    ;; Born private: tool results may carry anything the world showed us.
+    (fs/set-posix-file-permissions path "rw-------")
     turns))
 
 (defn load-metadata [session-id]
