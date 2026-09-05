@@ -1,6 +1,6 @@
 ---
 name: axiom
-description: Delegate a bounded build task to the local Axiom repo so Axiom supervises an opencode harness against an observable workspace.
+description: Delegate a bounded build task to the Axiom goal runner folded into the Theseus repo (`bb goal`) — Axiom supervises an agent harness against an observable workspace with checkpoints and rollback.
 ---
 
 # axiom
@@ -13,18 +13,23 @@ This skill does **not** hijack an already-running opencode TUI session. That wou
 
 Instead, it uses OpenCrabs as the front door, then:
 
-1. switches into `~/Desktop/axiom`
-2. inspects the Axiom repo and existing dogfood patterns
-3. creates or adapts an Axiom config for the requested task
-4. runs Axiom so **Axiom** supervises `opencode` as an external harness
+1. switches into `~/Desktop/rich-hickey-gap-analysis/theseus` — Axiom lives here as `src/axiom/`, exposed as the `bb goal` task (fold commit `2e6c2ef`, lock fix `a2900b0`)
+2. inspects `configs/` and the dogfood docs for existing patterns
+3. creates or adapts a goal config for the requested task
+4. runs `bb goal <config.edn>` so **Axiom** supervises the configured harness (`opencode` by default; harnesses are argv templates, overridable in config) as an external process
 5. verifies the resulting world state from files/build/tests instead of trusting harness self-report
 
 ## Required behavior
 
-- Treat `~/Desktop/axiom` as the control repo unless the user explicitly says otherwise.
-- Read the current Axiom docs/config examples before creating a new dogfood config.
+- Treat `~/Desktop/rich-hickey-gap-analysis/theseus` as the control repo unless the user explicitly says otherwise. Entrypoint is `bb goal` from the theseus root — never the old `~/Desktop/axiom` checkout (deleted; the GitHub copy is stale/broken at HEAD).
+- **Rollback has teeth:** Axiom's stall recovery executes `git reset --hard` against the config's `:workdir`. Only point `:workdir` at a dedicated directory with a clean, fully committed tree. Never aim it at a repo holding uncommitted work — it will eat them (learned the hard way, 2026-09-05).
+- Use **absolute** `:workdir` paths in configs — relative paths resolve against the invoking cwd, not the config's location.
+- One runner per config: an atomic lockfile refuses concurrent runs on the same config (`Lock held by a live process`). That is correct behavior — don't fight it.
+- Lifecycle: `bb goal <config.edn> [--once]`, then `bb goal status|pause|resume|stop <config.edn>`.
+- After any change to `src/axiom/` or `test/axiom/`: run `bb test:axiom` (89 tests / 467 assertions, green at `a2900b0`).
+- Read the current config examples (`configs/`) and dogfood docs before creating a new goal config.
 - Keep the task bounded and observable. Convert vague requests into concrete required artifacts, checks, and build/test predicates.
-- Prefer creating disposable example workspaces under `examples/opencode-dogfood/` unless the user explicitly wants a real target repo changed.
+- Prefer creating disposable workspaces outside the theseus tree unless the user explicitly wants a real target repo changed.
 - Use real provider-qualified opencode model ids from the local opencode config.
 - If the user asks to "take over my opencode instance", explain the boundary clearly: Axiom launches supervised delegated work; it does not possess another live TUI process.
 - After the run, report what Axiom accomplished, what the harness did, and what the observed world proves.
