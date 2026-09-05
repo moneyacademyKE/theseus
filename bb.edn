@@ -36,9 +36,6 @@
    telegram {:doc "Telegram commands. Usage: bb telegram poll-once"
              :requires ([bb-agent.cli :as cli])
              :task (apply cli/-main "telegram" *command-line-args*)}
-   slack {:doc "Slack commands. Usage: bb slack poll-once"
-          :requires ([bb-agent.cli :as cli])
-          :task (apply cli/-main "slack" *command-line-args*)}
    ui {:doc "Simple terminal status UI. Usage: bb ui status"
        :requires ([bb-agent.cli :as cli])
        :task (apply cli/-main "ui" *command-line-args*)}

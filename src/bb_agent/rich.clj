@@ -47,7 +47,6 @@
     :heading (let [inner (str/join "" (map #(render-node mode %) (:children node)))]
                (case mode
                  :telegram (str "<b>" inner "</b>")
-                 :slack (str "*" inner "*")
                  (str (apply str (repeat (:level node) "#")) " " inner)))
     :code (case mode
             :telegram (str "<pre><code>" (escape-html (:text node)) "</code></pre>")
@@ -73,9 +72,6 @@
 
 (defn telegram [ast]
   (render-node :telegram ast))
-
-(defn slack [ast]
-  (render-node :slack ast))
 
 (defn- table-lines? [lines]
   (and (>= (count lines) 2)

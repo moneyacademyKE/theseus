@@ -4,10 +4,8 @@
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.memory :as memory]
-            [bb-agent.slack :as slack]
             [bb-agent.tool :as tool]
             [bb-agent.ui :as ui]
-            [cheshire.core :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]))
 
@@ -73,36 +71,8 @@
         (is (= "phase six document text" (get-in document-result [:document :text])))
         (is (str/includes? (:assistant/final turn) "document_read"))))))
 
-(deftest slack-polling-and-ui-status-work
-  (let [home (config/home)
-        config-path (fs/path home "config.edn")
-        posted (atom [])
-        get-calls (atom 0)]
-    (spit (str config-path)
-          (pr-str {:provider :fake
-                   :model "fake-deterministic"
-                   :session/id "phase6-session"
-                   :slack {:token "xoxb-test"
-                           :channel-id "C123"
-                           :base-url "https://slack.test/api"}}))
-    (with-redefs [babashka.http-client/get (fn [_ {:keys [query-params]}]
-                                             (swap! get-calls inc)
-                                             {:status 200
-                                              :body (json/generate-string {:ok true
-                                                                           :messages [{:ts "171.1"
-                                                                                       :user "U1"
-                                                                                       :text "say pong"}]})})
-                  babashka.http-client/post (fn [_ {:keys [body]}]
-                                              (swap! posted conj (json/parse-string body keyword))
-                                              {:status 200
-                                               :body (json/generate-string {:ok true})})]
-      (let [result (slack/poll-once!)
-            session-path (fs/path home "state" "sessions" "slack-C123-U1.edn")
-            ui-text (ui/render-status)]
-        (is (= 1 (:events result)))
-        (is (= 1 @get-calls))
-        (is (= [{:channel "C123" :text "pong"}] @posted))
-        (is (fs/exists? session-path))
-        (is (str/includes? ui-text "Babashka agent status"))
-        (is (str/includes? ui-text "memory-backend="))
-        (is (str/includes? ui-text "schedule-count="))))))
+(deftest ui-status-renders
+  (let [ui-text (ui/render-status)]
+    (is (str/includes? ui-text "Babashka agent status"))
+    (is (str/includes? ui-text "memory-backend="))
+    (is (str/includes? ui-text "schedule-count="))))

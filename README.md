@@ -2,7 +2,7 @@
 
 Theseus is a standalone Babashka agent app extracted from the OpenCrabs Babashka rewrite work.
 
-It provides a local, hackable agentic shell with provider calls, explicit tool approvals, session metadata, usage tracking, scheduler/daemon workflows, Telegram and Slack polling adapters, and a small rich rendering layer.
+It provides a local, hackable agentic shell with provider calls, explicit tool approvals, session metadata, usage tracking, scheduler/daemon workflows, a Telegram polling adapter, and a small rich rendering layer.
 
 ## Requirements
 
@@ -35,7 +35,6 @@ bb usage report
 - `bb schedule add/list/remove/run ...` manages scheduled prompts.
 - `bb daemon start [--once] [--max-runs n] [--interval-ms n]` runs schedules.
 - `bb telegram poll-once` polls Telegram updates once. Replies use bounded 429 retry and HTML-to-plain fallback; authorized inbound files persist inertly under `channel_attachments/telegram/`.
-- `bb slack poll-once` polls Slack history once.
 - `bb usage report` summarizes persisted usage events.
 - `bb config doctor` validates configuration.
 - `bb ui status` prints local status.

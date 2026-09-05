@@ -15,7 +15,6 @@
             [bb-agent.skill :as skill]
             [bb-agent.skill-research :as skill-research]
             [bb-agent.skill-research-github :as skill-research-github]
-            [bb-agent.slack :as slack]
             [bb-agent.telegram :as telegram]
             [bb-agent.ui :as ui]
             [bb-agent.usage :as usage]
@@ -241,15 +240,6 @@
 
       (usage! "Usage: bb telegram poll-once | poll" 2))))
 
-(defn- handle-slack-command [args]
-  (let [[subcommand] args]
-    (case subcommand
-      "poll-once"
-      (let [{:keys [events]} (slack/poll-once!)]
-        (println (str "slack-events=" events)))
-
-      (usage! "Usage: bb slack poll-once" 2))))
-
 (defn- handle-ui-command [args]
   (let [[subcommand] args]
     (case subcommand
@@ -333,6 +323,5 @@
       "schedule" (handle-schedule-command rest-args)
       "daemon" (handle-daemon-command rest-args)
       "telegram" (handle-telegram-command rest-args)
-      "slack" (handle-slack-command rest-args)
       "ui" (handle-ui-command rest-args)
       (handle-agent-command (if command (cons command rest-args) [])))))
