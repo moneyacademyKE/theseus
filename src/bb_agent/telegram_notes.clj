@@ -47,6 +47,21 @@
         (spit (str path) (pr-str (vec (take-last max-notes updated))))
         note))))
 
+(defn add-raw!
+  "Append one bounded pre-formatted context note (reactions and other
+   non-edit signals) for a session. Empty notes are ignored."
+  [home session-id note]
+  (let [note (bounded (str note))
+        path (note-file home session-id)]
+    (when (seq (str/trim note))
+      (fs/create-dirs (fs/parent path))
+      (let [notes (if (fs/regular-file? path)
+                    (edn/read-string (slurp (str path)))
+                    [])
+            updated (conj (vec notes) note)]
+        (spit (str path) (pr-str (vec (take-last max-notes updated))))
+        note))))
+
 (defn take!
   "Return and clear pending edit notes for a session."
   [home session-id]

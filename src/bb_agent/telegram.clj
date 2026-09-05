@@ -46,7 +46,13 @@
 (defn- get-updates [cfg]
   (let [body (api-get cfg "getUpdates"
                       (cond-> {:headers {"accept" "application/json"}}
-                        (state/load-offset) (assoc :query-params {:offset (state/load-offset)})))]
+                        (state/load-offset) (assoc :query-params {:offset (state/load-offset)})
+                        (:reactions-context cfg true)
+                        (assoc-in [:query-params :allowed_updates]
+                                  (json/generate-string
+                                   ["message" "edited_message" "channel_post"
+                                    "edited_channel_post" "callback_query"
+                                    "message_reaction"]))))]
     (if (and (map? body) (true? (:ok body)))
       {:updates (or (:result body) []) :conflict? false}
       {:updates []
@@ -79,6 +85,26 @@
   [cfg edited]
   (when (and edited (guard/message-allowed? cfg edited))
     (notes/add! (config/home) (group/session-id edited) edited)))
+
+(defn- handle-reaction!
+  "Record a bounded reaction note (👍 on message #N) as session context —
+   a reaction is signal, never a turn."
+  [cfg reaction]
+  (when (and reaction (:reactions-context (:telegram cfg) true))
+    (let [msg {:chat (:chat reaction)
+               :message_thread_id (:message_thread_id reaction)
+               :from (:user reaction)}
+          sender (or (get-in reaction [:user :username])
+                     (get-in reaction [:user :first_name])
+                     "unknown")
+          emojis (->> (:new_reaction reaction)
+                      (keep :emoji)
+                      (str/join " "))]
+      (when (and (seq emojis)
+                 (guard/message-allowed? cfg msg))
+        (notes/add-raw! (config/home) (group/session-id msg)
+                        (str "[Telegram reaction from " sender ": " emojis
+                             " on message #" (:message_id reaction) "]"))))))
 
 (defn- edit-notes-context
   "Consume pending edit notes for a session; include the newest three."
@@ -292,30 +318,39 @@
         processed (atom 0)]
     (let [fresh (remove #(contains? @seen (:update_id %)) updates)]
       (doseq [update fresh]
-        (when (= :edited (media/update-kind update))
-          (handle-edited! cfg (media/edited-message update)))
         (swap! seen conj (:update_id update))
         (state/save-seen! @seen)
         (state/save-offset! (inc (:update_id update)))
         (swap! processed inc))
-      (doseq [batch (media/batches (filter #(some? (:message %)) fresh))]
-        ;; Record every observed group message so future turns have
-        ;; conversational context — independent of whether we respond.
-        (when (:group-context telegram-cfg true)
-          (doseq [u (:updates batch)]
-            (let [m (:message u)
-                  cid (get-in m [:chat :id])]
-              (when (and cid (neg? (long cid)))
-                (gctx/record! cid {:message-id (:message_id m)
-                                   :from (or (get-in m [:from :first_name])
-                                             (get-in m [:from :username]))
-                                   :text (or (:text m) (:caption m))}
-                              :size (or (:group-context-size telegram-cfg) 30))))))
-        (if (:album? batch)
-          (process-album! cfg bot batch)
-          (process-message! cfg bot (:message (first (:updates batch))))))
-      (doseq [callback (filter #(some? (:callback_query %)) fresh)]
-        (approval-ui/handle-callback! cfg callback)))
+      ;; Dispatch in update order: reactions and edits land as notes for the
+      ;; NEXT turn, not one that already ran. Consecutive message runs still
+      ;; batch as albums.
+      (doseq [chunk (partition-by #(let [k (media/update-kind %)]
+                                     (if (= :message k) :messages k))
+                                  fresh)]
+        (if (= :message (media/update-kind (first chunk)))
+          (doseq [batch (media/batches chunk)]
+            ;; Record every observed group message so future turns have
+            ;; conversational context — independent of whether we respond.
+            (when (:group-context telegram-cfg true)
+              (doseq [u (:updates batch)]
+                (let [m (:message u)
+                      cid (get-in m [:chat :id])]
+                  (when (and cid (neg? (long cid)))
+                    (gctx/record! cid {:message-id (:message_id m)
+                                       :from (or (get-in m [:from :first_name])
+                                                 (get-in m [:from :username]))
+                                       :text (or (:text m) (:caption m))}
+                                  :size (or (:group-context-size telegram-cfg) 30))))))
+            (if (:album? batch)
+              (process-album! cfg bot batch)
+              (process-message! cfg bot (:message (first (:updates batch))))))
+          (doseq [u chunk]
+            (case (media/update-kind u)
+              :edited (handle-edited! cfg (media/edited-message u))
+              :reaction (handle-reaction! cfg (:message_reaction u))
+              (when (:callback_query u)
+                (approval-ui/handle-callback! cfg u)))))))
     {:updates @processed :conflict? conflict?}))
 
 (defn poll-loop!
