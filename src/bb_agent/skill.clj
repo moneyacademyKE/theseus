@@ -12,14 +12,11 @@
           body (nth match 2)
           fields (reduce
                   (fn [result line]
-                    (if (str/blank? line)
-                      result
-                      (let [parts (str/split line #":" 2)]
-                        (when (< (count parts) 2)
-                          (throw (ex-info "Invalid frontmatter line" {:line line})))
-                        (assoc result
-                               (keyword (str/trim (first parts)))
-                               (str/trim (second parts))))))
+                    ;; Tolerate YAML list items, nested keys, and continuations:
+                    ;; only flat `key: value` lines at column 0 become fields.
+                    (if-let [[_ k v] (re-matches #"([A-Za-z0-9_-]+)\s*:\s*(.*)" line)]
+                      (assoc result (keyword (str/trim k)) (str/trim v))
+                      result))
                   {}
                   (str/split-lines frontmatter))
           name (:name fields)

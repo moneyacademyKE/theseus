@@ -133,3 +133,11 @@
             (is (= "Skill body\n\n\nUser input:\nhello there" (:user/input turn))))
           (is (not= 0 (:exit unknown)))
           (is (str/includes? (:err unknown) "Unknown skill: missing")))))))
+
+(deftest parse-tolerates-yaml-lists-and-nested-keys
+  (testing "frontmatter with list items and nested keys still parses name/description"
+    (let [raw "---\nname: verification-witness\ndescription: Produce a witness\noutputs:\n  - witness .md and .json both written\n  - paths echoed\ntags: [proof, verify]\n---\nBody text here."
+          skill (skill/parse raw)]
+      (is (= "verification-witness" (:name skill)))
+      (is (= "Produce a witness" (:description skill)))
+      (is (= "Body text here." (clojure.string/trim (:body skill)))))))
