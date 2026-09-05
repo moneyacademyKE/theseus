@@ -35,3 +35,23 @@
     (fs/create-dirs (fs/parent path))
     (spit (str path) (pr-str seen))
     seen))
+
+(defn- reply-file [chat-id]
+  (fs/path (config/home) "state" "telegram-replies" (str chat-id ".edn")))
+
+(defn record-reply! [chat-id user-msg-id bot-reply-msg-id]
+  (when (and chat-id user-msg-id bot-reply-msg-id)
+    (let [path (reply-file chat-id)]
+      (fs/create-dirs (fs/parent path))
+      (let [m (if (fs/regular-file? path)
+                (or (try (edn/read-string (slurp (str path))) (catch Exception _ {})) {})
+                {})]
+        (spit (str path) (pr-str (assoc m (long user-msg-id) (long bot-reply-msg-id))))
+        bot-reply-msg-id))))
+
+(defn lookup-reply [chat-id user-msg-id]
+  (when (and chat-id user-msg-id)
+    (let [path (reply-file chat-id)]
+      (when (fs/regular-file? path)
+        (get (try (edn/read-string (slurp (str path))) (catch Exception _ nil))
+             (long user-msg-id))))))

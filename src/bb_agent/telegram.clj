@@ -81,12 +81,6 @@
            body
            "\n[Attachment content end]"))))
 
-(defn- handle-edited!
-  "Record a bounded edit note. An edit is context, never a new turn."
-  [cfg edited]
-  (when (and edited (guard/message-allowed? cfg edited))
-    (notes/add! (config/home) (group/session-id edited) edited)))
-
 (defn- handle-reaction!
   "Record a bounded reaction note (👍 on message #N) as session context —
    a reaction is signal, never a turn."
@@ -170,6 +164,64 @@
         (println (str "telegram failure notice failed: "
                       (.getMessage notice-failure)))))))
 
+(defn- approval-ask
+  "The approval gate wired for one Telegram chat/topic."
+  [telegram-cfg session-id chat-id thread-id]
+  (approval/waiting-approver
+   {:session-id session-id
+    :channel :telegram
+    :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
+    :notify #(approval-ui/send-approval-request! telegram-cfg chat-id thread-id %)
+    :on-expire (fn [pending sent]
+                 (when-let [mid (:message-id sent)]
+                   (approval-ui/expire-keyboard! telegram-cfg chat-id mid
+                                                 (:approval/id pending))))}))
+
+(defn- rerun-edited-reply!
+  "An edit to a message we already answered re-runs the turn and replaces
+   the prior reply in place — a stale answer next to an edited question
+   is a lie. Failure surfaces through the same notice path as any turn."
+  [cfg bot edited prior-reply-id]
+  (let [telegram-cfg (:telegram cfg)
+        chat-id (get-in edited [:chat :id])
+        thread-id (group/topic-id edited)
+        session-id (group/session-id edited)
+        turn-flow (flow/make-flow)]
+    (try
+      (let [text (group/normalize-command
+                  (or (:text edited) (:caption edited) "") bot)
+            turn (presence/with-typing-heartbeat
+                  telegram-cfg chat-id {:thread-id thread-id}
+                  (fn []
+                    (core/run-turn!
+                     (assoc cfg
+                            :session/id session-id
+                            :session/shared? (group/group-chat? edited)
+                            :status/emit (flow/flow-emit
+                                          turn-flow telegram-cfg chat-id thread-id)
+                            :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
+                     (group/agent-input bot (assoc edited :text text)))))]
+        (flow/settle! turn-flow telegram-cfg chat-id true)
+        (let [chunks (tr/split-message (tr/to-html (:assistant/final turn)))]
+          (delivery/edit-message-text! telegram-cfg chat-id prior-reply-id
+                                       (first chunks) {:parse-mode "HTML"})))
+      (catch Exception e
+        (flow/settle! turn-flow telegram-cfg chat-id false)
+        (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id edited) e)))))
+
+(defn- handle-edited!
+  "Route an edit: a message with a recorded prior reply re-runs its turn
+   and updates that reply in place; anything else stays a bounded context
+   note for a future turn."
+  [cfg bot edited]
+  (when (and edited (guard/message-allowed? cfg edited))
+    (let [chat-id (get-in edited [:chat :id])
+          prior-reply (state/lookup-reply chat-id (:message_id edited))]
+      (if (and prior-reply
+               (seq (str/trim (str (or (:text edited) (:caption edited) "")))))
+        (rerun-edited-reply! cfg bot edited prior-reply)
+        (notes/add! (config/home) (group/session-id edited) edited)))))
+
 (defn- process-message!
   [cfg bot message]
   (let [chat-id (get-in message [:chat :id])
@@ -234,25 +286,17 @@
                                                       "image/"))
                                             [{:path (:path saved)
                                               :mime-type (:mime-type saved)}])
-                             :approval/ask
-                             (approval/waiting-approver
-                              {:session-id session-id
-                               :channel :telegram
-                               :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
-                               :notify #(approval-ui/send-approval-request!
-                                         telegram-cfg chat-id thread-id %)
-                               :on-expire (fn [pending sent]
-                                            (when-let [mid (:message-id sent)]
-                                              (approval-ui/expire-keyboard!
-                                               telegram-cfg chat-id mid
-                                               (:approval/id pending))))}))
+                        :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
                          (group/agent-input bot input-message))))]
             (flow/settle! turn-flow telegram-cfg chat-id true)
-            (delivery/send-html!
-             telegram-cfg chat-id
-             (tr/to-html (:assistant/final turn))
-              {:thread-id thread-id
-               :reply-to-message-id (:message_id message)})))))
+            (let [delivered (delivery/send-html!
+                             telegram-cfg chat-id
+                             (tr/to-html (:assistant/final turn))
+                              {:thread-id thread-id
+                               :reply-to-message-id (:message_id message)})]
+              (when (= 1 (count delivered))
+                (state/record-reply! chat-id (:message_id message)
+                                     (:message-id (first delivered)))))))))
       (catch Exception e
         (flow/settle! turn-flow telegram-cfg chat-id false)
         (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id message) e)))))
@@ -297,26 +341,18 @@
                             :status/emit (flow/flow-emit turn-flow telegram-cfg chat-id thread-id)
                             :telegram/send-context {:chat-id chat-id
                                                     :thread-id thread-id}
-                            :approval/ask
-                            (approval/waiting-approver
-                             {:session-id session-id
-                              :channel :telegram
-                              :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
-                              :notify #(approval-ui/send-approval-request!
-                                        telegram-cfg chat-id thread-id %)
-                              :on-expire (fn [pending sent]
-                                           (when-let [mid (:message-id sent)]
-                                             (approval-ui/expire-keyboard!
-                                              telegram-cfg chat-id mid
-                                              (:approval/id pending))))}))
+                            :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
                      (group/agent-input bot
                                         (assoc primary :text (str history-context edit-context text contexts))))))]
         (flow/settle! turn-flow telegram-cfg chat-id true)
-        (delivery/send-html!
-         telegram-cfg chat-id
-         (tr/to-html (:assistant/final turn))
-         {:thread-id thread-id
-          :reply-to-message-id (:message_id primary)})))
+        (let [delivered (delivery/send-html!
+                         telegram-cfg chat-id
+                         (tr/to-html (:assistant/final turn))
+                         {:thread-id thread-id
+                          :reply-to-message-id (:message_id primary)})]
+          (when (= 1 (count delivered))
+            (state/record-reply! chat-id (:message_id primary)
+                                 (:message-id (first delivered)))))))
       (catch Exception e
         (flow/settle! turn-flow telegram-cfg (get-in primary [:chat :id]) false)
         (notify-turn-failure! telegram-cfg (get-in primary [:chat :id])
@@ -363,7 +399,7 @@
               (process-message! cfg bot (:message (first (:updates batch))))))
           (doseq [u chunk]
             (case (media/update-kind u)
-              :edited (handle-edited! cfg (media/edited-message u))
+              :edited (handle-edited! cfg bot (media/edited-message u))
               :reaction (handle-reaction! cfg (:message_reaction u))
               (when (:callback_query u)
                 (approval-ui/handle-callback! cfg u)))))))
