@@ -336,3 +336,22 @@
           (is (= {} (:reply_markup edit)) "the keyboard must drop")))
       (finally
         (stop-server)))))
+
+(deftest waiting-approver-cleans-up-state-on-expiry
+  (let [home (fs/create-temp-dir {:prefix "theseus-approvals-clean-expiry-"})]
+    (try
+      (with-redefs [config/home (fn [] (str home))]
+        (let [approver (approval/waiting-approver
+                        {:session-id "sess-expiry"
+                         :channel :telegram
+                         :timeout-ms 200})
+              decision (approver {:tool/name "shell" :tool/args {:cmd "rm -rf /"}})]
+          (is (= :denied decision) "timeout results in denial")
+          (let [state (approval/load-state)]
+            (is (empty? (:pending state)) "pending approvals must be cleared on expiry")
+            (is (some (fn [[_ dec]] (= :expired dec)) (:decisions state))
+                "decision is recorded as expired in approvals state"))
+          (is (nil? (approval/resolve! "sess-expiry" :approve))
+              "a later approve finds no dangling zombie pending approval")))
+      (finally
+        (fs/delete-tree home)))))

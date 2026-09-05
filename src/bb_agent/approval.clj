@@ -92,7 +92,8 @@
               :denied)
             (if (< (System/currentTimeMillis) deadline)
               (do (Thread/sleep 200) (recur))
-              (do (when on-expire (on-expire pending sent))
+              (do (resolve-by-id! (:approval/id pending) session-id :expired)
+                  (when on-expire (on-expire pending sent))
                   :denied))))))))
 
 (defn interactive-approver []
