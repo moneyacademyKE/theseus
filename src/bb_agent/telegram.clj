@@ -257,6 +257,38 @@
         (rerun-edited-reply! cfg bot edited prior-reply)
         (notes/add! (config/home) (group/session-id edited) edited)))))
 
+(defn- run-telegram-turn!
+  "Shared spine of message and album turns: typing heartbeat → run-turn! →
+   settle(true) → HTML delivery → reply recording. Input text and :user/images
+   travel on input-message; reply-to-id is the message being answered."
+  [cfg bot telegram-cfg turn-flow input-message reply-to-id]
+  (let [chat-id (get-in input-message [:chat :id])
+        thread-id (group/topic-id input-message)
+        session-id (group/session-id input-message)
+        turn (presence/with-typing-heartbeat
+              telegram-cfg chat-id {:thread-id thread-id}
+              (fn []
+                (core/run-turn!
+                 (assoc cfg
+                        :session/id session-id
+                        :session/shared? (group/group-chat? input-message)
+                        :status/emit (flow/flow-emit turn-flow telegram-cfg chat-id thread-id)
+                        :telegram/send-context {:chat-id chat-id
+                                                :thread-id thread-id}
+                        :user/images (:user/images input-message)
+                        :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
+                 (group/agent-input bot input-message))))]
+    (flow/settle! turn-flow telegram-cfg chat-id true)
+    (let [delivered (delivery/send-html!
+                     telegram-cfg chat-id
+                     (tr/to-html (:assistant/final turn))
+                     {:thread-id thread-id
+                      :reply-to-message-id reply-to-id})]
+      (when (= 1 (count delivered))
+        (state/record-reply! chat-id reply-to-id
+                             (:message-id (first delivered))))
+      delivered)))
+
 (defn- process-message!
   [cfg bot message]
   (let [chat-id (get-in message [:chat :id])
@@ -305,36 +337,22 @@
                                           edit-context
                                           composed-text
                                           (attachment-context telegram-cfg saved)))
-                turn (presence/with-typing-heartbeat
-                      telegram-cfg chat-id {:thread-id thread-id}
-                      (fn []
-                        (core/run-turn!
-                         (assoc cfg
-                                :session/id session-id
-                                :session/shared? (group/group-chat? message)
-                                :status/emit (flow/flow-emit turn-flow telegram-cfg chat-id thread-id)
-                                :telegram/send-context {:chat-id chat-id
-                                                        :thread-id thread-id}
-                             :user/images (when (and saved
-                                                     (str/starts-with?
-                                                      (or (:mime-type saved) "")
-                                                      "image/"))
-                                            [{:path (:path saved)
-                                              :mime-type (:mime-type saved)}])
-                        :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
-                         (group/agent-input bot input-message))))]
-            (flow/settle! turn-flow telegram-cfg chat-id true)
-            (let [delivered (delivery/send-html!
-                             telegram-cfg chat-id
-                             (tr/to-html (:assistant/final turn))
-                              {:thread-id thread-id
-                               :reply-to-message-id (:message_id message)})]
-              (when (= 1 (count delivered))
-                (state/record-reply! chat-id (:message_id message)
-                                     (:message-id (first delivered)))))))))
+
+                input-message (if (and saved
+                                       (str/starts-with?
+                                        (or (:mime-type saved) "")
+                                        "image/"))
+                                (assoc input-message :user/images
+                                       [{:path (:path saved)
+                                         :mime-type (:mime-type saved)}])
+                                input-message)]
+            (run-telegram-turn! cfg bot telegram-cfg turn-flow
+                                input-message (:message_id message))))))
+
       (catch Exception e
         (flow/settle! turn-flow telegram-cfg chat-id false)
         (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id message) e)))))
+
 
 (defn- process-album!
   "Run one turn for a media-group batch. The captioned member activates the
@@ -352,7 +370,6 @@
                (guard/message-allowed? cfg primary)
                (group/should-respond? cfg bot (assoc primary :text text)))
       (let [chat-id (get-in primary [:chat :id])
-            thread-id (group/topic-id primary)
             session-id (group/session-id primary)
             edit-context (or (edit-notes-context session-id) "")
             history-context (if (:group-context telegram-cfg true)
@@ -366,32 +383,17 @@
             contexts (str (apply str (map #(attachment-context telegram-cfg %) persisted))
                           (when (pos? skipped)
                             (str "\n[" skipped " attachment(s) skipped: cumulative turn media limit exceeded]")))
-            turn (presence/with-typing-heartbeat
-                  telegram-cfg chat-id {:thread-id thread-id}
-                  (fn []
-                    (core/run-turn!
-                     (assoc cfg
-                            :session/id session-id
-                            :session/shared? (group/group-chat? primary)
-                            :status/emit (flow/flow-emit turn-flow telegram-cfg chat-id thread-id)
-                            :telegram/send-context {:chat-id chat-id
-                                                    :thread-id thread-id}
-                            :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
-                     (group/agent-input bot
-                                        (assoc primary :text (str history-context edit-context text contexts))))))]
-        (flow/settle! turn-flow telegram-cfg chat-id true)
-        (let [delivered (delivery/send-html!
-                         telegram-cfg chat-id
-                         (tr/to-html (:assistant/final turn))
-                         {:thread-id thread-id
-                          :reply-to-message-id (:message_id primary)})]
-          (when (= 1 (count delivered))
-            (state/record-reply! chat-id (:message_id primary)
-                                 (:message-id (first delivered)))))))
+
+            input-message (assoc primary :text
+                                 (str history-context edit-context text contexts))]
+        (run-telegram-turn! cfg bot telegram-cfg turn-flow
+                            input-message (:message_id primary))))
+
       (catch Exception e
         (flow/settle! turn-flow telegram-cfg (get-in primary [:chat :id]) false)
         (notify-turn-failure! telegram-cfg (get-in primary [:chat :id])
                               (group/topic-id primary) (:message_id primary) e)))))
+
 
 (defn- mark-done!
   "Per-unit durability ledger, written AFTER the unit dispatches (audit H1).
