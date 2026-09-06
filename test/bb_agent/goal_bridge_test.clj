@@ -121,3 +121,51 @@
       (let [reply (bridge/handle-request! "/goal build something nice" 7 9)]
         (is (str/includes? reply "🚫 Goal authoring failed"))
         (is (not (.exists (io/file bridge/active-file))))))))
+
+(deftest progress-line-test
+  (testing "act lines show progress movement and no-progress flag"
+    (is (= "▸ it 1 act 6→4 · 14:47:00"
+           (bridge/progress-line {:event :act :iteration 1 :progress-before 6
+                                  :progress-after 4 :progressed? true
+                                  :ts "2026-09-06T14:47:00.814992Z"})))
+    (is (str/includes? (bridge/progress-line {:event :act :iteration 0 :progress-before 6
+                                              :progress-after 6 :progressed? false
+                                              :ts "2026-09-06T14:47:00Z"})
+                       "(no progress)")))
+  (testing "halt lines carry reason + world; done carries the satisfied world"
+    (is (str/includes? (bridge/progress-line {:event :halt :iteration 2 :reason :integrity
+                                              :world {:defects 4}})
+                       "halt:integrity"))
+    (is (str/includes? (bridge/progress-line {:event :done :world {:ok "pass"}})
+                       "fulfilled")))
+  (testing "malformed ts degrades, never throws"
+    (is (str/includes? (bridge/progress-line {:event :act :iteration 3 :ts nil})
+                       "??:??:??"))))
+
+(deftest progress-text-test
+  (testing "header carries the name + event count"
+    (let [t (bridge/progress-text "demo" [{:event :done :world {:x 1}}])]
+      (is (str/starts-with? t "🎯 goal `demo` — running · 1 events"))
+      (is (str/includes? t "fulfilled"))))
+  (testing "caps to the last 10 events with an explicit showing note"
+    (let [evs (mapv #(hash-map :event :act :iteration % :ts "2026-09-06T10:00:00Z")
+                    (range 14))
+          t (bridge/progress-text "big" evs)]
+      (is (str/includes? t "14 events")
+          "header shows the full count")
+      (is (str/includes? t "showing last 10"))
+      (is (str/includes? t "it 13") "keeps the newest event")
+      (is (not (str/includes? t "it 3")) "drops the oldest beyond the cap"))))
+
+(deftest ledger-events-test
+  (testing "reads logs/iter-*.edn in order; unparseable files are skipped"
+    (let [ws (str *tmp* "/ledger-ws")]
+      (fs/create-dirs (str ws "/logs"))
+      (spit (str ws "/logs/iter-000.edn") "{:event :act :iteration 0}")
+      (spit (str ws "/logs/iter-001.edn") "{:event :done :iteration 1 :world {}}")
+      (spit (str ws "/logs/junk.edn") "not-edn{{{")
+      (let [evs (bridge/ledger-events ws)]
+        (is (= 2 (count evs)))
+        (is (= :act (:event (first evs))))
+        (is (= :done (:event (second evs))))))
+    (is (nil? (bridge/ledger-events (str *tmp* "/no-such-ws"))))))

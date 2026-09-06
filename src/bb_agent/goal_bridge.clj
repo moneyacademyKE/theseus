@@ -207,6 +207,54 @@ Do NOT run the goal. Write files only.")
          (sort)
          (map (fn [n] (str n " — " (name (run-status n))))))))
 
+(defn ledger-events
+  "All iteration ledgers for a workspace, in run order. The runner writes
+   one logs/iter-NNN.edn per iteration — acts carry :progress-before/after,
+   halts carry :reason/:world — this is the run's event stream."
+  [ws]
+  (let [dir (io/file ws "logs")]
+    (when (.isDirectory dir)
+      (->> (file-seq dir)
+           (filter #(str/ends-with? (str %) ".edn"))
+           (sort-by #(str %))
+           (keep #(try (edn/read-string (slurp %)) (catch Exception _ nil)))
+           (filter map?)
+           vec))))
+
+(defn- hhmmss
+  "19:14:51 from an ISO-8601 ts; ??:??:?? when absent."
+  [ts]
+  (or (second (re-find #"T(\d\d:\d\d:\d\d)" (str ts))) "??:??:??"))
+
+(defn- progress-line
+  "One ledger event → one compact display line. Acts show progress movement,
+   halts show reason + world, done shows the satisfied world."
+  [m]
+  (case (:event m)
+    :act (str "▸ it " (:iteration m) " act"
+              (when (and (some? (:progress-before m)) (some? (:progress-after m)))
+                (str " " (:progress-before m) "→" (:progress-after m)))
+              (when (false? (:progressed? m)) " (no progress)")
+              " · " (hhmmss (:ts m)))
+    :halt (str "▸ it " (:iteration m) " ⛔ halt:" (name (:reason m))
+               (when (:world m) (str " · world " (pr-str (:world m)))))
+    :done (str "▸ ✅ fulfilled · world " (pr-str (:world m)))
+    (str "▸ it " (:iteration m) " " (name (:event m)))))
+
+(def progress-cap 10)
+
+(defn progress-text
+  "The running-state topic message: header with event count + the last
+   `progress-cap` lines. One message, edited in place by the watcher."
+  [name events]
+  (let [n (count events)
+        shown (take-last progress-cap events)
+        more (max 0 (- n progress-cap))]
+    (str "🎯 goal `" name "` — running · " n " events"
+         (when (pos? more) (str " (showing last " progress-cap ")"))
+         "\n"
+         (str/join "\n" (map progress-line shown)))))
+
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
    usage. Active run → refusal. Otherwise: scaffold, author (validator as
