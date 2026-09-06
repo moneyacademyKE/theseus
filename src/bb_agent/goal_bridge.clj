@@ -177,6 +177,11 @@ Do NOT run the goal. Write files only.")
         log-path (str ws "/run.log")
         repo (str (fs/cwd))
         _ (spit cfg-path (pr-str (assoc authored :notify notify)))
+        ;; baseline commit: the runner's pre-act checkpoint tags HEAD, and a
+        ;; rollback resets to this commit — with authored files tracked, a
+        ;; rollback genuinely reverts an act's outputs instead of no-opping
+        _ (p/shell {:dir ws :out :string :err :string} "git" "add" "-A")
+        _ (p/shell {:dir ws :out :string :err :string} "git" "commit" "-q" "-m" "baseline: authored project")
          pid (spawn-detached! repo (str "bb goal " cfg-path " > " log-path " 2>&1"))
         _ (spit active-file (pr-str {:pid (parse-long pid) :name name}))
         watch-args (str/join " " [name (str chat-id) (str (or thread-id "")) pid])]
