@@ -194,8 +194,12 @@
   ;; The regeneration rule (rules.clj header) says a rebuilt grant set replaces
   ;; layer 2 only — this test fails if a rebuild drops the durable floor or
   ;; reorders it below the allows. Skips harmlessly where no constitution exists.
-  (let [f (fs/path (config/home) "brain" "rules.clj")]
-    (when (fs/exists? f)
+  (let [candidates [(fs/path (config/home) "brain" "rules.clj")
+                    ;; the production runtime home (launchd sets OPENCRABS_HOME
+                    ;; there; bare shells don't have it) — pin the real law
+                    (fs/path "/Users/moe/theseus/brain" "rules.clj")]
+        f (some #(when (fs/exists? %) %) candidates)]
+    (when f
       (let [rules (:rules (sci/eval-string (slurp (str f)) {}))
             verdict (fn [tool args]
                       (some (fn [{:keys [pred decision]}]
@@ -213,6 +217,9 @@
         (is (= :deny (verdict "shell" {:cmd "python3 x.py"})) "python floor")
         (is (= :deny (verdict "shell" {:cmd "git push -f origin main"})) "git floor")
         (is (= :deny (verdict "read_file" {:path "/Users/moe/theseus/config.edn"})) "secrets floor")
+        (is (not= :deny (verdict "read_file"
+                                 {:path "/Users/moe/theseus/goals/x.config.edn"}))
+            "goal-runner configs (*.config.edn) are NOT the secrets file — fence is boundary-anchored (live-fire regression)")
         (is (= :deny (verdict "shell" {:cmd "sudo ls"})) "sudo floor")
         (is (= :deny (verdict "write_file" {:path "brain/rules.clj"})) "law protects itself")
         ;; regeneration rule as code: every durable deny precedes the first allow
