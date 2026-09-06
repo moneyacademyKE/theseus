@@ -26,13 +26,6 @@
 (defn telegram-config []
   (:telegram (config/load-config)))
 
-(defn- require-telegram [cfg key]
-  (let [value (get cfg key)]
-    (when (str/blank? value)
-      (throw (ex-info (str "Missing telegram config: " (name key))
-                      {:config/key key})))
-    value))
-
 (defn- api-url [{:keys [base-url token]} method]
   (str (str/replace (or base-url "https://api.telegram.org") #"/+$" "")
        "/bot" token "/" method))
@@ -413,8 +406,9 @@
 (defn poll-once! []
   (let [cfg (config/load-config)
         telegram-cfg (:telegram cfg)
-        token (require-telegram telegram-cfg :token)
-        telegram-cfg (assoc telegram-cfg :token token)
+        _ (let [problems (config/validate-telegram telegram-cfg)]
+            (when (seq problems)
+              (throw (ex-info "Telegram config invalid" {:errors problems}))))
         cfg (assoc cfg :telegram telegram-cfg)
         bot (get-bot telegram-cfg)
         {:keys [updates conflict?]} (get-updates telegram-cfg)

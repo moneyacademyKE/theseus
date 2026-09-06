@@ -1,6 +1,7 @@
 (ns bb-agent.config
   (:require [babashka.fs :as fs]
-            [clojure.edn :as edn]))
+            [clojure.edn :as edn]
+            [clojure.string :as str]))
 
 (defn home []
   (or (System/getenv "OPENCRABS_HOME")
@@ -16,6 +17,17 @@
   {:provider :fake
    :model "fake-deterministic"
    :session/id "default"})
+
+(defn validate-telegram
+  "Pure: problems as data for the :telegram section, empty when usable.
+   Consolidates the per-site :token checks (H5, Hickey audit 2026-09-06)."
+  [tg]
+  (cond-> []
+    (not (map? tg))
+    (conj {:key :telegram :problem "missing :telegram map"})
+
+    (and (map? tg) (str/blank? (:token tg)))
+    (conj {:key :telegram :problem ":token missing or blank"})))
 
 (defn load-config []
   (let [path (config-file)]
