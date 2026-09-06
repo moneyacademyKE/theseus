@@ -38,11 +38,44 @@
        "/bot" token "/" method))
 
 (defn- api-get [cfg method opts]
-  (let [response (http/get (api-url cfg method) (assoc opts :throw false))]
+  ;; Bounded calls: an un-timed http/get hangs forever on a dead connection
+  ;; and the poll-loop wedges silently (observed 2026-09-06 under launchd).
+  (let [response (http/get (api-url cfg method)
+                           (assoc opts :throw false
+                                  :timeout (or (:timeout-ms cfg) 15000)))]
     (json/parse-string (:body response) keyword)))
 
+(defn- api-get! [cfg method opts]
+  ;; api-get that THROWS on non-ok bodies — for callers that must not
+  ;; mistake an API failure for "no updates".
+  (let [body (api-get cfg method opts)]
+    (if (and (map? body) (true? (:ok body)))
+      body
+      (throw (ex-info (str "telegram api error: " (:error_code body)
+                           " " (:description body))
+                      {:method method :body body})))))
+
+(def ^:private last-poll-error (atom nil))
+
+(defn- report-poll-error!
+  "Print an API failure once per distinct error (and a recovery line when it
+  clears). Failures here previously vanished into an empty updates list —
+  the bot sat deaf with a healthy-looking process for 18h (2026-09-05/06)."
+  [body]
+  (let [desc (str "status " (:error_code body) ": " (:description body))]
+    (when (not= desc @last-poll-error)
+      (reset! last-poll-error desc)
+      (println (str "telegram api error: " desc))
+      (flush))))
+
+(defn- clear-poll-error! []
+  (when (some? @last-poll-error)
+    (reset! last-poll-error nil)
+    (println "telegram api recovered")
+    (flush)))
+
 (defn- get-bot [cfg]
-  (:result (api-get cfg "getMe" {:headers {"accept" "application/json"}})))
+  (:result (api-get! cfg "getMe" {:headers {"accept" "application/json"}})))
 
 (defn- get-updates [cfg]
   (let [body (api-get cfg "getUpdates"
@@ -55,11 +88,13 @@
                                     "edited_channel_post" "callback_query"
                                     "message_reaction"]))))]
     (if (and (map? body) (true? (:ok body)))
-      {:updates (or (:result body) []) :conflict? false}
-      {:updates []
-       :conflict? (boolean
-                   (str/includes? (str/lower-case (str (:description body)))
-                                  "conflict"))})))
+      (do (clear-poll-error!)
+          {:updates (or (:result body) []) :conflict? false})
+      (do (report-poll-error! body)
+          {:updates []
+           :conflict? (boolean
+                       (str/includes? (str/lower-case (str (:description body)))
+                                      "conflict"))}))))
 
 (defn- attachment-context
   [telegram-cfg saved]
@@ -416,5 +451,6 @@
         (Thread/sleep (long (if conflict? (* 5 interval-ms) interval-ms))))
       (catch Exception e
         (println (str "telegram poll error: " (.getMessage e)))
+        (flush)
         (Thread/sleep (long interval-ms))))
     (recur)))
