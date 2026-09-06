@@ -258,10 +258,10 @@
                                       "anthropic-version" "2023-06-01"
                                       "content-type" "application/json"}
                             :throw false
-                            :timeout 60000
+                            :timeout (or (:timeout-ms config) 60000)
                             :body (json/generate-string
                                    {:model model
-                                    :max_tokens 4096
+                                    :max_tokens (or (:max-tokens config) 4096)
                                     :messages (vision/attach-to-first-user
                                                messages imgs :anthropic)})}))
         first-resp (post! images)
