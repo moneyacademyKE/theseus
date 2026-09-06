@@ -464,7 +464,10 @@
       (let [{:keys [conflict?]} (poll-once!)]
         (Thread/sleep (long (if conflict? (* 5 interval-ms) interval-ms))))
       (catch Exception e
-        (println (str "telegram poll error: " (.getMessage e)))
+        (println (str "telegram poll error [" (.getName (.getClass e))
+                      "] " (.getMessage e)
+                      (when-let [d (ex-data e)] (str " data " (pr-str d)))
+                      " @ " (java.time.Instant/now)))
         (flush)
         (Thread/sleep (long interval-ms))))
     (recur)))
