@@ -13,7 +13,9 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [axiom.config :as axiom-config]))
+            [axiom.config :as axiom-config]
+            [axiom.observe :as observe]
+            [axiom.predicates :as predicates]))
 
 (def goals-root (str (config/home) "/goals"))
 (def active-file (str goals-root "/active.edn"))
@@ -95,10 +97,31 @@ Do NOT run the goal. Write files only.")
       (or (some-> e ex-data :keys) (some-> e ex-data :key))
       (str (or (some-> e ex-data :errors) (.getMessage e))))))
 
+(defn baseline-clean?
+  "The runner halts :integrity at iteration 0 when the scaffold doesn't
+   satisfy the integrity checks — so the bridge runs the runner's OWN
+   observers + predicates against the scaffold BEFORE launching."
+  [cfg]
+  (empty? (predicates/integrity-violations
+           (observe/build-world (:observers cfg)
+                                {:dir (:workdir cfg) :timeout 15000})
+           (:integrity cfg))))
+
+(defn- baseline-problems [cfg]
+  (let [world (observe/build-world (:observers cfg)
+                                   {:dir (:workdir cfg) :timeout 15000})
+        violations (predicates/integrity-violations world (:integrity cfg))]
+    (when (seq violations)
+      (str "baseline integrity violations: " (pr-str violations)
+           " — the scaffold must ALREADY satisfy every integrity check before "
+           "the first act. Either make act.sh's first-run path establish them, "
+           "or move that check into :goal instead of :integrity."))))
+
 (defn ^:private author-with-validation!
   "One authoring turn, then the validator judges; on failure, one repair
-   turn carrying the exact validation errors. Returns nil on success or the
-   problems string."
+   turn carrying the exact validation errors; then the baseline-integrity
+   pre-flight (the runner's iteration-0 halt, pre-paid) with one repair.
+   Returns nil on success or the problems string."
   [name ws spec]
   (let [cfg-path (str ws "/project.edn")
         refs [(str ws "/references/normalize.config.edn")
@@ -110,11 +133,20 @@ Do NOT run the goal. Write files only.")
       (if-let [err (validate! cfg-path)]
         (if (zero? attempt)
           (do (core/run-turn! (author-cfg name ws)
-                              (str "Your config.edn failed validation:\n" err
-                                   "\n\nFix config.edn (and act.sh if it is implicated). Do not run the goal."))
+                              (str "Your project.edn failed validation:\n" err
+                                   "\n\nFix project.edn (and act.sh if it is implicated). Do not run the goal."))
               (recur 1))
           err)
-        nil))))
+        (if-let [baseline (baseline-problems
+                           (axiom-config/load-config cfg-path))]
+          (if (zero? attempt)
+            (do (core/run-turn! (author-cfg name ws)
+                                (str "Your goal project failed the baseline pre-flight:\n"
+                                     baseline
+                                     "\n\nFix project.edn (and act.sh if it is implicated). Do not run the goal."))
+                (recur 1))
+            baseline)
+          nil)))))
 
 (defn ^:private spawn-detached!
   "nohup + background + echo pid: the child survives the poller and reports
@@ -135,7 +167,12 @@ Do NOT run the goal. Write files only.")
   [name chat-id thread-id]
   (let [ws (str goals-root "/" name)
         authored (axiom-config/load-config (str ws "/project.edn"))
-        notify (:notify (config/load-config))
+        ;; the RUNNER's notify shape (axiom.notify posts EDN to the halt
+        ;; listener); the runtime config's :notify is the LISTENER's own
+        ;; binding shape — they share a key but not a schema
+        secret (:hmac-secret (:notify (config/load-config)))
+        notify (merge {:type :http :url "http://127.0.0.1:7787/halt"}
+                      (when secret {:hmac-secret secret}))
         cfg-path (str ws "/config.edn")
         log-path (str ws "/run.log")
         repo (str (fs/cwd))
