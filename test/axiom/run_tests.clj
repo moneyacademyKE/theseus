@@ -14,6 +14,7 @@
             [axiom.status-test]
             [axiom.notify-test]
             [axiom.observe-test]
+            [axiom.config-test]
             [axiom.phase4-bundles-test]
             [axiom.phase4-hotreload-test]
             [axiom.phase5-dogfood-test]
@@ -243,5 +244,5 @@
     (let [w {:level-count 0 :build-ok "pass"}]
       (is (= :act (:type (decision/decide base-cfg w {:stall 0 :thrash 9999 :attempt 9999})))))))
 
-(let [summary (t/run-tests 'axiom.run-tests 'axiom.git-test 'axiom.lock-test 'axiom.phase1-test 'axiom.phase2-test 'axiom.phase2-rungs-test 'axiom.phase2-guard-test 'axiom.phase3-test 'axiom.status-test 'axiom.notify-test 'axiom.observe-test 'axiom.phase4-bundles-test 'axiom.phase4-hotreload-test 'axiom.phase5-dogfood-test 'axiom.phase6-operator-test 'axiom.phase6-operator-ux-test 'axiom.phase7-harness-test 'axiom.phase9-opencode-dogfood-test 'axiom.phase10-control-test 'axiom.phase11-budget-test)]
+(let [summary (t/run-tests 'axiom.run-tests 'axiom.git-test 'axiom.lock-test 'axiom.phase1-test 'axiom.phase2-test 'axiom.phase2-rungs-test 'axiom.phase2-guard-test 'axiom.phase3-test 'axiom.status-test 'axiom.notify-test 'axiom.observe-test 'axiom.config-test 'axiom.phase4-bundles-test 'axiom.phase4-hotreload-test 'axiom.phase5-dogfood-test 'axiom.phase6-operator-test 'axiom.phase6-operator-ux-test 'axiom.phase7-harness-test 'axiom.phase9-opencode-dogfood-test 'axiom.phase10-control-test 'axiom.phase11-budget-test)]
   (System/exit (if (pos? (+ (:fail summary 0) (:error summary 0))) 1 0)))
