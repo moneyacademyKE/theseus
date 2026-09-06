@@ -235,3 +235,27 @@
           (is (str/includes? (:error/message document-result) "File too large"))))
       (finally
         (fs/delete-tree home)))))
+
+(deftest shell-hard-floor-releases-everyday-mutations
+  ;; v5 grants chmod/mv; the handler's never-auto floor keeps only
+  ;; rm/dd/sudo/chown for policy-silent homes. Live-fire 2026-09-06:
+  ;; `chmod +x check.sh` was shadow-denied below the constitution.
+  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-shell-v5-"})]
+    (try
+      (spit (str (fs/path home "x.sh")) "#!/bin/sh\n")
+      (with-redefs [bb-agent.config/home (fn [] (str home))]
+        (let [chmod (tool/handle-tool-request
+                     {:tool/name "shell" :approval/policy :auto-all
+                      :tool/args {:cmd (str "chmod +x " (fs/path home "x.sh"))}} {})]
+          (is (= :ok (:status chmod)) "chmod must run under :auto-all — v5 grants it"))
+        (let [mv (tool/handle-tool-request
+                  {:tool/name "shell" :approval/policy :auto-all
+                   :tool/args {:cmd (str "mv " (fs/path home "x.sh") " " (fs/path home "y.sh"))}} {})]
+          (is (= :ok (:status mv)) "mv must run under :auto-all — v5 grants it"))
+        (let [rm (tool/handle-tool-request
+                  {:tool/name "shell" :approval/policy :auto-all
+                   :tool/args {:cmd (str "rm " (fs/path home "y.sh"))}} {})]
+          (is (str/includes? (str (:error/message rm)) "Denied unsafe")
+              "rm stays on the never-auto floor even under :auto-all")))
+      (finally
+        (fs/delete-tree home)))))

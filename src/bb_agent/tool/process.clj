@@ -7,13 +7,17 @@
             [cheshire.core :as json]
             [clojure.string :as str]))
 
-(def ^:private unsafe-shell-prefixes
-  ["rm " "rm\t" "rm\n" "mv " "chmod " "chown " "sudo " "dd "])
+;; The never-auto-run floor: these stay denied even under :auto-all with no
+;; constitution present. Policy (brain/rules.clj) is the owner's law and
+;; speaks first; this list only guards the policy-silent case. Everything
+;; else the constitution grants (v5: chmod, mv, mutations on demand) runs.
+(def ^:private never-auto-shell-prefixes
+  ["rm " "rm\t" "rm\n" "dd " "sudo " "chown "])
 
-(defn- unsafe-shell-command? [cmd]
+(defn- never-auto-shell-command? [cmd]
   (let [trimmed (str/trim (or cmd ""))]
-    (or (some #(str/starts-with? trimmed %) unsafe-shell-prefixes)
-        (re-find #"(?:^|[;&|]\s*|\bcommand\s+)(rm|mv|chmod|chown|sudo|dd)\b" trimmed))))
+    (or (some #(str/starts-with? trimmed %) never-auto-shell-prefixes)
+        (re-find #"(?:^|[;&|]\s*|\bcommand\s+)(rm|dd|sudo|chown)\b" trimmed))))
 
 (defn- checked-cwd [tool-name cwd]
   (if cwd
@@ -21,7 +25,7 @@
     (path/checked-read-path tool-name (config/home))))
 
 (defn- run-shell! [{:keys [cmd cwd timeout-ms]}]
-  (if (unsafe-shell-command? cmd)
+  (if (never-auto-shell-command? cmd)
     (common/error-result "shell"
                          "Denied unsafe shell command"
                          {:cmd cmd

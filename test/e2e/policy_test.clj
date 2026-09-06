@@ -213,6 +213,10 @@
         (is (= :allow (verdict "shell" {:cmd "sed -i '' s/a/b/ f.txt"})) "shell mutations")
         (is (= :allow (verdict "write_file" {:path "brain/00-soul.md"})) "self-modification")
         (is (= :allow (verdict "launch_goal" {})) "goal loop reachable from normal prompts (v5.1)")
+        (is (= :allow (verdict "shell" {:cmd "chmod +x check.sh && ./check.sh"})) "chmod is a v5-granted everyday mutation (live-fire regression: shadow list used to deny it)")
+        (is (= :allow (verdict "shell" {:cmd "mv a.txt b.txt"})) "mv is v5-granted")
+        (is (= :deny (verdict "shell" {:cmd "dd if=/dev/zero of=x"})) "dd floor")
+        (is (= :deny (verdict "shell" {:cmd "chown root x"})) "chown floor")
         ;; durable floor
         (is (= :deny (verdict "shell" {:cmd "rm -rf x"})) "rm floor")
         (is (= :deny (verdict "shell" {:cmd "python3 x.py"})) "python floor")
