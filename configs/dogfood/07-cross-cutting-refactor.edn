@@ -1,26 +1,26 @@
 {:comment "Dogfood L7 -- cross-cutting refactor. High-risk: ask for simplification only, with full suite and demos as gates."
  :name "dogfood-07-cross-cutting-refactor"
- :workdir "../axiom-workspace"
- :lock "./.axiom-dogfood-07.lock"
- :log-dir "./.axiom-logs-dogfood-07"
+ :workdir "../goal-workspace"
+ :lock "./.goal-dogfood-07.lock"
+ :log-dir "./.goal-logs-dogfood-07"
  :models ["opencode-default" "opencode-strong"]
- :observers {:tests-ok {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
-             :build-ok {:sh "./.tools/bin/bb -e \"(require 'axiom.core 'axiom.config 'axiom.harness 'axiom.status)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
-             :steady-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/steady.edn >/dev/null 2>&1; echo $?" :parse :int}
-             :stall-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/stall.edn >/dev/null 2>&1; echo $?" :parse :int}
-             :corrupt-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/corrupt.edn >/dev/null 2>&1; echo $?" :parse :int}
-             :recover-exit {:sh "bash examples/demo-recover/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/recover.edn >/dev/null 2>&1; echo $?" :parse :int}}
+ :observers {:tests-ok {:sh "./.tools/bin/bb -cp src:test -m bb-agent.goal.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+             :build-ok {:sh "./.tools/bin/bb -e \"(require 'bb-agent.goal.core 'bb-agent.goal.config 'bb-agent.goal.harness 'bb-agent.goal.status)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+             :steady-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/steady.edn >/dev/null 2>&1; echo $?" :parse :int}
+             :stall-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/stall.edn >/dev/null 2>&1; echo $?" :parse :int}
+             :corrupt-exit {:sh "bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/corrupt.edn >/dev/null 2>&1; echo $?" :parse :int}
+             :recover-exit {:sh "bash examples/demo-recover/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/recover.edn >/dev/null 2>&1; echo $?" :parse :int}}
  :goal {:op :and
         :exprs [{:op := :ref :tests-ok :value "pass"}
                 {:op := :ref :steady-exit :value 0}
                 {:op := :ref :stall-exit :value 1}
                 {:op := :ref :corrupt-exit :value 1}
                 {:op := :ref :recover-exit :value 0}]}
- :axiom-bundle :clj-build
+ :integrity-bundle :clj-build
  :progress [:tests-ok :steady-exit :stall-exit :corrupt-exit :recover-exit]
  :act {:harness :opencode
-       :prompt "Perform a small cross-cutting simplification of Axiom without changing behavior. Prefer extracting pure helpers, clarifying names, or reducing nesting in core/config/harness/status. Do not add features. Preserve all tests and demo exit semantics. Axiom will check suite and demos, not your summary."}
- :checkpoint {:tag-prefix "axiom-dogfood-07"}
+       :prompt "Perform a small cross-cutting simplification of the goal runner without changing behavior. Prefer extracting pure helpers, clarifying names, or reducing nesting in core/config/harness/status. Do not add features. Preserve all tests and demo exit semantics. the runner will check suite and demos, not your summary."}
+ :checkpoint {:tag-prefix "goal-dogfood-07"}
  :stall-after 3
  :thrash-after 4
  :max-rollbacks 2

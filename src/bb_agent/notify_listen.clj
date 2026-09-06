@@ -1,5 +1,5 @@
 (ns bb-agent.notify-listen
-  "W3 (2026-09-06): axiom's halt notifier (axiom.notify) POSTs an EDN halt
+  "W3 (2026-09-06): the goal runner's halt notifier (bb-agent.goal.notify) POSTs an EDN halt
   message to a localhost URL; this listener receives it, formats one Telegram
   page, and sends it through the normal delivery ladder. A goal that dies at
   3am now pages the owner instead of writing a bundle nobody reads.
@@ -15,9 +15,9 @@
 (def ^:private default-port 7787)
 
 (defn format-page
-  "PURE: an axiom.notify/build-message map -> one Telegram page string."
+  "PURE: an bb-agent.goal.notify/build-message map -> one Telegram page string."
   [{:keys [name reason iterations bundle-path ts]}]
-  (str "🚨 axiom halt — " (or name "<unnamed>") "\n"
+  (str "🚨 goal halt — " (or name "<unnamed>") "\n"
        "reason: " (or reason "unknown") "\n"
        "iterations: " (or iterations "?") "\n"
        "bundle: " (or bundle-path "none")

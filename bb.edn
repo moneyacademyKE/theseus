@@ -6,9 +6,9 @@
  {agent {:doc "Run one agent turn. Usage: bb agent \"say pong\""
          :requires ([bb-agent.cli :as cli])
          :task (cli/-main *command-line-args*)}
-     goal {:doc "Axiom goal runner. Usage: bb goal <config.edn> [--max-iters N] [--once] | bb goal status|pause|resume|stop <config.edn>"
-           :requires ([axiom.main :as axiom-main])
-           :task (apply axiom-main/-main *command-line-args*)}
+     goal {:doc "Goal runner. Usage: bb goal <config.edn> [--max-iters N] [--once] | bb goal status|pause|resume|stop <config.edn>"
+           :requires ([bb-agent.goal.main :as goal-main])
+           :task (apply goal-main/-main *command-line-args*)}
      lint {:doc "clj-kondo static analysis. Usage: bb lint <file-or-dir> (default: src)"
            :task (let [bin (or (System/getenv "KONDO_BIN") "../.tools/bin/clj-kondo")
                        target (or (first *command-line-args*) "src")]
@@ -16,14 +16,14 @@
                      (println "clj-kondo binary missing:" bin)
                      (System/exit 2))
                    (shell bin "--lint" target "--fail-level" "error"))}
-     notify-listen {:doc "Axiom halt->Telegram listener. Usage: bb notify-listen [--port N]"
+     notify-listen {:doc "Goal-runner halt->Telegram listener. Usage: bb notify-listen [--port N]"
                     :requires ([bb-agent.notify-listen :as nl])
                     :task (apply nl/-main *command-line-args*)}
      autonomy {:doc "Autonomy tier status + outcome ledger. Usage: bb autonomy | bb autonomy applied|reverted <file> [note]"
                :requires ([bb-agent.autonomy :as au])
                :task (apply au/-main *command-line-args*)}
-     test:axiom {:doc "Run axiom goal-runner unit tests."
-                 :task (shell "bb" "-m" "axiom.run-tests")}
+     test:goal {:doc "Run goal-runner unit tests."
+                 :task (shell "bb" "-m" "bb-agent.goal.run-tests")}
      test:bb-agent {:doc "Run bb_agent unit tests (notify listener, brain, autonomy)."
                     :extra-paths ["test"]
                     :requires ([clojure.test :as t]

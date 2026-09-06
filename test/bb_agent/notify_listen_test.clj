@@ -8,7 +8,7 @@
                               :iterations 12
                               :bundle-path "/w/logs/halt-bundle.edn"
                               :ts "2026-09-06T07:00:00Z"})]
-    (is (re-find #"axiom halt — dogfood" page))
+    (is (re-find #"goal halt — dogfood" page))
     (is (re-find #"reason: budget-exhausted" page))
     (is (re-find #"iterations: 12" page))
     (is (re-find #"/w/logs/halt-bundle.edn" page))
@@ -34,7 +34,7 @@
         (is (= 200 (:status res)))
         (is (= "paged" (:body res)))
         (is (= 1 (count @sent)))
-        (is (re-find #"axiom halt — x" (first @sent)))))
+        (is (re-find #"goal halt — x" (first @sent)))))
     (testing "malformed EDN is rejected without paging"
       (let [res (post handler "not edn {{{")]
         (is (= 400 (:status res)))

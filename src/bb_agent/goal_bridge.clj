@@ -13,9 +13,9 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [axiom.config :as axiom-config]
-            [axiom.observe :as observe]
-            [axiom.predicates :as predicates]))
+            [bb-agent.goal.config :as goal-config]
+            [bb-agent.goal.observe :as observe]
+            [bb-agent.goal.predicates :as predicates]))
 
 (def goals-root (str (config/home) "/goals"))
 (def active-file (str goals-root "/active.edn"))
@@ -64,7 +64,7 @@
     ws))
 
 (def ^:private author-prompt
-  "You are authoring an axiom goal project. Your cwd is the project workdir: %s
+  "You are authoring a goal project. Your cwd is the project workdir: %s
 Before writing anything, READ these reference configs for the exact schema:
   %s
   %s
@@ -91,7 +91,7 @@ Do NOT run the goal. Write files only.")
    it loads clean, else the problems as a string."
   [cfg-path]
   (try
-    (axiom-config/load-config cfg-path)
+    (goal-config/load-config cfg-path)
     nil
     (catch Exception e
       (or (some-> e ex-data :keys) (some-> e ex-data :key))
@@ -140,7 +140,7 @@ Do NOT run the goal. Write files only.")
               (recur 1))
           err)
         (if-let [baseline (baseline-problems
-                           (axiom-config/load-config cfg-path))]
+                           (goal-config/load-config cfg-path))]
           (if (zero? attempt)
             (do (core/run-turn! acfg
                                 (str "Your goal project failed the baseline pre-flight:\n"
@@ -179,7 +179,7 @@ Do NOT run the goal. Write files only.")
    watcher for this chat/topic."
   [name chat-id thread-id]
   (let [ws (str goals-root "/" name)
-        authored (axiom-config/load-config (str ws "/project.edn"))
+        authored (goal-config/load-config (str ws "/project.edn"))
         cfg-path (str ws "/config.edn")
         log-path (str ws "/run.log")
         repo (str (fs/cwd))

@@ -1,6 +1,6 @@
-# Axiom × opencode Dogfood Ladder
+# the goal runner × opencode Dogfood Ladder
 
-Axiom should supervise real harnesses the way a good operator supervises a smart but unreliable contractor: give it a bounded task, observe the world, ignore self-report, and stop before it poisons the repo.
+the goal runner should supervise real harnesses the way a good operator supervises a smart but unreliable contractor: give it a bounded task, observe the world, ignore self-report, and stop before it poisons the repo.
 
 This ladder is deliberately incremental. Do not start with the giant refactor. Start with a cheap, low-blast-radius task and only climb when the previous rung leaves useful logs and a green world.
 
@@ -8,15 +8,15 @@ This ladder is deliberately incremental. Do not start with the giant refactor. S
 
 1. Install and authenticate `opencode`.
 2. Run from the repo root:
-   - `./.tools/bin/bb -cp src:test -m axiom.run-tests`
+   - `./.tools/bin/bb -cp src:test -m bb-agent.goal.run-tests`
 3. Prefer a disposable branch or throwaway clone for the first live runs.
 4. Inspect `CONFIG.md` for the harness config contract.
 
-Axiom invokes opencode with argv, not shell interpolation:
+the goal runner invokes opencode with argv, not shell interpolation:
 
 `opencode run --model {{model}} {{prompt}}`
 
-The harness can say anything. Axiom only trusts observers.
+The harness can say anything. the goal runner only trusts observers.
 
 ## Ladder summary
 
@@ -33,14 +33,14 @@ The harness can say anything. Axiom only trusts observers.
 
 ## Level 1 — documentation/reference drift
 
-Purpose: prove Axiom can safely delegate a small text maintenance task.
+Purpose: prove the goal runner can safely delegate a small text maintenance task.
 
 Expected opencode behavior:
 - inspect docs only;
 - update stale counts or missing references;
 - avoid touching source unless the docs prove a code contract mismatch.
 
-Axiom checks documentation surfaces, not opencode's summary.
+the goal runner checks documentation surfaces, not opencode's summary.
 
 ## Level 2 — config library tightening
 
@@ -58,7 +58,7 @@ Purpose: introduce normal coding pressure.
 Recommended drill:
 1. Create a throwaway branch.
 2. Break one assertion in a targeted test.
-3. Run Axiom with this config.
+3. Run the goal runner with this config.
 4. Confirm it fixes the world, not merely the symptom.
 
 ## Level 4 — operator status UX
@@ -73,7 +73,7 @@ Good candidate improvements:
 
 ## Level 5 — harness contract hardening
 
-Purpose: make opencode itself the subject. This is where Axiom proves it can supervise the supervisor boundary.
+Purpose: make opencode itself the subject. This is where the goal runner proves it can supervise the supervisor boundary.
 
 Good candidate improvements:
 - reject harness acts with blank prompts;
@@ -93,7 +93,7 @@ Rules:
 
 ## Level 7 — cross-cutting refactor
 
-Purpose: ask for simplification, not new features. This tests whether opencode can reduce incidental complexity under Axiom's invariants.
+Purpose: ask for simplification, not new features. This tests whether opencode can reduce incidental complexity under the goal runner's invariants.
 
 Prompt should emphasize:
 - no behavior change;
@@ -103,7 +103,7 @@ Prompt should emphasize:
 
 ## Level 8 — release-candidate sweep
 
-Purpose: final broad pass. It is intentionally dangerous because the prompt is broad. Axiom's job is to bound it with strong integrity checks and halt loudly.
+Purpose: final broad pass. It is intentionally dangerous because the prompt is broad. the goal runner's job is to bound it with strong integrity checks and halt loudly.
 
 Done only when:
 - full suite is green;
@@ -116,27 +116,27 @@ Done only when:
 
 Run a dogfood config:
 
-`./.tools/bin/bb axiom.clj configs/dogfood/01-doc-link-check.edn`
+`./.tools/bin/bb bb-agent.goal.clj configs/dogfood/01-doc-link-check.edn`
 
 Inspect status:
 
-`./.tools/bin/bb axiom.clj status configs/dogfood/01-doc-link-check.edn --last 5`
+`./.tools/bin/bb bb-agent.goal.clj status configs/dogfood/01-doc-link-check.edn --last 5`
 
 Run the final gate manually:
 
-`./.tools/bin/bb -cp src:test -m axiom.run-tests`
+`./.tools/bin/bb -cp src:test -m bb-agent.goal.run-tests`
 
-`bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/steady.edn >/dev/null 2>&1; echo steady=$?`
+`bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/steady.edn >/dev/null 2>&1; echo steady=$?`
 
-`bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/stall.edn >/dev/null 2>&1; echo stall=$?`
+`bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/stall.edn >/dev/null 2>&1; echo stall=$?`
 
-`bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/corrupt.edn >/dev/null 2>&1; echo corrupt=$?`
+`bash examples/demo/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/corrupt.edn >/dev/null 2>&1; echo corrupt=$?`
 
-`bash examples/demo-recover/reset.sh >/dev/null 2>&1; ./.tools/bin/bb axiom.clj examples/recover.edn >/dev/null 2>&1; echo recover=$?`
+`bash examples/demo-recover/reset.sh >/dev/null 2>&1; ./.tools/bin/bb bb-agent.goal.clj examples/recover.edn >/dev/null 2>&1; echo recover=$?`
 
 ## Operator rule
 
-If Axiom halts, do not blindly rerun. Read:
+If the goal runner halts, do not blindly rerun. Read:
 
 - `<log-dir>/events.log`
 - `<log-dir>/halt-bundle.edn`

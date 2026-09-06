@@ -1,16 +1,16 @@
-{:comment    "test-convergence -- run a test suite until it converges green. Integrity = :clj-build (build + tests green), dogfooding Axiom's own Babashka toolchain."
+{:comment    "test-convergence -- run a test suite until it converges green. Integrity = :clj-build (build + tests green), dogfooding the goal runner.s own Babashka toolchain."
  :name        "test-convergence"
- :workdir     "../axiom-workspace"
- :lock        "./.axiom.lock"
- :log-dir     "./.axiom-logs-convergence"
+ :workdir     "../goal-workspace"
+ :lock        "./.bb-agent.goal.lock"
+ :log-dir     "./.goal-logs-convergence"
  :notify      {:type :http :url "http://127.0.0.1:7787/halt"}
- :observers   {:tests-ok  {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
-               :build-ok  {:sh "./.tools/bin/bb -e \"(require 'axiom.core)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
-               :fails     {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests 2>&1 | grep -c 'FAIL\\|ERROR' | tr -d ' '" :parse :int}}
+ :observers   {:tests-ok  {:sh "./.tools/bin/bb -cp src:test -m bb-agent.goal.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
+               :build-ok  {:sh "./.tools/bin/bb -e \"(require 'bb-agent.goal.core)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
+               :fails     {:sh "./.tools/bin/bb -cp src:test -m bb-agent.goal.run-tests 2>&1 | grep -c 'FAIL\\|ERROR' | tr -d ' '" :parse :int}}
  :goal        {:op := :ref :tests-ok :value "pass"}
- :axiom-bundle :clj-build
+ :integrity-bundle :clj-build
  :progress    :fails
  :act         {:sh "./scripts/fix_flaky_test.sh {{attempt}}"}
- :checkpoint  {:tag-prefix "axiom-convergence"}
+ :checkpoint  {:tag-prefix "goal-convergence"}
  :stall-after 3
  :max-rollbacks 2}

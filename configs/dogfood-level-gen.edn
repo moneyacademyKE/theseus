@@ -1,15 +1,15 @@
 {:comment    "dogfood-level-gen -- an AI agent generates test levels for a Gleam project until level-count >= N. Integrity = :gleam-build (build must stay green)."
  :name        "dogfood-level-gen"
- :workdir     "../axiom-workspace"
- :lock        "./.axiom.lock"
- :log-dir     "./.axiom-logs-levelgen"
+ :workdir     "../goal-workspace"
+ :lock        "./.bb-agent.goal.lock"
+ :log-dir     "./.goal-logs-levelgen"
  :notify      {:type :http :url "http://127.0.0.1:7787/halt", :hmac-secret "956c71bac694961fd5a3ab8ff208b3a996f5a7fb44c9e18725b25939c4b81d31"}
  :observers   {:level-count {:sh "ls test/level_*.gleam 2>/dev/null | wc -l | tr -d ' '" :parse :int}
                :build-ok    {:sh "gleam build 2>/dev/null && echo pass || echo fail" :parse :string}}
  :goal        {:op :>= :ref :level-count :value 70}
- :axiom-bundle :gleam-build
+ :integrity-bundle :gleam-build
  :progress    :level-count
  :act         {:sh "./scripts/gen_level.sh {{attempt}}"}
- :checkpoint  {:tag-prefix "axiom-levelgen"}
+ :checkpoint  {:tag-prefix "goal-levelgen"}
  :stall-after 5
  :max-rollbacks 2}

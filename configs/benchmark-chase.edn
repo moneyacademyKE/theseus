@@ -1,18 +1,18 @@
 {:comment    "benchmark-chase -- keep regenerating a Rust benchmark until perf improves. Integrity = :rust-build + :clean-tree (green build AND a spotless git tree), composable vector form."
  :name        "benchmark-chase"
- :workdir     "../axiom-workspace"
- :lock        "./.axiom.lock"
- :log-dir     "./.axiom-logs-bench"
+ :workdir     "../goal-workspace"
+ :lock        "./.bb-agent.goal.lock"
+ :log-dir     "./.goal-logs-bench"
  :notify      {:type :http :url "http://127.0.0.1:7787/halt", :hmac-secret "956c71bac694961fd5a3ab8ff208b3a996f5a7fb44c9e18725b25939c4b81d31"}
  :observers   {:us-per-op {:sh "grep 'us/op' bench.out 2>/dev/null | tail -1 | awk '{print $1}'" :parse :int}
                :build-ok  {:sh "cargo build --offline 2>/dev/null && echo pass || echo fail" :parse :string}
                :tests-ok  {:sh "cargo test --offline 2>/dev/null && echo pass || echo FAIL" :parse :string}
                :git-clean {:sh "git diff --quiet && echo true || echo false" :parse :string}}
  :goal        {:op :<= :ref :us-per-op :value 500}
- :axiom-bundle [:rust-build :clean-tree]      ;; composable: green build AND clean tree
+ :integrity-bundle [:rust-build :clean-tree]      ;; composable: green build AND clean tree
  :integrity    []                              ;; explicit checks would append here
  :progress     :us-per-op
  :act          {:sh "./scripts/opt_bench.sh {{attempt}}"}
- :checkpoint   {:tag-prefix "axiom-bench"}
+ :checkpoint   {:tag-prefix "goal-bench"}
  :stall-after  4
  :max-rollbacks 3}
