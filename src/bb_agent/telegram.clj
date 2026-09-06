@@ -4,6 +4,7 @@
             [bb-agent.autonomy :as autonomy]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
+            [bb-agent.goal-bridge :as goal-bridge]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
@@ -139,13 +140,18 @@
            (str/join "\n" (->> taken reverse (take 3) reverse))))))
 
 (defn- chat-command
-  "Session-level commands answered without an LLM turn."
+  "Session-level commands answered without an LLM turn. /goal (with args)
+   also routes here so it never reaches the LLM or the skill matcher."
   [text]
-  (case text
+  (if (and text (let [t (str/trim text)]
+                  (or (str/starts-with? t "/goal ") (= "/goal" t))))
+    :goal-request
+    (case text
     ("/new" "/reset") :new
     ("/usage" "/stats") :usage
     "/autonomy" :autonomy
-    nil))
+    "/goals" :goals
+    nil)))
 
 (defn- skill-command
   "If text starts with /<skill-name>, returns composed prompt with skill body or nil."
@@ -160,8 +166,12 @@
         (skill/compose-prompt matched input)))))
 
 (defn- handle-chat-command
-  [cmd session-id]
+  [cmd session-id text chat-id thread-id]
   (case cmd
+    :goal-request (goal-bridge/handle-request! text chat-id thread-id)
+    :goals (or (when-let [lines (goal-bridge/list-goals)]
+                 (str "🎯 Goals:\n" (str/join "\n" lines)))
+               "No goals yet — /goal <what to build> launches one.")
     :new (do (session/reset! session-id)
              "🧹 Session reset — fresh context from here.")
     :usage (let [r (usage/report)
@@ -317,7 +327,7 @@
           (if-let [cmd (chat-command text)]
             (delivery/send-message!
              telegram-cfg chat-id
-             (handle-chat-command cmd session-id)
+             (handle-chat-command cmd session-id text chat-id thread-id)
              {:thread-id thread-id
               :reply-to-message-id (:message_id message)})
           (let [composed-text (or (skill-command text) text)

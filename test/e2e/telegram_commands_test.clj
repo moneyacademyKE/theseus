@@ -134,3 +134,19 @@
           (is (str/includes? (:user/input turn) "recursion") "contains user input"))
         (finally
           (fs/delete-tree home))))))
+
+(deftest goal-seam-answers-in-chat
+  (testing "/goal plumbing: usage, honest authoring failure, and /goals listing"
+    (let [{:keys [home calls]} (run-poll [(dm-message 1 50 "/goal")
+                                          (dm-message 2 51 "/goal build a hello world script")
+                                          (dm-message 3 52 "/goals")])
+          [usage-reply goal-reply goals-reply] (replies calls)]
+      (try
+        (is (str/includes? (or usage-reply "") "Usage:") "bare /goal explains itself")
+        (is (str/includes? (or goal-reply "") "🚫 Goal authoring failed")
+            "fake provider writes no config — the validator judges and the seam says so")
+        (is (some #(str/includes? % "build-a-hello-world-scri")
+                  (re-seq #"build-a-hello-world-scri[^\"]*" (or goals-reply "")))
+            (str "/goals reply was: " (pr-str goals-reply)))
+        (finally
+          (fs/delete-tree home))))))
