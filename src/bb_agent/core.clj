@@ -14,7 +14,7 @@
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
 
-(def ^:private max-tool-rounds 8)
+(def ^:private default-max-tool-rounds 8)
 
 (def ^:private default-loop-guard-threshold 3)
 
@@ -207,6 +207,7 @@
 
 (defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
   (let [cfg (model/effective-config cfg)
+        max-rounds (or (:max-tool-rounds cfg) default-max-tool-rounds)
         provider (:provider cfg)
         id (:session/id cfg)
         user-images (:user/images cfg)
@@ -230,10 +231,10 @@
                                       (history-messages cfg id))
            turn {:tool/requests []
                  :tool/results []}
-           rounds-left max-tool-rounds
+           rounds-left max-rounds
            seen-calls {}]
       (when (neg? rounds-left)
-        (throw (ex-info "Exceeded tool rounds" {:rounds max-tool-rounds})))
+        (throw (ex-info "Exceeded tool rounds" {:rounds max-rounds})))
       (let [request {:provider provider
                      :model model
                      :messages messages
