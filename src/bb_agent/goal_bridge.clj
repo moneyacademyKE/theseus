@@ -72,12 +72,9 @@ Then write exactly two files:
    :workdir \"%s\" (absolute), :lock \"./bridge.lock\", :log-dir \"./logs\",
    :checkpoint {:tag-prefix \"%s\"}, :act {:sh \"./act.sh {{attempt}}\"},
    :observers {<name> {:sh \"<command>\" :parse :int|:string}}, :goal {:op ... :ref ... :value ...},
-   :integrity [...], :progress <an observer name>, :stall-after, :max-rollbacks,
-   and :notify copied VERBATIM
-   from the reference (it routes halt pages).
-   CRITICAL: integrity checks run BEFORE the first act — the scaffold you
-   write must already satisfy every integrity check. The :goal predicate must
-   be achievable only after the act script's work is done.
+   :integrity [...], :progress <an observer name>, :stall-after, :max-rollbacks.
+   Do NOT add a :notify block — the bridge injects it at launch, and writing
+   config.edn is fenced. Name your config file project.edn.
 2. act.sh — idempotent, each run under 60 seconds, executable (chmod +x).
 
 The project to build: %s
@@ -103,7 +100,7 @@ Do NOT run the goal. Write files only.")
    turn carrying the exact validation errors. Returns nil on success or the
    problems string."
   [name ws spec]
-  (let [cfg-path (str ws "/config.edn")
+  (let [cfg-path (str ws "/project.edn")
         refs [(str ws "/references/normalize.config.edn")
               (str ws "/references/usage-stats.config.edn")]]
     (core/run-turn! (author-cfg name ws)
@@ -130,14 +127,20 @@ Do NOT run the goal. Write files only.")
       (throw (ex-info (str "spawn failed: " (:err res)) {:exit (:exit res)})))))
 
 (defn launch!
-  "Start `bb goal` detached from the repo root (its bb.edn holds the task),
-   register the run, and spawn the outcome watcher for this chat/topic."
+  "Promote project.edn to config.edn with the bridge-injected :notify block
+   (the authored file deliberately carries no secrets — the fence forbids
+   the LLM writing config.edn), then start `bb goal` detached from the repo
+   root (its bb.edn holds the task), register the run, and spawn the outcome
+   watcher for this chat/topic."
   [name chat-id thread-id]
   (let [ws (str goals-root "/" name)
+        authored (axiom-config/load-config (str ws "/project.edn"))
+        notify (:notify (config/load-config))
         cfg-path (str ws "/config.edn")
         log-path (str ws "/run.log")
         repo (str (fs/cwd))
-        pid (spawn-detached! repo (str "bb goal " cfg-path " > " log-path " 2>&1"))
+        _ (spit cfg-path (pr-str (assoc authored :notify notify)))
+         pid (spawn-detached! repo (str "bb goal " cfg-path " > " log-path " 2>&1"))
         _ (spit active-file (pr-str {:pid (parse-long pid) :name name}))
         watch-args (str/join " " [name (str chat-id) (str (or thread-id "")) pid])]
     (spawn-detached! repo (str "bb scripts/goal_watch.bb " watch-args))

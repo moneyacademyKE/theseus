@@ -116,7 +116,7 @@
     (with-redefs [core/run-turn! (fn [_cfg _prompt]
                                    (let [d (str bridge/goals-root "/author-fail")]
                                      (fs/create-dirs d)
-                                     (spit (str d "/config.edn")
+                                     (spit (str d "/project.edn")
                                            "{:name \"bad\" :workdir \".\"}")))]
       (let [reply (bridge/handle-request! "/goal build something nice" 7 9)]
         (is (str/includes? reply "🚫 Goal authoring failed"))
