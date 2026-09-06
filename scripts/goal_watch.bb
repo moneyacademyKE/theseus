@@ -51,7 +51,7 @@
   "Send the first progress message; returns its message_id for later edits."
   [token chat-id thread-id text ws]
   (let [r (api! token "sendMessage"
-                (cond-> {:chat_id (parse-long chat-id) :text text}
+                (cond-> {:chat_id chat-id :text text}
                   (seq thread-id) (assoc :message_thread_id (parse-long thread-id)))
                 ws)]
     (get-in r [:result :message_id])))
@@ -60,7 +60,7 @@
   "Update the progress message in place."
   [token chat-id msg-id text ws]
   (api! token "editMessageText"
-        {:chat_id (parse-long chat-id) :message_id msg-id :text text}
+        {:chat_id chat-id :message_id msg-id :text text}
         ws))
 
 (defn final-text
@@ -81,8 +81,13 @@
              nil)
       ;; args arrive as an EDN file (launch! writes watch-args.edn) — never
       ;; shell-joined: an empty thread-id used to collapse the argv and the
-      ;; script read the PID as the thread ("message thread not found")
-      {:keys [name chat-id thread-id pid]} (if (map? args) args {})
+      ;; script read the PID as the thread ("message thread not found").
+      ;; EDN gives real types (Long chat-id/pid) where argv gave strings —
+      ;; normalize once here so every consumer sees strings.
+      {:keys [name thread-id pid] :as raw-args} (if (map? args) args {})
+      chat-id (some-> (:chat-id raw-args) str parse-long)
+      thread-id (some-> thread-id str)
+      pid (some-> pid str)
       ws (str (home) "/goals/" name)
       run-log (str ws "/run.log")
       active (str (home) "/goals/active.edn")
