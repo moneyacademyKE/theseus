@@ -3,6 +3,7 @@
  :workdir     "../axiom-workspace"
  :lock        "./.axiom.lock"
  :log-dir     "./.axiom-logs-bench"
+ :notify      {:type :http :url "http://127.0.0.1:7787/halt"}
  :observers   {:us-per-op {:sh "grep 'us/op' bench.out 2>/dev/null | tail -1 | awk '{print $1}'" :parse :int}
                :build-ok  {:sh "cargo build --offline 2>/dev/null && echo pass || echo fail" :parse :string}
                :tests-ok  {:sh "cargo test --offline 2>/dev/null && echo pass || echo FAIL" :parse :string}

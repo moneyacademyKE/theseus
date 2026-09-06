@@ -3,6 +3,7 @@
  :workdir     "../axiom-workspace"
  :lock        "./.axiom.lock"
  :log-dir     "./.axiom-logs-convergence"
+ :notify      {:type :http :url "http://127.0.0.1:7787/halt"}
  :observers   {:tests-ok  {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests >/dev/null 2>&1 && echo pass || echo FAIL" :parse :string}
                :build-ok  {:sh "./.tools/bin/bb -e \"(require 'axiom.core)\" >/dev/null 2>&1 && echo pass || echo fail" :parse :string}
                :fails     {:sh "./.tools/bin/bb -cp src:test -m axiom.run-tests 2>&1 | grep -c 'FAIL\\|ERROR' | tr -d ' '" :parse :int}}
