@@ -30,24 +30,42 @@
      :bundle-path bundle-path
      :ts        (:ts bundle)}))
 
+(defn- hmac-hex
+  "HMAC-SHA256(secret, body) as lowercase hex via the buddy pod (lazy require).
+  Returns nil if the pod is unavailable -- the listener then fails the request
+  closed (403), and the sender sees it in the response."
+  [secret body]
+  (try
+    (require '[pod.babashka.buddy.core.mac :as mac])
+    (let [mac (resolve 'pod.babashka.buddy.core.mac/hash)]
+      (apply str (map #(format "%02x" (bit-and (int %) 0xff))
+                      (mac body {:key (.getBytes ^String secret) :alg :hmac :sha :256}))))
+    (catch Exception _ nil)))
+
 (defn- post-edn!
-  "POST `message` as EDN to `url` via babashka.http-client if available, else
-  curl via sh. Returns the response (map with :status / :body) -- never throws
-  out of notify! on transport failure; the error is captured in the return."
-  [url message]
-  (let [body (with-out-str (pp/pprint message))]
+  "POST `message` as EDN to (:url spec). When the spec carries :hmac-secret,
+  the body is signed (HMAC-SHA256, hex, X-Signature header) so the listener
+  can reject forgeries. Returns the response (map with :status / :body) --
+  never throws out of notify! on transport failure; the error is captured in
+  the return."
+  [spec message]
+  (let [url  (:url spec)
+        body (with-out-str (pp/pprint message))
+        sig  (when-let [s (:hmac-secret spec)] (hmac-hex s body))]
     (if (http-client-available?)
       (let [http (resolve 'babashka.http-client/post)]
-        (try (let [res (http url {:headers {"Content-Type" "application/edn"}
+        (try (let [res (http url {:headers (cond-> {"Content-Type" "application/edn"}
+                                            sig (assoc "X-Signature" sig))
                                   :body body})]
                {:status (:status res) :body (str (:body res))})
              (catch Exception e
                {:status 0 :error (ex-message e)})))
-      (try (let [res (sh {:out :string :err :string :continue true}
-                         "curl" "-sS" "-m" "10" "-X" "POST"
-                         "-H" "Content-Type: application/edn"
-                         "--data-binary" "@-" "-w" "\n%{http_code}"
-                         url :in body)]
+      (try (let [args (cond-> ["curl" "-sS" "-m" "10" "-X" "POST"
+                               "-H" "Content-Type: application/edn"]
+                        sig (into ["-H" (str "X-Signature: " sig)]))
+                 res  (apply sh {:out :string :err :string :continue true}
+                             (into args ["--data-binary" "@-" "-w" "\n%{http_code}" url])
+                             :in body)]
             {:status (-> (:out res) str/split-lines last Integer/parseInt)
              :body (-> (:out res) str/split-lines butlast (->> (str/join "\n")))})
            (catch Exception e
@@ -65,7 +83,7 @@
           type   (:type spec)]
       (cond
         (fn? transport) (transport msg)
-        (= type :http)  (post-edn! (:url spec) msg)
+        (= type :http)  (post-edn! spec msg)
         (= type :noop)  msg                       ;; test transport, no network
         :else           (do (println "[axiom.notify] unknown transport type:" type)
                             msg)))))

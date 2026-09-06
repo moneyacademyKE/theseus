@@ -59,3 +59,45 @@
           (is (= 1 (count @sent)))
           (is (re-find #"roundtrip" (first @sent))))
         (finally (stop))))))
+
+(def ^:private test-secret "test-secret-hmac")
+
+(defn- hmac
+  [secret s]
+  (require '[pod.babashka.buddy.core.mac :as mac])
+  (let [mac (resolve 'pod.babashka.buddy.core.mac/hash)]
+    (apply str (map #(format "%02x" (bit-and (int %) 0xff))
+                    (mac s {:key (.getBytes secret) :alg :hmac :sha :256})))))
+
+(defn- post-signed
+  [handler s sig]
+  (handler {:body (java.io.ByteArrayInputStream. (.getBytes s))
+            :headers {"x-signature" sig}}))
+
+(deftest hmac-signature-gate
+  (let [sent    (atom [])
+        handler (nl/make-handler #(swap! sent conj %) {:hmac-secret test-secret})
+        halt    (pr-str {:name "signed" :reason "x" :iterations 1})]
+    (testing "a valid signature pages"
+      (let [res (post-signed handler halt (hmac test-secret halt))]
+        (is (= 200 (:status res)))
+        (is (= "paged" (:body res)))
+        (is (= 1 (count @sent)))))
+    (testing "a tampered signature is 403 without paging"
+      (let [res (post-signed handler halt (hmac test-secret (str halt "tamper")))]
+        (is (= 403 (:status res)))
+        (is (= 1 (count @sent)))))
+    (testing "a missing signature is 403"
+      (let [res (post handler halt)]
+        (is (= 403 (:status res)))
+        (is (= 1 (count @sent)))))
+    (testing "garbage signature is 403"
+      (let [res (post-signed handler halt "zz-nothex")]
+        (is (= 403 (:status res)))
+        (is (= 1 (count @sent)))))))
+
+(deftest hmac-back-compat-without-secret
+  (let [sent (atom [])
+        handler (nl/make-handler #(swap! sent conj %))]
+    (is (= 200 (:status (post handler (pr-str {:name "y"})))))
+    (is (= 1 (count @sent)))))
