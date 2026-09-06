@@ -184,3 +184,37 @@
         (is (fs/exists? (fs/path home "e2e-allowed-marker"))))
       (finally
         (fs/delete-tree home)))))
+
+(def ^:private v5-floor-denies
+  ["deny-python" "deny-rm" "deny-irreversible-git"
+   "deny-secrets" "deny-sudo" "deny-constitution-self-edit"])
+
+(deftest owner-grants-v5-constitution-contract
+  ;; Pins the owner's 2026-09-06 loosening: layer-2 freedoms + layer-1 floor.
+  ;; The regeneration rule (rules.clj header) says a rebuilt grant set replaces
+  ;; layer 2 only — this test fails if a rebuild drops the durable floor or
+  ;; reorders it below the allows. Skips harmlessly where no constitution exists.
+  (let [f (fs/path (config/home) "brain" "rules.clj")]
+    (when (fs/exists? f)
+      (let [rules (:rules (sci/eval-string (slurp (str f)) {}))
+            verdict (fn [tool args]
+                      (some (fn [{:keys [pred decision]}]
+                              (when (pred tool args) decision))
+                            rules))
+            names (mapv :name rules)
+            idx (fn [n] (.indexOf names n))
+            first-allow (some (fn [[i r]] (when (= :allow (:decision r)) i))
+                              (map-indexed vector rules))]
+        ;; freedoms granted by the loosening
+        (is (= :allow (verdict "shell" {:cmd "sed -i '' s/a/b/ f.txt"})) "shell mutations")
+        (is (= :allow (verdict "write_file" {:path "brain/00-soul.md"})) "self-modification")
+        ;; durable floor
+        (is (= :deny (verdict "shell" {:cmd "rm -rf x"})) "rm floor")
+        (is (= :deny (verdict "shell" {:cmd "python3 x.py"})) "python floor")
+        (is (= :deny (verdict "shell" {:cmd "git push -f origin main"})) "git floor")
+        (is (= :deny (verdict "read_file" {:path "/Users/moe/theseus/config.edn"})) "secrets floor")
+        (is (= :deny (verdict "shell" {:cmd "sudo ls"})) "sudo floor")
+        (is (= :deny (verdict "write_file" {:path "brain/rules.clj"})) "law protects itself")
+        ;; regeneration rule as code: every durable deny precedes the first allow
+        (is (every? #(< (idx %) first-allow) v5-floor-denies)
+            "layer-1 denies sit above all allows")))))
