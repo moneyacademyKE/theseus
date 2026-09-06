@@ -9,6 +9,13 @@
      goal {:doc "Axiom goal runner. Usage: bb goal <config.edn> [--max-iters N] [--once] | bb goal status|pause|resume|stop <config.edn>"
            :requires ([axiom.main :as axiom-main])
            :task (apply axiom-main/-main *command-line-args*)}
+     lint {:doc "clj-kondo static analysis. Usage: bb lint <file-or-dir> (default: src)"
+           :task (let [bin "/Users/moe/theseus/.tools/bin/clj-kondo"
+                       target (or (first *command-line-args*) "src")]
+                   (when-not (.exists (java.io.File. bin))
+                     (println "clj-kondo binary missing:" bin)
+                     (System/exit 2))
+                   (shell bin "--lint" target "--fail-level" "error"))}
      notify-listen {:doc "Axiom halt->Telegram listener. Usage: bb notify-listen [--port N]"
                     :requires ([bb-agent.notify-listen :as nl])
                     :task (apply nl/-main *command-line-args*)}
@@ -44,6 +51,12 @@
      usage {:doc "Usage commands. Usage: bb usage report"
             :requires ([bb-agent.cli :as cli])
             :task (apply cli/-main "usage" *command-line-args*)}
+     usage:index {:doc "Rebuild the sqlite usage index from state/usage.edn."
+                  :requires ([bb-agent.store :as store])
+                  :task (println "indexed" (store/index-usage!) "events")}
+     usage:query {:doc "SELECT-only SQL over a fresh usage index. Usage: bb usage:query <sql>"
+                  :requires ([bb-agent.store :as store])
+                  :task (apply store/-main *command-line-args*)}
      model {:doc "Model commands. Usage: bb model set/current ..."
             :requires ([bb-agent.cli :as cli])
             :task (apply cli/-main "model" *command-line-args*)}
@@ -462,5 +475,21 @@
                                  (t/run-tests 'e2e.history-test)]
                              (when (pos? (+ fail error))
                                (System/exit 1)))}
+   test:e2e:store {:doc "Run usage sqlite-index e2e tests."
+                   :extra-paths ["test"]
+                   :requires ([clojure.test :as t]
+                              [e2e.store-test])
+                   :task (let [{:keys [fail error]}
+                               (t/run-tests (quote e2e.store-test))]
+                            (when (pos? (+ fail error))
+                              (System/exit 1)))}
+   test:e2e:kondo {:doc "Run clj-kondo static-gate e2e tests."
+                    :extra-paths ["test"]
+                    :requires ([clojure.test :as t]
+                               [e2e.kondo-test])
+                    :task (let [{:keys [fail error]}
+                                (t/run-tests (quote e2e.kondo-test))]
+                             (when (pos? (+ fail error))
+                               (System/exit 1)))}
    test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
-                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:policy test:e2e:rtk test:e2e:rsi test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:skill test:e2e:loop-guard test:e2e:telegram-commands test:e2e:telegram-edits test:e2e:skill-research test:e2e:provider-wire test:e2e:provider-timeout test:e2e:vision test:e2e:history test:e2e:session-redaction test:bb-agent verify:rewrite-docs]}}}
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:policy test:e2e:rtk test:e2e:rsi test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:skill test:e2e:loop-guard test:e2e:telegram-commands test:e2e:telegram-edits test:e2e:skill-research test:e2e:provider-wire test:e2e:provider-timeout test:e2e:vision test:e2e:history test:e2e:session-redaction test:bb-agent test:e2e:store test:e2e:kondo verify:rewrite-docs]}}}
