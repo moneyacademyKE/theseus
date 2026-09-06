@@ -99,7 +99,7 @@
                   (get-in cfg [:notify :port])
                   default-port)
         send! (page-sender cfg)]
-    (start! send! port)
+    (start! send! port (select-keys (:notify cfg) [:hmac-secret]))
     (println "[notify-listen] listening on 127.0.0.1:" port
              "-> chat" (get-in cfg [:notify :chat-id]))
     (flush)

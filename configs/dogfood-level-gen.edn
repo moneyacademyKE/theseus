@@ -3,7 +3,7 @@
  :workdir     "../axiom-workspace"
  :lock        "./.axiom.lock"
  :log-dir     "./.axiom-logs-levelgen"
- :notify      {:type :http :url "http://127.0.0.1:7787/halt"}
+ :notify      {:type :http :url "http://127.0.0.1:7787/halt", :hmac-secret "956c71bac694961fd5a3ab8ff208b3a996f5a7fb44c9e18725b25939c4b81d31"}
  :observers   {:level-count {:sh "ls test/level_*.gleam 2>/dev/null | wc -l | tr -d ' '" :parse :int}
                :build-ok    {:sh "gleam build 2>/dev/null && echo pass || echo fail" :parse :string}}
  :goal        {:op :>= :ref :level-count :value 70}
