@@ -105,6 +105,18 @@
         (finally
           (fs/delete-tree home))))))
 
+(deftest autonomy-reports-earned-vs-granted
+  (testing "/autonomy answers from the outcomes ledger without an LLM turn"
+    (let [{:keys [home calls]} (run-poll [(dm-message 1 40 "/autonomy")])
+          [reply] (replies calls)]
+      (try
+        (is (str/includes? (or reply "") "earned: :propose") "earned tier present")
+        (is (str/includes? (or reply "") "granted: :propose") "granted tier present")
+        (is (str/includes? (or reply "") "insufficient evidence")
+            "empty ledger refuses rates — small samples lie")
+        (finally
+          (fs/delete-tree home))))))
+
 (deftest slash-command-triggers-skill
   (testing "typing /skill-name composes the skill prompt with input into the LLM turn"
     (let [{:keys [home]} (run-poll [(dm-message 1 30 "/explain recursion")]

@@ -1,6 +1,7 @@
 (ns bb-agent.telegram
   (:require [babashka.http-client :as http]
             [bb-agent.approval :as approval]
+            [bb-agent.autonomy :as autonomy]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.telegram-approval-ui :as approval-ui]
@@ -143,6 +144,7 @@
   (case text
     ("/new" "/reset") :new
     ("/usage" "/stats") :usage
+    "/autonomy" :autonomy
     nil))
 
 (defn- skill-command
@@ -169,8 +171,9 @@
              (str "📊 Usage: " (:usage/events r) " events, "
                   (:tokens/total r) " tokens"
                   (format ", ~$%.4f" (double (or (:cost/estimate-usd r) 0)))
-                  (when (seq by-provider) (str " (" by-provider ")"))))))
-
+                  (when (seq by-provider) (str " (" by-provider ")"))))
+    :autonomy (autonomy/report (autonomy/granted-tier)
+                               (autonomy/load-ledger))))
 (defn- notify-turn-failure!
   "A dead turn must never be silent: swap the ack reaction to a failure
    signal and send one bounded error reply. The notice itself failing
