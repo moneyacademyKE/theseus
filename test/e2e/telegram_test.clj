@@ -110,6 +110,10 @@
                          {:status 200
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok true})}
+                         "/botTESTTOKEN/getMe"
+                         {:status 200
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string {:ok true :result {:id 7 :is_bot true :username "eileenslybot"}})}
                          {:status 404
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok false})}))
@@ -155,6 +159,10 @@
                          {:status 200
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok true})}
+                         "/botTESTTOKEN/getMe"
+                         {:status 200
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string {:ok true :result {:id 7 :is_bot true :username "eileenslybot"}})}
                          {:status 404
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok false})}))
@@ -204,6 +212,10 @@
                                             :message {:message_id 90
                                                       :chat {:id 9999}
                                                       :text "say pong"}}]})}
+                         "/botTESTTOKEN/getMe"
+                         {:status 200
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string {:ok true :result {:id 7 :is_bot true :username "eileenslybot"}})}
                          {:status 404
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok false})}))
