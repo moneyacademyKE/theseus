@@ -25,17 +25,25 @@
   (:ok? (git workdir "rev-parse" "--is-inside-work-tree")))
 
 (defn tag!
-  "Create/move a checkpoint tag to HEAD. Returns tag name, or nil if not a repo."
+  "Create/move a checkpoint tag to HEAD. Returns tag name, or nil if not a
+  repo (degraded no-op checkpoint per D3). Throws on a failed tag: a silent
+  failure would leave the tag pointing at a stale commit, so a later
+  rollback! would rewind legitimate progress instead of undoing one act."
   [workdir tag-name]
   (when (git-repo? workdir)
-    (git workdir "tag" "-f" tag-name)
-    tag-name))
+    (let [res (git workdir "tag" "-f" tag-name)]
+      (when-not (:ok? res)
+        (throw (ex-info (str "checkpoint tag failed: " (:err res))
+                        {:workdir workdir :tag tag-name :git-err (:err res)})))
+      tag-name)))
 
 (defn rollback!
-  "Hard-reset workdir to a tag. Returns true on success (or nil if not a repo)."
+  "Hard-reset workdir to a tag. Returns the git result map {:ok? :out :err}
+  on a repo (check :ok? -- false means the reset FAILED and the world is
+  untrusted), or nil if not a repo (degraded mode)."
   [workdir tag-name]
   (when (git-repo? workdir)
-    (:ok? (git workdir "reset" "--hard" tag-name))))
+    (git workdir "reset" "--hard" tag-name)))
 
 (defn next-tag "Generate a unique checkpoint tag name." [prefix]
   (str prefix "-" (System/currentTimeMillis)))

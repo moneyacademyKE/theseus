@@ -144,12 +144,12 @@
     (log/iteration! log-dir iteration (assoc action :event :halt))
     (let [tag      (str tag-prefix "-last-good")
           restored (git/rollback! workdir tag)]
-      (when restored
+      (when (:ok? restored)
         (log/event! log-dir :info "rollback" {:to tag}))
       (let [bundle (log/halt-bundle! log-dir action)]
         (notify/notify! cfg action bundle))
       {:status :halt :reason reason :iterations iteration
-       :detail action :rolled-back? (boolean restored)})))
+       :detail action :rolled-back? (boolean (:ok? restored))})))
 
 (defn- swap-cfg
   [old-cfg new-cfg]
@@ -159,7 +159,7 @@
 (defn run!
   "Drive the loop to completion. Returns:
     {:status :done  :world w :iterations n}
-    {:status :halt  :reason :integrity|:stall|:max-iters ...}
+    {:status :halt  :reason :integrity|:stall|:max-iters|:rollback-failed|:error ...}
 
   Acquires the lock (refuses if held live); releases on exit. Logs every
   iteration as structured EDN. opts: {:max-iters N :config-path path}."
@@ -207,17 +207,24 @@
 
              :rollback
              (let [tag      (str (get-in cfg [:checkpoint :tag-prefix] "axiom") "-last-good")
-                   restored (git/rollback! workdir tag)
-                   state'   (-> state
-                                (update :rollbacks (fnil inc 0))
-                                (assoc :stall 0))]
-               (log/event! log-dir :warn "rollback recovery"
-                           {:to tag :restored? (boolean restored)
-                            :rollbacks (:rollbacks state')})
-               (log/iteration! log-dir iteration
-                               (assoc action :event :rollback
-                                      :rolled-back? (boolean restored)))
-               (recur (inc iteration) cfg last-mtime state'))
+                   restored (git/rollback! workdir tag)]
+               (if (false? (:ok? restored))
+                 ;; reset failed on a real repo: the world may be corrupt.
+                 ;; Iterating on poisoned state violates the checkpoint
+                 ;; contract (D3) -- halt loudly; halt-result! pages the owner.
+                 (halt-result! cfg iteration
+                               (assoc action :reason :rollback-failed
+                                      :detail {:tag tag :git-err (:err restored)}))
+                 (let [state'   (-> state
+                                    (update :rollbacks (fnil inc 0))
+                                    (assoc :stall 0))]
+                   (log/event! log-dir :warn "rollback recovery"
+                               {:to tag :restored? (boolean (:ok? restored))
+                                :rollbacks (:rollbacks state')})
+                   (log/iteration! log-dir iteration
+                                   (assoc action :event :rollback
+                                          :rolled-back? (boolean (:ok? restored))))
+                   (recur (inc iteration) cfg last-mtime state'))))
 
              :escalate
              (let [rung       (:rung action)
@@ -294,5 +301,12 @@
                                            :timed-out? (:timed-out? result false)}
                                           (budget/totals state')))
                    (recur (inc iteration) cfg last-mtime state')))))))
+       (catch Exception e
+         ;; Any unexpected crash inside the loop must still halt loudly:
+         ;; halt-result! writes the bundle and pages the owner. iteration -1
+         ;; marks "outside an iteration" in the log filename (iter--01.edn).
+         (halt-result! cfg -1
+                       {:type :halt :reason :error :world {}
+                        :detail {:exception (str (.getMessage e))}}))
        (finally
          (lock/release! lock-path))))))
