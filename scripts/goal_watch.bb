@@ -28,30 +28,38 @@
        (catch Exception _ false)))
 
 (defn api!
-  "One Bot API call; parsed JSON response or nil."
-  [token method body]
+  "One Bot API call; parsed JSON response or nil. Every call is receipted to
+   the workspace watch.log — a silent watcher is an unobservable watcher."
+  [token method body ws]
   (let [payload (str (home) "/goals/.watch-payload.json")]
     (spit payload (json/generate-string body))
     (let [res (p/shell {:continue true :out :string :err :string}
                        "curl" "-s" "-X" "POST"
                        (str "https://api.telegram.org/bot" token "/" method)
                        "-H" "Content-Type: application/json"
-                       "-d" (str "@" payload))]
-      (try (json/parse-string (:out res) true) (catch Exception _ nil)))))
+                       "-d" (str "@" payload))
+          r (try (json/parse-string (:out res) true) (catch Exception _ nil))]
+      (spit (str ws "/watch.log")
+            (str (java.util.Date.) " " method " ok=" (:ok r)
+                 " msg=" (get-in r [:result :message_id]) "\n")
+            :append true)
+      r)))
 
 (defn post!
   "Send the first progress message; returns its message_id for later edits."
-  [token chat-id thread-id text]
+  [token chat-id thread-id text ws]
   (let [r (api! token "sendMessage"
                 (cond-> {:chat_id (parse-long chat-id) :text text}
-                  (seq thread-id) (assoc :message_thread_id (parse-long thread-id))))]
+                  (seq thread-id) (assoc :message_thread_id (parse-long thread-id)))
+                ws)]
     (get-in r [:result :message_id])))
 
 (defn edit!
   "Update the progress message in place."
-  [token chat-id msg-id text]
+  [token chat-id msg-id text ws]
   (api! token "editMessageText"
-        {:chat_id (parse-long chat-id) :message_id msg-id :text text}))
+        {:chat_id (parse-long chat-id) :message_id msg-id :text text}
+        ws))
 
 (defn final-text
   "The runner's own words are the verdict; last ledger's world rides along."
@@ -80,18 +88,18 @@
               (if (> n seen)
                 (let [text (gb/progress-text name events)
                       mid (or msg-id
-                              (try (post! token chat-id thread-id text)
+                              (try (post! token chat-id thread-id text ws)
                                    (catch Exception _ nil)))]
                   (when (and msg-id mid)
-                    (try (edit! token chat-id msg-id text) (catch Exception _ nil)))
+                    (try (edit! token chat-id msg-id text ws) (catch Exception _ nil)))
                   (recur (inc i) n (or mid msg-id)))
                 (recur (inc i) seen msg-id))))
         ;; runner exited (or ceiling): final verdict — edit if we can, else send
         (let [text (final-text name run-log (gb/ledger-events ws))]
           (try
             (if msg-id
-              (edit! token chat-id msg-id text)
-              (post! token chat-id thread-id text))
+              (edit! token chat-id msg-id text ws)
+              (post! token chat-id thread-id text ws))
             (catch Exception e
               (spit (str ws "/watch.err") (.getMessage e))))))))
   (when (.exists (io/file active))
