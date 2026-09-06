@@ -31,8 +31,8 @@
    (fn []
      (let [calls (atom [])]
        (with-redefs [goal-bridge/launch-spec!
-                     (fn [spec chat-id thread-id]
-                       (swap! calls conj [spec chat-id thread-id])
+                     (fn [spec chat-id thread-id emit]
+                       (swap! calls conj [spec chat-id thread-id emit])
                        (str "🚀 Goal `" spec "` launched"))]
          (let [result (tool/handle-tool-request
                        {:tool/name "launch_goal"
@@ -42,9 +42,10 @@
            (is (= :ok (:status result)))
            (is (true? (:executed? result)))
            (is (str/includes? (:outcome result) "launched"))
-           (is (= [["a file named x.txt containing hi" -1001 4721]] @calls)
+           (is (= [["a file named x.txt containing hi" -1001 4721 nil]] @calls)
                "the turn's chat/thread ids must ride to the bridge so the
-                watcher reports back to the requesting topic")))))))
+                watcher reports back to the requesting topic; no enclosing
+                turn flow here, so the emitter is nil")))))))
 
 (deftest blank-spec-is-an-error-not-a-crash
   (with-temp-home
@@ -74,7 +75,7 @@
                                            :tool/args {"spec" "build the thing"}}]}
                          {:content "Goal launched — the outcome lands in this topic."}))
                      goal-bridge/launch-spec!
-                     (fn [spec _chat-id _thread-id]
+                     (fn [spec _chat-id _thread-id _emit]
                        (swap! calls conj spec)
                        (str "🚀 Goal `" spec "` launched"))]
          (let [turn (core/run-turn! {:provider :fake :model "m"

@@ -153,3 +153,18 @@
       (catch Exception e
         (binding [*out* *err*]
           (println (str "telegram flow settle failed: " (.getMessage e))))))))
+
+(defn with-flow!
+  "Run f (a thunk receiving the emit fn) inside a fresh flow: tool calls
+   stream into ONE live topic message, settled ✅/❌ when f returns or
+   throws. Goal commands run here — the authoring phase is where the
+   minutes go, and until now it was invisible."
+  [telegram-cfg chat-id thread-id f]
+  (let [flow (make-flow)
+        reply (try
+                (f (flow-emit flow telegram-cfg chat-id thread-id))
+                (catch Exception e
+                  (settle! flow telegram-cfg chat-id false)
+                  (throw e)))]
+    (settle! flow telegram-cfg chat-id true)
+    reply))

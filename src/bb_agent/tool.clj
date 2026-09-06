@@ -49,8 +49,9 @@
                    (and (map? (:telegram/send-context cfg))
                         (= "launch_goal" (:tool/name request)))
                    (assoc-in [:tool/args :goal/send-context]
-                             (select-keys (:telegram/send-context cfg)
-                                          [:chat-id :thread-id])))
+                             (cond-> (select-keys (:telegram/send-context cfg)
+                                                  [:chat-id :thread-id])
+                               (:status/emit cfg) (assoc :goal/emit (:status/emit cfg)))))
          approver (:approval/ask cfg)
          result (if-let [verdict (policy/verdict request cfg)]
                   (case verdict

@@ -18,7 +18,7 @@
         ;; would be a cyclic dependency. Resolving at call time keeps the
         ;; layering honest: tools stay below features, always.
         (let [launch (requiring-resolve 'bb-agent.goal-bridge/launch-spec!)
-              outcome (launch spec (:chat-id ctx) (:thread-id ctx))]
+              outcome (launch spec (:chat-id ctx) (:thread-id ctx) (:goal/emit ctx))]
           (common/ok-result "launch_goal" {:outcome outcome}))
         (catch Exception e
           (common/error-result "launch_goal"

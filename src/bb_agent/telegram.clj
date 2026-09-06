@@ -331,7 +331,14 @@
           (if-let [cmd (chat-command text)]
             (delivery/send-message!
              telegram-cfg chat-id
-             (handle-chat-command cmd session-id text chat-id thread-id)
+             (if (contains? #{:goal-request :build-goal} cmd)
+               (flow/with-flow! telegram-cfg chat-id thread-id
+                 (fn [emit]
+                   (case cmd
+                     :goal-request (goal-bridge/handle-request! text chat-id thread-id emit)
+                     :build-goal (goal-bridge/route-build-request! text chat-id thread-id emit)
+                     nil)))
+               (handle-chat-command cmd session-id text chat-id thread-id))
              {:thread-id thread-id
               :reply-to-message-id (:message_id message)})
           (let [composed-text (or (skill-command text) text)

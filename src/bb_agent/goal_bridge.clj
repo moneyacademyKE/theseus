@@ -122,17 +122,19 @@ Do NOT run the goal. Write files only.")
    turn carrying the exact validation errors; then the baseline-integrity
    pre-flight (the runner's iteration-0 halt, pre-paid) with one repair.
    Returns nil on success or the problems string."
-  [name ws spec]
+  [name ws spec emit]
   (let [cfg-path (str ws "/project.edn")
+        acfg (cond-> (author-cfg name ws)
+               emit (assoc :status/emit emit))
         refs [(str ws "/references/normalize.config.edn")
               (str ws "/references/usage-stats.config.edn")]]
-    (core/run-turn! (author-cfg name ws)
+    (core/run-turn! acfg
                     (format author-prompt ws (first refs) (second refs) ws
                             (subs name 0 (min 12 (count name))) spec))
     (loop [attempt 0]
       (if-let [err (validate! cfg-path)]
         (if (zero? attempt)
-          (do (core/run-turn! (author-cfg name ws)
+          (do (core/run-turn! acfg
                               (str "Your project.edn failed validation:\n" err
                                    "\n\nFix project.edn (and act.sh if it is implicated). Do not run the goal."))
               (recur 1))
@@ -140,7 +142,7 @@ Do NOT run the goal. Write files only.")
         (if-let [baseline (baseline-problems
                            (axiom-config/load-config cfg-path))]
           (if (zero? attempt)
-            (do (core/run-turn! (author-cfg name ws)
+            (do (core/run-turn! acfg
                                 (str "Your goal project failed the baseline pre-flight:\n"
                                      baseline
                                      "\n\nFix project.edn (and act.sh if it is implicated). Do not run the goal."))
@@ -273,8 +275,9 @@ Do NOT run the goal. Write files only.")
   "Shared launch path for /goal and the launch_goal tool: scaffold, author
    (validator as judge), launch detached + watcher, announcement out. The
    caller's chat/thread ids route watcher updates to the requesting topic,
-   so a normal prompt and the slash command behave identically."
-  [spec chat-id thread-id]
+   so a normal prompt and the slash command behave identically. emit
+   (optional) streams the authoring phase's tool calls to the requester."
+  [spec chat-id thread-id emit]
   (if-let [active (active-run)]
     (str "⏳ Goal `" (:name active) "` is already running — one at a time. /goals for status.")
     (let [name (slugify spec)
@@ -286,7 +289,7 @@ Do NOT run the goal. Write files only.")
         (str "🚫 Goal failed — " scaffold-err)
         (let [ws (:ws scaffolded)
               err (try
-                    (if-let [verr (author-with-validation! name ws spec)]
+                    (if-let [verr (author-with-validation! name ws spec emit)]
                       verr
                       (do (launch! name chat-id thread-id) nil))
                     (catch Exception e
@@ -298,15 +301,16 @@ Do NOT run the goal. Write files only.")
 (defn- dispatch-spec!
   "Shared spec guard for both entry points: blank/length checks, then the
    launch. Returns the user-facing reply string either way."
-  [spec chat-id thread-id]
+  [spec chat-id thread-id emit]
   (if (or (str/blank? spec) (> (count spec) max-spec-chars))
     (str "Spec must be 1–" max-spec-chars " characters.")
-    (launch-spec! spec chat-id thread-id)))
+    (launch-spec! spec chat-id thread-id emit)))
 
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
-   usage. Otherwise delegates to launch-spec!."
-  [text chat-id thread-id]
+   usage. Otherwise delegates to launch-spec!. emit (optional) streams the
+   authoring tool calls to the requester."
+  [text chat-id thread-id emit]
   (let [trimmed (when text (str/trim text))]
     (when (and trimmed (or (str/starts-with? trimmed "/goal ") (= "/goal" trimmed)))
       (if (= "/goal" trimmed)
@@ -314,7 +318,7 @@ Do NOT run the goal. Write files only.")
         (let [spec (str/trim (subs trimmed 5))]
           (if (or (str/blank? spec) (> (count spec) max-spec-chars))
             (str "Spec must be 1–" max-spec-chars " characters.")
-            (dispatch-spec! spec chat-id thread-id)))))))
+            (dispatch-spec! spec chat-id thread-id emit)))))))
 
 (def build-verbs
   "First-word production verbs that force the goal loop (owner directive
@@ -340,5 +344,5 @@ Do NOT run the goal. Write files only.")
 (defn route-build-request!
   "Auto-route a plain build-verb message into the goal loop. The FULL text
    is the spec — no /goal prefix. Same honest guard, same launch path."
-  [text chat-id thread-id]
-  (dispatch-spec! (str/trim (or text "")) chat-id thread-id))
+  [text chat-id thread-id emit]
+  (dispatch-spec! (str/trim (or text "")) chat-id thread-id emit))

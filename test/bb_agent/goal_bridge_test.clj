@@ -98,19 +98,19 @@
 
 (deftest handle-request-test
   (testing "non-goal text → nil"
-    (is (nil? (bridge/handle-request! "hello there" 1 2))))
+    (is (nil? (bridge/handle-request! "hello there" 1 2 nil))))
   (testing "bare /goal → usage"
-    (is (str/includes? (bridge/handle-request! "/goal" 1 2) "Usage:")))
+    (is (str/includes? (bridge/handle-request! "/goal" 1 2 nil) "Usage:")))
   (testing "/goals is not hijacked by the /goal seam"
-    (is (nil? (bridge/handle-request! "/goals" 1 2))))
+    (is (nil? (bridge/handle-request! "/goals" 1 2 nil))))
   (testing "active run → refusal naming it"
     (let [pid (live-pid)]
       (spit bridge/active-file (pr-str {:pid pid :name "busy-goal"}))
-      (is (str/includes? (bridge/handle-request! "/goal build x" 1 2) "busy-goal"))
+      (is (str/includes? (bridge/handle-request! "/goal build x" 1 2 nil) "busy-goal"))
       (p/shell {:continue true} "kill" (str pid))))
   (testing "blank spec → usage (a trimmed blank IS bare /goal)"
-    (is (str/includes? (bridge/handle-request! "/goal    " 1 2) "Usage:"))
-    (is (str/includes? (bridge/handle-request! (str "/goal " (apply str (repeat 500 "x"))) 1 2)
+    (is (str/includes? (bridge/handle-request! "/goal    " 1 2 nil) "Usage:"))
+    (is (str/includes? (bridge/handle-request! (str "/goal " (apply str (repeat 500 "x"))) 1 2 nil)
                        "characters")))
   (testing "authoring failure envelope: a turn that writes an invalid config
             surfaces the validator's verdict, never launches"
@@ -119,7 +119,7 @@
                                      (fs/create-dirs d)
                                      (spit (str d "/project.edn")
                                            "{:name \"bad\" :workdir \".\"}")))]
-      (let [reply (bridge/handle-request! "/goal build something nice" 7 9)]
+      (let [reply (bridge/handle-request! "/goal build something nice" 7 9 nil)]
         (is (str/includes? reply "🚫 Goal authoring failed"))
         (is (not (.exists (io/file bridge/active-file))))))))
 
