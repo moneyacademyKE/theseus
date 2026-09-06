@@ -224,7 +224,7 @@
         memory-matches (if shared? [] (memory/attach-memories prompt))
         semantic-ctx (when-not shared?
                        (semantic-memory/attach-context prompt cfg))
-        brain-ctx (brain/load-brain)
+        brain-ctx (brain/load-brain-context)
         skills-ctx (skill/skills-summary)]
     (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
                                       (history-messages cfg id))
