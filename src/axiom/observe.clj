@@ -21,7 +21,7 @@
   [raw parse-type]
   (case (or parse-type :string)
     :int        (try (Long/parseLong (first (re-seq #"-?\d+" raw)))
-                     (catch Exception _ 0))
+                     (catch Exception _ nil))
     :string     raw
     :bool       (= (str/lower-case raw) "true")
     :lines      (count (remove str/blank? (str/split-lines raw)))
