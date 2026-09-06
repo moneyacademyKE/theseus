@@ -1,4 +1,7 @@
 {:paths ["src" "test"]
+ :pods {org.babashka/go-sqlite3 {:path "/Users/moe/theseus/.pods/pod-babashka-go-sqlite3"}
+        org.babashka/buddy {:version "0.3.4"}
+        org.babashka/fswatcher {:version "0.0.7"}}
  :tasks
  {agent {:doc "Run one agent turn. Usage: bb agent \"say pong\""
          :requires ([bb-agent.cli :as cli])
