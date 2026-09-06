@@ -3,12 +3,12 @@
             [babashka.process :refer [sh]]
             [clojure.test :as t :refer [deftest is testing]]))
 
-(def ^:private kondo "/Users/moe/theseus/.tools/bin/clj-kondo")
+(def ^:private kondo (or (System/getenv "KONDO_BIN") "../.tools/bin/clj-kondo"))
 
 (defn- lint
   "Run bb lint against a path; returns exit code."
   [path]
-  (-> (sh {:dir "/Users/moe/theseus/theseus" :continue true}
+  (-> (sh {:dir "." :continue true}
           "bb" "lint" (str path))
       :exit))
 

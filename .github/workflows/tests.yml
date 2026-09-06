@@ -36,5 +36,17 @@ jobs:
       - name: Set up Babashka
         run: curl -s https://raw.githubusercontent.com/babashka/babashka/master/install | sudo bash
 
+      - name: Install pods and clj-kondo (linux)
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/../.pods"
+          curl -sL https://github.com/babashka/pod-babashka-go-sqlite3/releases/download/v0.3.13/pod-babashka-go-sqlite3-0.3.13-linux-amd64.zip -o /tmp/go-sqlite3.zip
+          unzip -o /tmp/go-sqlite3.zip -d /tmp/go-sqlite3
+          find /tmp/go-sqlite3 -name 'pod-babashka-go-sqlite3' -exec mv {} "${GITHUB_WORKSPACE}/../.pods/pod-babashka-go-sqlite3" \;
+          chmod +x "${GITHUB_WORKSPACE}/../.pods/pod-babashka-go-sqlite3"
+          curl -sL https://github.com/clj-kondo/clj-kondo/releases/download/v2026.08.04/clj-kondo-2026.08.04-linux-static-amd64.zip -o /tmp/kondo.zip
+          unzip -o /tmp/kondo.zip -d /tmp/kondo
+          sudo mv /tmp/kondo/clj-kondo /usr/local/bin/clj-kondo
+          echo "KONDO_BIN=/usr/local/bin/clj-kondo" >> "$GITHUB_ENV"
+
       - name: Run e2e test suite
         run: bb test:e2e:all

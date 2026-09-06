@@ -1,5 +1,5 @@
 {:paths ["src" "test"]
- :pods {org.babashka/go-sqlite3 {:path "/Users/moe/theseus/.pods/pod-babashka-go-sqlite3"}
+ :pods {org.babashka/go-sqlite3 {:path "../.pods/pod-babashka-go-sqlite3"}
         org.babashka/buddy {:version "0.3.4"}
         org.babashka/fswatcher {:version "0.0.7"}}
  :tasks
@@ -10,7 +10,7 @@
            :requires ([axiom.main :as axiom-main])
            :task (apply axiom-main/-main *command-line-args*)}
      lint {:doc "clj-kondo static analysis. Usage: bb lint <file-or-dir> (default: src)"
-           :task (let [bin "/Users/moe/theseus/.tools/bin/clj-kondo"
+           :task (let [bin (or (System/getenv "KONDO_BIN") "../.tools/bin/clj-kondo")
                        target (or (first *command-line-args*) "src")]
                    (when-not (.exists (java.io.File. bin))
                      (println "clj-kondo binary missing:" bin)
