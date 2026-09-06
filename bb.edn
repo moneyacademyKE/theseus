@@ -9,16 +9,21 @@
      notify-listen {:doc "Axiom halt->Telegram listener. Usage: bb notify-listen [--port N]"
                     :requires ([bb-agent.notify-listen :as nl])
                     :task (apply nl/-main *command-line-args*)}
+     autonomy {:doc "Autonomy tier status + outcome ledger. Usage: bb autonomy | bb autonomy applied|reverted <file> [note]"
+               :requires ([bb-agent.autonomy :as au])
+               :task (apply au/-main *command-line-args*)}
      test:axiom {:doc "Run axiom goal-runner unit tests."
                  :task (shell "bb" "-m" "axiom.run-tests")}
-     test:bb-agent {:doc "Run bb_agent unit tests (notify listener, brain)."
+     test:bb-agent {:doc "Run bb_agent unit tests (notify listener, brain, autonomy)."
                     :extra-paths ["test"]
                     :requires ([clojure.test :as t]
                                [bb-agent.notify-listen-test]
-                               [bb-agent.brain-test])
+                               [bb-agent.brain-test]
+                               [bb-agent.autonomy-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
-                                             'bb-agent.brain-test)]
+                                             'bb-agent.brain-test
+                                             'bb-agent.autonomy-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
