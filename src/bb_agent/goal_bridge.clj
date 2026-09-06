@@ -158,6 +158,17 @@ Do NOT run the goal. Write files only.")
       (str/trim (:out res))
       (throw (ex-info (str "spawn failed: " (:err res)) {:exit (:exit res)})))))
 
+(defn promote-config
+  "Authored config + the bridge-owned keys: :notify (the halt transport,
+   runner-shaped) and :name (the workspace slug — the LLM must never be
+   trusted to remember bridge data). Missing :name was the #7 failure:
+   the validator demanded it, the repair round misread the error."
+  [authored name]
+  (let [secret (:hmac-secret (:notify (config/load-config)))
+        notify (merge {:type :http :url "http://127.0.0.1:7787/halt"}
+                      (when secret {:hmac-secret secret}))]
+    (assoc authored :name name :notify notify)))
+
 (defn launch!
   "Promote project.edn to config.edn with the bridge-injected :notify block
    (the authored file deliberately carries no secrets — the fence forbids
@@ -167,16 +178,10 @@ Do NOT run the goal. Write files only.")
   [name chat-id thread-id]
   (let [ws (str goals-root "/" name)
         authored (axiom-config/load-config (str ws "/project.edn"))
-        ;; the RUNNER's notify shape (axiom.notify posts EDN to the halt
-        ;; listener); the runtime config's :notify is the LISTENER's own
-        ;; binding shape — they share a key but not a schema
-        secret (:hmac-secret (:notify (config/load-config)))
-        notify (merge {:type :http :url "http://127.0.0.1:7787/halt"}
-                      (when secret {:hmac-secret secret}))
         cfg-path (str ws "/config.edn")
         log-path (str ws "/run.log")
         repo (str (fs/cwd))
-        _ (spit cfg-path (pr-str (assoc authored :notify notify)))
+        _ (spit cfg-path (pr-str (promote-config authored name)))
         ;; baseline commit: the runner's pre-act checkpoint tags HEAD, and a
         ;; rollback resets to this commit — with authored files tracked, a
         ;; rollback genuinely reverts an act's outputs instead of no-opping

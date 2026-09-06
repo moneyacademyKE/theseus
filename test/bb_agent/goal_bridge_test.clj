@@ -183,3 +183,12 @@
   (testing ":goal-auto-route false is the kill-switch"
     (with-redefs [config/load-config (constantly {:goal-auto-route false})]
       (is (not (bridge/build-intent? "build a thing"))))))
+
+(deftest promote-config-test
+  (with-redefs [config/load-config (constantly {:notify {:hmac-secret "s3cr3t"}})]
+    (let [cfg (bridge/promote-config {:goal {:op := :ref :x :value 1}} "my-slug")]
+      (is (= "my-slug" (:name cfg)) "bridge injects its own slug as :name")
+      (is (= "http://127.0.0.1:7787/halt" (-> cfg :notify :url)) "runner-shaped notify")
+      (is (= "s3cr3t" (-> cfg :notify :hmac-secret)) "secret rides from runtime config"))
+    (let [cfg (bridge/promote-config {:name "llm-guess" :goal {}} "bridge-slug")]
+      (is (= "bridge-slug" (:name cfg)) "bridge data wins over anything the LLM wrote"))))
