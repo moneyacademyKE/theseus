@@ -393,6 +393,21 @@
         (notify-turn-failure! telegram-cfg (get-in primary [:chat :id])
                               (group/topic-id primary) (:message_id primary) e)))))
 
+(defn- mark-done!
+  "Per-unit durability ledger, written AFTER the unit dispatches (audit H1).
+   seen is the dedupe set, offset is the getUpdates confirmation. Turn
+   handlers own their errors (notify-turn-failure!), so done here means the
+   handler ran — a crash before this line costs a redelivered update,
+   never a silently lost one."
+  [seen processed updates]
+  (when (seq updates)
+    (let [last-id (-> updates last :update_id)]
+      (doseq [u updates]
+        (swap! seen conj (:update_id u))
+        (swap! processed inc))
+      (state/save-seen! @seen)
+      (state/save-offset! (inc last-id)))))
+
 (defn poll-once! []
   (let [cfg (config/load-config)
         telegram-cfg (:telegram cfg)
@@ -403,12 +418,10 @@
         {:keys [updates conflict?]} (get-updates telegram-cfg)
         seen (atom (state/load-seen))
         processed (atom 0)]
+    ;; Ledger writes happen per-unit AFTER dispatch (audit H1) — never as a
+    ;; pre-pass. Advancing the offset before the turns run meant a crash
+    ;; mid-dispatch silently lost every unprocessed update.
     (let [fresh (remove #(contains? @seen (:update_id %)) updates)]
-      (doseq [update fresh]
-        (swap! seen conj (:update_id update))
-        (state/save-seen! @seen)
-        (state/save-offset! (inc (:update_id update)))
-        (swap! processed inc))
       ;; Dispatch in update order: reactions and edits land as notes for the
       ;; NEXT turn, not one that already ran. Consecutive message runs still
       ;; batch as albums.
@@ -431,13 +444,15 @@
                                   :size (or (:group-context-size telegram-cfg) 30))))))
             (if (:album? batch)
               (process-album! cfg bot batch)
-              (process-message! cfg bot (:message (first (:updates batch))))))
+              (process-message! cfg bot (:message (first (:updates batch)))))
+            (mark-done! seen processed (:updates batch)))
           (doseq [u chunk]
             (case (media/update-kind u)
               :edited (handle-edited! cfg bot (media/edited-message u))
               :reaction (handle-reaction! cfg (:message_reaction u))
               (when (:callback_query u)
-                (approval-ui/handle-callback! cfg u)))))))
+                (approval-ui/handle-callback! cfg u)))
+            (mark-done! seen processed [u])))))
     {:updates @processed :conflict? conflict?}))
 
 (defn poll-loop!
