@@ -41,7 +41,9 @@
           r (try (json/parse-string (:out res) true) (catch Exception _ nil))]
       (spit (str ws "/watch.log")
             (str (java.util.Date.) " " method " ok=" (:ok r)
-                 " msg=" (get-in r [:result :message_id]) "\n")
+                 " res=" (or (get-in r [:result :message_id])
+                             (:description r)
+                             (pr-str (subs (str (:out res)) 0 (min 120 (count (str (:out res))))))) "\n")
             :append true)
       r)))
 
@@ -73,11 +75,21 @@
     (str "🎯 goal `" name "`: " verdict
          (when world (str "\nworld " world)))))
 
-(let [[name chat-id thread-id pid] *command-line-args*
+(let [args (if-let [f (first *command-line-args*)]
+             (try (edn/read-string (slurp f))
+                  (catch Exception _ nil))
+             nil)
+      ;; args arrive as an EDN file (launch! writes watch-args.edn) — never
+      ;; shell-joined: an empty thread-id used to collapse the argv and the
+      ;; script read the PID as the thread ("message thread not found")
+      {:keys [name chat-id thread-id pid]} (if (map? args) args {})
       ws (str (home) "/goals/" name)
       run-log (str ws "/run.log")
       active (str (home) "/goals/active.edn")
       token (bot-token)]
+  (when-not (map? args)
+    (spit (str (home) "/goals/.watch-last-error")
+          (str "bad watcher args: " (pr-str *command-line-args*))))
   (if (not token)
     (spit (str ws "/watch.err") "no telegram token; watcher ran silent")
     (loop [i 0, seen 0, msg-id nil]

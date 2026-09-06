@@ -188,8 +188,12 @@ Do NOT run the goal. Write files only.")
         _ (p/shell {:dir ws :out :string :err :string} "git" "add" "-A")
         _ (p/shell {:dir ws :out :string :err :string} "git" "commit" "-q" "-m" "baseline: authored project")
          pid (spawn-detached! repo (str "bb goal " cfg-path " > " log-path " 2>&1"))
+        ;; watcher args ride an EDN file — shell-joining them let an empty
+        ;; thread-id collapse argv so the script read the PID as the thread
+        _ (spit (str ws "/watch-args.edn")
+                (pr-str {:name name :chat-id chat-id :thread-id thread-id :pid pid}))
         _ (spit active-file (pr-str {:pid (parse-long pid) :name name}))
-        watch-args (str/join " " [name (str chat-id) (str (or thread-id "")) pid])]
+        watch-args (str ws "/watch-args.edn")]
     (spawn-detached! repo (str "bb scripts/goal_watch.bb " watch-args))
     pid))
 
