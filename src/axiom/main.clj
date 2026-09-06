@@ -1,4 +1,3 @@
-#!/usr/bin/env bb
 (ns axiom.main
   "Axiom -- autonomous goal-fulfillment runner.
 
@@ -83,5 +82,3 @@
       (= :status command) (status! (rest args))
       (#{:pause :resume :stop} command) (control! command (rest args))
       :else (run! args))))
-
-(apply -main *command-line-args*)
