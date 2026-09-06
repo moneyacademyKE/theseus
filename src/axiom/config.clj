@@ -11,6 +11,26 @@
 
 (def ^:private required-keys [:name :observers :goal :act])
 
+(def ^:private path-keys
+  "Config values naming filesystem paths. A relative value resolves against
+  the directory containing the config file, so a config means the same thing
+  from any invoking cwd (2026-09-06 W2)."
+  [:workdir :lock :log-dir])
+
+(defn anchor-paths
+  "Resolve relative values of `path-keys` in `cfg` against the parent dir of
+  `cfg-file`. Absolute values and absent keys pass through untouched. Pure."
+  [cfg cfg-file]
+  (let [base (-> cfg-file .getAbsoluteFile .getParentFile .getAbsolutePath)]
+    (reduce (fn [cfg k]
+              (let [v (get cfg k)
+                    f (some-> v io/file)]
+                (if (and f (not (.isAbsolute f)))
+                  (assoc cfg k (str (io/file base v)))
+                  cfg)))
+            cfg
+            path-keys)))
+
 (defn- harness-model-errors
   [cfg]
   (let [acts (cond
@@ -132,7 +152,7 @@
   (let [f (io/file path)]
     (when-not (.exists f)
       (throw (ex-info (str "Config not found: " path) {:path path})))
-    (let [cfg (edn/read-string (slurp f))]
+    (let [cfg (anchor-paths (edn/read-string (slurp f)) f)]
       (doseq [k required-keys]
         (when-not (contains? cfg k)
           (throw (ex-info (str "Config missing required key: " k)

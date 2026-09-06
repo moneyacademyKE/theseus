@@ -145,7 +145,7 @@
   (testing ":workdir resolving to the runner's own repo is rejected at load"
     (let [tmp (java.io.File/createTempFile "guard" ".edn")]
       (spit tmp (pr-str {:name "guard" :observers [] :goal :ready?
-                         :progress :ready? :act {:sh "true"} :workdir "."}))
+                         :progress :ready? :act {:sh "true"} :workdir (System/getProperty "user.dir")}))
       (is (thrown? Exception (config/load-config (.getPath tmp))))
       (.delete tmp)))
   (testing "a dedicated workdir loads fine"
@@ -155,6 +155,20 @@
                          :progress :ready? :act {:sh "true"} :workdir (.getPath ws)}))
       (is (config/load-config (.getPath tmp)))
       (.delete tmp))))
+
+(deftest load-config-anchors-relative-paths
+  (testing "relative :workdir/:lock/:log-dir resolve against the config's dir, not the cwd"
+    (let [dir      (.getParentFile (java.io.File/createTempFile "anchor" ".edn"))
+          cfg-file (java.io.File/createTempFile "anchor" ".edn" dir)]
+      (spit cfg-file (pr-str {:name "anchor" :observers [] :goal :ready?
+                              :progress :ready? :act {:sh "true"}
+                              :workdir "work" :lock ".axiom.lock" :log-dir "logs"}))
+      (let [cfg  (config/load-config (.getPath cfg-file))
+            base (.getPath dir)]
+        (is (= (str base "/work") (:workdir cfg)))
+        (is (= (str base "/.axiom.lock") (:lock cfg)))
+        (is (= (str base "/logs") (:log-dir cfg))))
+      (.delete cfg-file))))
 
 (def base-cfg
   {:goal        {:op :>= :ref :level-count :value 3}
