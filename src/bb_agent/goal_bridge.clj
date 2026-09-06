@@ -47,10 +47,15 @@
 (defn scaffold!
   "Create the workspace with git initialized and a bridge identity — the
    runner checkpoints and rolls back via git, so the initial commit exists
-   before the first act."
+   before the first act. Schema references are COPIED into the workspace:
+   the authoring turn's file tools are jailed to its cwd (learned live-fire)."
   [name]
-  (let [ws (str goals-root "/" name)]
-    (fs/create-dirs ws)
+  (let [ws (str goals-root "/" name)
+        refs (str ws "/references")]
+    (fs/create-dirs refs)
+    (doseq [r ["normalize.config.edn" "usage-stats.config.edn"]]
+      (when (fs/exists? (str goals-root "/" r))
+        (fs/copy (str goals-root "/" r) (str refs "/" r) {:replace-existing true})))
     (p/shell {:dir ws :out :string :err :string} "git" "init" "-q")
     (p/shell {:dir ws :out :string :err :string} "git" "config" "user.email" "goal-bridge@theseus.local")
     (p/shell {:dir ws :out :string :err :string} "git" "config" "user.name" "goal-bridge")
@@ -99,8 +104,8 @@ Do NOT run the goal. Write files only.")
    problems string."
   [name ws spec]
   (let [cfg-path (str ws "/config.edn")
-        refs [(str goals-root "/normalize.config.edn")
-              (str goals-root "/usage-stats.config.edn")]]
+        refs [(str ws "/references/normalize.config.edn")
+              (str ws "/references/usage-stats.config.edn")]]
     (core/run-turn! (author-cfg name ws)
                     (format author-prompt ws (first refs) (second refs) ws
                             (subs name 0 (min 12 (count name))) spec))
