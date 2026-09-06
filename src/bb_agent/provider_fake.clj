@@ -89,6 +89,13 @@
                         :approval/policy :auto-all
                         :tool/args {:path (subs prompt (count "try approved document "))}}]}
 
+      (and (str/starts-with? prompt "try approved launch_goal ")
+           (nil? tool-results))
+      {:role :assistant
+       :tool/requests [{:tool/name "launch_goal"
+                        :approval/policy :auto-all
+                        :tool/args {"spec" (subs prompt (count "try approved launch_goal "))}}]}
+
       tool-results
       {:role :assistant
        :content (str "tool-results=" (pr-str tool-results))}

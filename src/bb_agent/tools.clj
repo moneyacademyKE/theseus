@@ -60,4 +60,12 @@
       :properties {"path" {:type "string" :description "Local file path to send"}
                    "caption" {:type "string" :description "Optional caption (max 1024 characters)"}
                    "photo?" {:type "boolean" :description "Send as photo instead of document (optional)"}}
-      :required ["path"]}}}])
+      :required ["path"]}}}
+   {:type "function"
+    :function
+    {:name "launch_goal"
+     :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
+     :parameters
+     {:type "object"
+      :properties {"spec" {:type "string" :description "What to build, stated as an inspectable end state: the files that must exist and the checks that must pass"}}
+      :required ["spec"]}}}])

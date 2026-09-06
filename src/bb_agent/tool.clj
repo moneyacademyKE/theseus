@@ -3,6 +3,7 @@
             [bb-agent.rtk :as rtk]
             [bb-agent.tool.common :as common]
             [bb-agent.tool.file :as file]
+            [bb-agent.tool.goal :as goal]
             [bb-agent.tool.process :as process]
             [bb-agent.tool.telegram :as telegram]))
 
@@ -11,7 +12,7 @@
 (def deny-result common/deny-result)
 
 (def ^:private handlers
-  (merge file/handlers process/handlers telegram/handlers))
+  (merge file/handlers process/handlers telegram/handlers goal/handlers))
 
 (defn execute-tool-request [request]
   (let [{:tool/keys [name args]} request
@@ -43,6 +44,11 @@
                    (and (map? (:telegram/send-context cfg))
                         (= "telegram_send_file" (:tool/name request)))
                    (assoc-in [:tool/args :telegram-session]
+                             (select-keys (:telegram/send-context cfg)
+                                          [:chat-id :thread-id]))
+                   (and (map? (:telegram/send-context cfg))
+                        (= "launch_goal" (:tool/name request)))
+                   (assoc-in [:tool/args :goal/send-context]
                              (select-keys (:telegram/send-context cfg)
                                           [:chat-id :thread-id])))
          approver (:approval/ask cfg)

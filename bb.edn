@@ -29,11 +29,13 @@
                     :requires ([clojure.test :as t]
                                [bb-agent.notify-listen-test]
                                [bb-agent.goal-bridge-test]
+                               [bb-agent.tool-goal-test]
                                [bb-agent.brain-test]
                                [bb-agent.autonomy-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
+                                             'bb-agent.tool-goal-test
                                              'bb-agent.brain-test
                                              'bb-agent.autonomy-test)]
                                  (when (pos? (+ fail error))

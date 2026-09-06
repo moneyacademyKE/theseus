@@ -212,6 +212,7 @@
         ;; freedoms granted by the loosening
         (is (= :allow (verdict "shell" {:cmd "sed -i '' s/a/b/ f.txt"})) "shell mutations")
         (is (= :allow (verdict "write_file" {:path "brain/00-soul.md"})) "self-modification")
+        (is (= :allow (verdict "launch_goal" {})) "goal loop reachable from normal prompts (v5.1)")
         ;; durable floor
         (is (= :deny (verdict "shell" {:cmd "rm -rf x"})) "rm floor")
         (is (= :deny (verdict "shell" {:cmd "python3 x.py"})) "python floor")

@@ -260,34 +260,41 @@ Do NOT run the goal. Write files only.")
          "\n"
          (str/join "\n" (map progress-line shown)))))
 
+(defn launch-spec!
+  "Shared launch path for /goal and the launch_goal tool: scaffold, author
+   (validator as judge), launch detached + watcher, announcement out. The
+   caller's chat/thread ids route watcher updates to the requesting topic,
+   so a normal prompt and the slash command behave identically."
+  [spec chat-id thread-id]
+  (if-let [active (active-run)]
+    (str "⏳ Goal `" (:name active) "` is already running — one at a time. /goals for status.")
+    (let [name (slugify spec)
+          scaffolded (try
+                       {:ws (scaffold! name)}
+                       (catch Exception e
+                         {:err (str "workspace error: " (.getMessage e))}))]
+      (if-let [scaffold-err (:err scaffolded)]
+        (str "🚫 Goal failed — " scaffold-err)
+        (let [ws (:ws scaffolded)
+              err (try
+                    (if-let [verr (author-with-validation! name ws spec)]
+                      verr
+                      (do (launch! name chat-id thread-id) nil))
+                    (catch Exception e
+                      (str "authoring error: " (.getMessage e))))]
+          (if err
+            (str "🚫 Goal authoring failed — " err)
+            (str "🚀 Goal `" name "` launched — outcome lands here when it fulfills or halts.")))))))
+
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
-   usage. Active run → refusal. Otherwise: scaffold, author (validator as
-   judge), launch detached + watcher, return the announcement string."
+   usage. Otherwise delegates to launch-spec!."
   [text chat-id thread-id]
   (let [trimmed (when text (str/trim text))]
     (when (and trimmed (or (str/starts-with? trimmed "/goal ") (= "/goal" trimmed)))
       (if (= "/goal" trimmed)
         "Usage: /goal <what to build> — I author the goal project, run it supervised, and the outcome lands here."
-        (if-let [active (active-run)]
-          (str "⏳ Goal `" (:name active) "` is already running — one at a time. /goals for status.")
-          (let [spec (str/trim (subs trimmed 5))]
-            (if (or (str/blank? spec) (> (count spec) max-spec-chars))
-              (str "Spec must be 1–" max-spec-chars " characters.")
-              (let [name (slugify spec)
-                    scaffolded (try
-                                 {:ws (scaffold! name)}
-                                 (catch Exception e
-                                   {:err (str "workspace error: " (.getMessage e))}))]
-                (if-let [scaffold-err (:err scaffolded)]
-                  (str "🚫 Goal failed — " scaffold-err)
-                  (let [ws (:ws scaffolded)
-                        err (try
-                              (if-let [verr (author-with-validation! name ws spec)]
-                                verr
-                                (do (launch! name chat-id thread-id) nil))
-                              (catch Exception e
-                                (str "authoring error: " (.getMessage e))))]
-                    (if err
-                      (str "🚫 Goal authoring failed — " err)
-                      (str "🚀 Goal `" name "` launched — outcome lands here when it fulfills or halts."))))))))))))
+        (let [spec (str/trim (subs trimmed 5))]
+          (if (or (str/blank? spec) (> (count spec) max-spec-chars))
+            (str "Spec must be 1–" max-spec-chars " characters.")
+            (launch-spec! spec chat-id thread-id)))))))
