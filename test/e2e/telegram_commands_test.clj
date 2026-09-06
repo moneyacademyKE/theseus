@@ -150,3 +150,18 @@
             (str "/goals reply was: " (pr-str goals-reply)))
         (finally
           (fs/delete-tree home))))))
+
+(deftest build-verbs-auto-route-to-goal
+  (testing "a plain build-verb message routes to the goal loop, not the LLM"
+    (let [{:keys [home calls]} (run-poll [(dm-message 1 60 "Build a hello world script")
+                                          (dm-message 2 61 "tell me a joke")])
+          [build-reply joke-reply] (replies calls)]
+      (try
+        (is (str/includes? (or build-reply "") "🚫 Goal authoring failed")
+            "build verb → goal path (fake provider authors, validator judges)")
+        (is (not (str/includes? (or build-reply "") "fake:"))
+            "never an inline LLM answer for build verbs")
+        (is (str/includes? (or joke-reply "") "fake:")
+            "non-build text still gets the normal inline turn")
+        (finally
+          (fs/delete-tree home))))))

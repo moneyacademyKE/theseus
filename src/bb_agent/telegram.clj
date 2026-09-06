@@ -141,17 +141,20 @@
 
 (defn- chat-command
   "Session-level commands answered without an LLM turn. /goal (with args)
-   also routes here so it never reaches the LLM or the skill matcher."
+   also routes here so it never reaches the LLM or the skill matcher.
+   Build-verb messages auto-route to the goal loop too (owner directive
+   2026-09-06) — deterministic, never an LLM judgment."
   [text]
   (if (and text (let [t (str/trim text)]
                   (or (str/starts-with? t "/goal ") (= "/goal" t))))
     :goal-request
-    (case text
+    (or (case text
     ("/new" "/reset") :new
     ("/usage" "/stats") :usage
     "/autonomy" :autonomy
     "/goals" :goals
-    nil)))
+    nil)
+      (when (goal-bridge/build-intent? text) :build-goal))))
 
 (defn- skill-command
   "If text starts with /<skill-name>, returns composed prompt with skill body or nil."
@@ -169,6 +172,7 @@
   [cmd session-id text chat-id thread-id]
   (case cmd
     :goal-request (goal-bridge/handle-request! text chat-id thread-id)
+    :build-goal   (goal-bridge/route-build-request! text chat-id thread-id)
     :goals (or (when-let [lines (goal-bridge/list-goals)]
                  (str "🎯 Goals:\n" (str/join "\n" lines)))
                "No goals yet — /goal <what to build> launches one.")

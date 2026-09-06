@@ -286,6 +286,14 @@ Do NOT run the goal. Write files only.")
             (str "🚫 Goal authoring failed — " err)
             (str "🚀 Goal `" name "` launched — outcome lands here when it fulfills or halts.")))))))
 
+(defn- dispatch-spec!
+  "Shared spec guard for both entry points: blank/length checks, then the
+   launch. Returns the user-facing reply string either way."
+  [spec chat-id thread-id]
+  (if (or (str/blank? spec) (> (count spec) max-spec-chars))
+    (str "Spec must be 1–" max-spec-chars " characters.")
+    (launch-spec! spec chat-id thread-id)))
+
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
    usage. Otherwise delegates to launch-spec!."
@@ -297,4 +305,31 @@ Do NOT run the goal. Write files only.")
         (let [spec (str/trim (subs trimmed 5))]
           (if (or (str/blank? spec) (> (count spec) max-spec-chars))
             (str "Spec must be 1–" max-spec-chars " characters.")
-            (launch-spec! spec chat-id thread-id)))))))
+            (dispatch-spec! spec chat-id thread-id)))))))
+
+(def build-verbs
+  "First-word production verbs that force the goal loop (owner directive
+   2026-09-06: build verbs always goal). Data — extend here, no code change."
+  #{"build" "create" "make" "generate" "implement" "scaffold" "develop"})
+
+(def ^:private build-stop-phrases
+  "Verb-openers that are conversation management, not production requests."
+  #{"make sure" "make it" "make that" "make this" "make them"})
+
+(defn build-intent?
+  "Deterministic gate: true when text's FIRST word is a build verb (word
+   boundary, case-insensitive) and the :goal-auto-route kill-switch in
+   config.edn is not false (default: on). Stop phrases lose. The LLM never
+   decides whether a build goes supervised — that decision is data."
+  [text]
+  (when-let [t (some-> text str/trim str/lower-case)]
+    (when (get (config/load-config) :goal-auto-route true)
+      (and (not (some #(str/starts-with? t %) build-stop-phrases))
+           (some (fn [v] (or (= t v) (str/starts-with? t (str v " "))))
+                 build-verbs)))))
+
+(defn route-build-request!
+  "Auto-route a plain build-verb message into the goal loop. The FULL text
+   is the spec — no /goal prefix. Same honest guard, same launch path."
+  [text chat-id thread-id]
+  (dispatch-spec! (str/trim (or text "")) chat-id thread-id))

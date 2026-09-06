@@ -1,6 +1,7 @@
 (ns bb-agent.goal-bridge-test
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.goal-bridge :as bridge]
             [clojure.edn :as edn]
@@ -169,3 +170,16 @@
         (is (= :act (:event (first evs))))
         (is (= :done (:event (second evs))))))
     (is (nil? (bridge/ledger-events (str *tmp* "/no-such-ws"))))))
+
+(deftest build-intent-test
+  (testing "first-word production verbs route; everything else doesn't"
+    (doseq [s ["Build a todo CLI" "build me a snake game" "CREATE x"
+               "make a small lib" "Generate the report module" "build"]]
+      (is (bridge/build-intent? s) (str "should route: " s)))
+    (doseq [s ["make sure the tests pass" "make it faster"
+               "what should I build today?" "fix the bug" "building stuff"
+               "hi" "" nil]]
+      (is (not (bridge/build-intent? s)) (str "should NOT route: " (pr-str s)))))
+  (testing ":goal-auto-route false is the kill-switch"
+    (with-redefs [config/load-config (constantly {:goal-auto-route false})]
+      (is (not (bridge/build-intent? "build a thing"))))))
