@@ -190,3 +190,85 @@
        (is (false? (:turn/ok turn)) "a stuck reasoner still loses the turn")
        (is (str/includes? (:assistant/final turn) "reasoning without answering")
            "the death message names the real cause")))))
+
+;;; ── Vision chain + phantom text-call detection (v0.5.0 gap port) ──
+
+(deftest vision-chain-transforms-only-image-turns
+  (let [chain [{:provider "p1" :model "v1"} {:provider "p2" :model "v2"}]
+        base {:provider :main :model "m" :provider/fallbacks [{:provider "fb" :model "g"}]}]
+    (is (= base (#'core/vision-chain-cfg base)) "no images: unchanged")
+    (is (= (assoc base :user/images ["x"])
+           (#'core/vision-chain-cfg (assoc base :user/images ["x"])))
+        "images but no chain: unchanged")
+    (let [out (#'core/vision-chain-cfg (assoc base :user/images ["x"] :vision-chain chain))]
+      (is (= :p1 (:provider out)) "chain head becomes the primary provider")
+      (is (= "v1" (:model out)) "chain head's model serves first")
+      (is (= [{:provider :p2 :model "v2"} {:provider "fb" :model "g"}]
+             (:provider/fallbacks out))
+          "chain tail prepends the generic fallbacks"))))
+
+(deftest vision-chain-advances-on-head-failure
+  (with-temp-home
+   (fn []
+     (let [requests (atom [])
+           turn (with-redefs [provider/complete
+                              (fn [_provider request]
+                                (swap! requests conj request)
+                                (if (= "v1" (:model request))
+                                  (throw (ex-info "vision head is down" {:status 503}))
+                                  {:content "saw it"}))]
+                  (core/run-turn!
+                   {:provider :fake-vh :model "m"
+                    :session/id (str "vchain-" (rand-int 1000000))
+                    :user/images ["img"]
+                    :vision-chain [{:provider "fake-vh" :model "v1"}
+                                   {:provider "fake-vh2" :model "v2"}]
+                    :provider/fallbacks [{:provider "fake-fb" :model "g"}]
+                    :retry {:max-attempts 1 :sleep (fn [_])}
+                    :react-ack false}
+                   "what is in this image?"))]
+       (is (= ["v1" "v2"] (map :model @requests))
+           "the dead vision head is tried once, then the chain advances")
+       (is (= "saw it" (:assistant/final turn)))
+       (is (= :fake-vh2 (:fallback/served-by turn))
+           "the turn names the step that actually served")
+       (is (= :fake-vh (get-in turn [:fallback/tried 0 :fallback/provider]))
+           "the tried ledger names the dead head")))))
+
+(deftest phantom-tool-text-detection
+  (is (= "write_file" (#'core/phantom-tool-text "write_file")))
+  (is (= "write_file" (#'core/phantom-tool-text "write_file({\"path\":\"x\"})")))
+  (is (= "shell" (#'core/phantom-tool-text "shell {\"command\": \"ls\"}")))
+  (is (nil? (#'core/phantom-tool-text "I will use write_file to save it"))
+      "prose mentioning a tool is not a phantom call")
+  (is (nil? (#'core/phantom-tool-text nil))))
+
+(defn- drive-phantom-turn!
+  "Model answers with `script` contents in order; returns [turn requests]."
+  [script]
+  (let [requests (atom [])
+        rounds (atom 0)]
+    (with-redefs [provider/complete
+                  (fn [_provider request]
+                    (swap! requests conj (:messages request))
+                    {:content (nth script (min @rounds (dec (count script))))
+                     :round (swap! rounds inc)})]
+      [(core/run-turn! {:provider :fake
+                        :model "m"
+                        :session/id (str "phantom-test-" (rand-int 1000000))
+                        :react-ack false}
+                       "test prompt")
+       @requests])))
+
+(deftest phantom-text-call-gets-nudged-then-answered
+  (let [[turn requests] (drive-phantom-turn! ["write_file" "here is the real answer"])]
+    (is (= "here is the real answer" (:assistant/final turn))
+        "the turn survives the phantom and lands the real answer")
+    (is (= 1 (:turn/phantom-nudged turn)) "the nudge is recorded on the turn")
+    (is (str/includes? (all-text requests) "not a tool call")
+        "the nudge reached the model as a user message")))
+
+(deftest persistent-phantom-text-is-eventually-accepted
+  (let [[turn _] (drive-phantom-turn! ["write_file"])]
+    (is (= "write_file" (:assistant/final turn))
+        "past the threshold, the text is accepted as final — no infinite nudge loop")))

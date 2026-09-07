@@ -11,6 +11,7 @@
             [bb-agent.session :as session]
             [bb-agent.skill :as skill]
             [bb-agent.tool :as tool]
+            [bb-agent.tools :as tools]
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
 
@@ -253,17 +254,70 @@
                                        :ok (:turn/ok completed true)}))
     completed))
 
+(defn- vision-chain-cfg
+  "Image turns with :vision-chain configured: each entry {:provider .. :model ..}
+   becomes a chain step, resolved against :providers like any fallback entry.
+   The head serves as primary; the tail prepends the generic :provider/fallbacks.
+   Resolution is per-request — a vision model's death advances the chain instead
+   of killing the turn. No chain (or no images): cfg unchanged, the legacy
+   single :vision-model path."
+  [cfg]
+  (let [chain (:vision-chain cfg)]
+    (if (and (seq (:user/images cfg)) (seq chain))
+      (let [entries (mapv (fn [{:keys [provider model]}]
+                            {:provider (keyword provider) :model model})
+                          chain)
+            head (first entries)]
+        (-> cfg
+            (assoc :provider (:provider head)
+                   :model (:model head)
+                   :provider/fallbacks (into (vec (rest entries))
+                                             (:provider/fallbacks cfg)))))
+      cfg)))
+
+(def ^:private default-phantom-nudge-threshold 2)
+
+(defn- phantom-tool-text
+  "The tool name when trimmed content IS a bare tool call — exactly a known
+   tool name (`write_file`) or a call shape (`write_file(...)`,
+   `write_file {...}`). Prose mentioning tools never matches: a false
+   positive would nudge a legitimate final answer."
+  [content]
+  (when (string? content)
+    (let [t (str/trim content)]
+      (some (fn [d]
+              (let [name (get-in d [:function :name])]
+                (when (and name
+                           (or (= t name)
+                               (and (str/starts-with? t (str name "("))
+                                    (str/ends-with? t ")"))
+                               (and (str/starts-with? t (str name " {"))
+                                    (str/ends-with? t "}"))))
+                  name)))
+            tools/definitions))))
+
+(defn- phantom-nudge-message [tool-name streak threshold]
+  (str "⚠️ You emitted `" tool-name "` as plain message text — that is not a tool call. "
+       "Tool calls must go through the tool channel; text shaped like a call does nothing. "
+       "Re-emit it as a proper tool call, or answer in prose if you meant to explain. "
+       "Phantom text-call " streak " of " threshold
+       " — after that, text like this is accepted as the final answer."))
+
 (defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
   (let [cfg (model/effective-config cfg)
+        cfg (vision-chain-cfg cfg)
         max-rounds (or (:max-tool-rounds cfg) default-max-tool-rounds)
         nudge-interval (:nudge-interval cfg)
         nudge-final-rounds (or (:nudge-final-rounds cfg) default-nudge-final-rounds)
         provider (:provider cfg)
         id (:session/id cfg)
         user-images (:user/images cfg)
-        model (if (and (seq user-images) (:vision-model cfg))
+        model (cond
+                (and (seq user-images) (seq (:vision-chain cfg)))
+                (:model cfg)
+                (and (seq user-images) (:vision-model cfg))
                 (:vision-model cfg)
-                (:model cfg))
+                :else (:model cfg))
         metadata (session/load-metadata id)
         cfg (-> cfg
                 (cond-> (:cwd metadata) (assoc :cwd (:cwd metadata)))
@@ -284,7 +338,8 @@
            rounds-left max-rounds
            seen-calls {}
            final-nudge-used? false
-           reasoning-streak 0]
+           reasoning-streak 0
+           phantom-streak 0]
       (when (neg? rounds-left)
         (throw (ex-info "Exceeded tool rounds" {:rounds max-rounds
                                                 :final-nudge-used? final-nudge-used?})))
@@ -360,7 +415,8 @@
                         (:fallback/tried response)
                         (assoc :fallback/tried (:fallback/tried response))
                         (:fallback/served-by response)
-                        (assoc :provider (:fallback/served-by response)))
+                        (assoc :provider (:fallback/served-by response)
+                               :fallback/served-by (:fallback/served-by response)))
                 seen-calls* (reduce (fn [m req]
                                       (update m [(:tool/name req) (canonical-args (:tool/args req))]
                                               (fnil inc 0)))
@@ -379,9 +435,30 @@
                          (if extend? nudge-final-rounds rounds-next)
                          seen-calls*
                          (or extend? final-nudge-used?)
+                         0
                          0)))
               (if-let [content (:content response)]
-                (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
+                (let [phantom (phantom-tool-text content)
+                      pthreshold (or (:phantom-nudge-threshold cfg)
+                                     default-phantom-nudge-threshold)
+                      pstreak (inc phantom-streak)]
+                  (if (and phantom (< pstreak pthreshold))
+                    ;; A tool call emitted as text: nudge, don't finish — the
+                    ;; model re-emits through the tool channel. Bounded: after
+                    ;; the threshold the text is accepted as the final answer.
+                    (recur (conj messages {:role "user"
+                                           :content (phantom-nudge-message phantom pstreak pthreshold)})
+                           turn*
+                           (dec rounds-left)
+                           seen-calls*
+                           final-nudge-used?
+                           0
+                           pstreak)
+                    (finish-turn id cfg prompt memory-matches semantic-ctx
+                                 (cond-> turn*
+                                   (pos? phantom-streak)
+                                   (assoc :turn/phantom-nudged phantom-streak))
+                                 content (:usage response))))
                 (let [streak (inc reasoning-streak)
                       rthreshold (or (:reasoning-nudge-threshold cfg)
                                      default-reasoning-nudge-threshold)]
@@ -392,6 +469,7 @@
                            (dec rounds-left)
                            seen-calls*
                            final-nudge-used?
-                           streak)
+                           streak
+                           phantom-streak)
                     (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (reasoning-death-message streak) (:usage response)))))))))))
 )
