@@ -145,9 +145,16 @@
    Build-verb messages auto-route to the goal loop too (owner directive
    2026-09-06) — deterministic, never an LLM judgment."
   [text]
-  (if (and text (let [t (str/trim text)]
-                  (or (str/starts-with? t "/goal ") (= "/goal" t))))
+  (cond
+    (and text (let [t (str/trim text)]
+                (or (str/starts-with? t "/goal ") (= "/goal" t))))
     :goal-request
+
+    (and text (let [t (str/trim text)]
+                (or (str/starts-with? t "/model ") (= "/model" t))))
+    :model
+
+    :else
     (or (case text
     ("/new" "/reset") :new
     ("/usage" "/stats") :usage
@@ -191,8 +198,29 @@
                   (when (seq by-provider) (str " (" by-provider ")"))))
     :autonomy (autonomy/report (autonomy/granted-tier)
                                (autonomy/load-ledger))
+    :model (let [cfg (config/load-config)
+                 arg (second (str/split (str/trim (or text "")) #"\s+" 2))]
+             (if (str/blank? arg)
+               (let [fallbacks (map :model (:provider/fallbacks cfg))
+                     catalog (distinct (concat [(:model cfg)] fallbacks (:models cfg)))]
+                 (str "🤖 Model: " (:model cfg)
+                      (when (:vision-model cfg) (str "\n👁 Vision: " (:vision-model cfg)))
+                      "\n\nPicker:\n"
+                      (str/join "\n"
+                                (map (fn [m] (str "• " m
+                                                  (when (= m (:model cfg)) " ← current")
+                                                  (when (some #{m} fallbacks) " (fallback)")))
+                                     catalog))
+                      "\n\n/model <provider/name> to switch — persists, next message uses it."
+                      (when-not (seq (:models cfg))
+                        "\nAdd :models [\"provider/name\" …] to config.edn to grow this list.")))
+               (if-not (str/includes? arg "/")
+                 (str "🚫 Model names look like provider/name — got: " arg ". No change.")
+                 (do (config/write-config! (assoc cfg :model arg))
+                     (str "🤖 Model switched: " (:model cfg) " → " arg
+                          "\nPersisted to config — the next message runs on it.")))))
     :skills (let [skills (skill/discover-all-skills)
-                  native "⌨️ Commands: /new /reset /usage /autonomy /goal <spec> /goals /skills"
+                  native "⌨️ Commands: /new /reset /usage /autonomy /model /goal <spec> /goals /skills"
                   lines (map (fn [{:keys [name description]}]
                                (str "• /" name " — "
                                     (let [d (str/replace (or description "") #"\s+" " ")]

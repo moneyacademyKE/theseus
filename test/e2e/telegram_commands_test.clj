@@ -189,3 +189,19 @@
             "non-build text still gets the normal inline turn")
         (finally
           (fs/delete-tree home))))))
+
+(deftest model-picker
+  (testing "/model lists current + picker; /model <name> switches and persists"
+    (let [{:keys [home calls]} (run-poll [(dm-message 1 70 "/model")
+                                          (dm-message 2 71 "/model zai/glm-5.9")
+                                          (dm-message 3 72 "/model badname")
+                                          (dm-message 4 73 "/model")])
+          [list-reply switch-reply bad-reply after-reply] (replies calls)]
+      (is (str/includes? list-reply "fake-deterministic") "list shows current model")
+      (is (str/includes? list-reply "/model <provider/name>") "list explains switching")
+      (is (str/includes? switch-reply "fake-deterministic") "switch names the old model")
+      (is (str/includes? switch-reply "zai/glm-5.9") "switch names the new model")
+      (is (str/includes? bad-reply "provider/name") "a bare name is refused with the shape it must have")
+      (is (str/includes? after-reply "zai/glm-5.9") "the switch persisted — the next /model lists the new model")
+      (let [cfg (edn/read-string (slurp (str home "/config.edn")))]
+        (is (= "zai/glm-5.9" (:model cfg)) "config.edn on disk carries the new model")))))
