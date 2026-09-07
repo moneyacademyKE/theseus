@@ -171,8 +171,10 @@
 (defn- handle-chat-command
   [cmd session-id text chat-id thread-id]
   (case cmd
-    :goal-request (goal-bridge/handle-request! text chat-id thread-id)
-    :build-goal   (goal-bridge/route-build-request! text chat-id thread-id)
+    ;; :goal-request/:build-goal are intercepted by the with-flow! branch in
+    ;; the dispatch — unreachable here, and deliberately NOT cased: the bridge
+    ;; entry points are 4-arity (they take the flow's emit), so a stray 3-arg
+    ;; call would be a silent break waiting to happen.
     :goals (or (when-let [lines (goal-bridge/list-goals)]
                  (str "🎯 Goals:\n" (str/join "\n" lines)))
                "No goals yet — /goal <what to build> launches one.")
@@ -329,18 +331,24 @@
             decision)
            {:thread-id thread-id})
           (if-let [cmd (chat-command text)]
-            (delivery/send-message!
-             telegram-cfg chat-id
-             (if (contains? #{:goal-request :build-goal} cmd)
-               (flow/with-flow! telegram-cfg chat-id thread-id
-                 (fn [emit]
-                   (case cmd
-                     :goal-request (goal-bridge/handle-request! text chat-id thread-id emit)
-                     :build-goal (goal-bridge/route-build-request! text chat-id thread-id emit)
-                     nil)))
-               (handle-chat-command cmd session-id text chat-id thread-id))
-             {:thread-id thread-id
-              :reply-to-message-id (:message_id message)})
+            (let [sent (delivery/send-message!
+                        telegram-cfg chat-id
+                        (if (contains? #{:goal-request :build-goal} cmd)
+                          (flow/with-flow! telegram-cfg chat-id thread-id
+                            (fn [emit]
+                              (case cmd
+                                :goal-request (goal-bridge/handle-request! text chat-id thread-id emit)
+                                :build-goal (goal-bridge/route-build-request! text chat-id thread-id emit)
+                                nil)))
+                          (handle-chat-command cmd session-id text chat-id thread-id))
+                        {:thread-id thread-id
+                         :reply-to-message-id (:message_id message)})]
+              ;; B2: command replies (goals/goal/usage/autonomy…) rode a
+              ;; different send path and never reached the replies ledger,
+              ;; so "did Eileen answer?" was unauditable for exactly the
+              ;; messages that matter most.
+              (state/record-reply! chat-id (:message_id message) (:message-id sent))
+              sent)
           (let [composed-text (or (skill-command text) text)
                 edit-context (or (edit-notes-context session-id) "")
                 history-context (if (and (:group-context telegram-cfg true)

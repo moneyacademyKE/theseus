@@ -82,9 +82,21 @@ Then write exactly two files:
 The project to build: %s
 Do NOT run the goal. Write files only.")
 
-(defn- author-cfg [name ws]
-  (-> (config/load-config)
-      (assoc :session/id (str "goal-author-" name) :cwd ws)))
+(defn- author-cfg
+  "Config for an authoring turn. Authoring a real project costs far more
+   rounds than chat (:max-tool-rounds 24 died mid-project live 2026-09-07),
+   so the budget is its own key: :goal/max-authoring-rounds, floor 48.
+   The approver is constant-approved: authoring turns are non-interactive,
+   so :ask would deny with no human to ask (B3) — the user pre-consented
+   by launching the goal, and the constitution still vetoes first (policy
+   :deny short-circuits before the approval gate)."
+  [name ws]
+  (let [base (config/load-config)]
+    (-> base
+        (assoc :session/id (str "goal-author-" name) :cwd ws)
+        (assoc :max-tool-rounds (max (or (:max-tool-rounds base) 8)
+                                     (or (:goal/max-authoring-rounds base) 48)))
+        (assoc :approval/ask (constantly :approved)))))
 
 (defn validate!
   "Run the runner's own validator over the authored config. Returns nil when
@@ -171,6 +183,28 @@ Do NOT run the goal. Write files only.")
                       (when secret {:hmac-secret secret}))]
     (assoc authored :name name :notify notify)))
 
+(defn- tcc-guard
+  "Desktop/Documents/Downloads are TCC-protected: launchd-spawned processes
+   get promptless denial there (proven 2026-09-06 — /bin/pwd under launchd
+   returned 'Operation not permitted'). The bridge runs in the poller's TCC
+   context, the same one the runner inherits, so an unreadable workdir here
+   is a dead run there. Refuse early with the reason (B8)."
+  [ws]
+  (let [cfg-path (str ws "/config.edn")]
+    (when (fs/exists? cfg-path)
+      (let [workdir (str (:workdir (edn/read-string (slurp cfg-path))))
+            home (System/getProperty "user.home")]
+        (when (some #(str/starts-with? workdir (str home %))
+                    ["/Desktop" "/Documents" "/Downloads"])
+          (try
+            (doall (fs/list-dir workdir))
+            nil
+            (catch Exception e
+              (str "workdir " workdir " is under a TCC-protected path and "
+                   "unreadable from the service context: " (.getMessage e)
+                   ". Move the project out of ~/Desktop, ~/Documents or "
+                   "~/Downloads — background daemons cannot be granted access."))))))))
+
 (defn launch!
   "Promote project.edn to config.edn with the bridge-injected :notify block
    (the authored file deliberately carries no secrets — the fence forbids
@@ -184,6 +218,8 @@ Do NOT run the goal. Write files only.")
         log-path (str ws "/run.log")
         repo (str (fs/cwd))
         _ (spit cfg-path (pr-str (promote-config authored name)))
+        _ (when-let [tcc-err (tcc-guard ws)]
+            (throw (ex-info tcc-err {:goal/tcc-guard true})))
         ;; baseline commit: the runner's pre-act checkpoint tags HEAD, and a
         ;; rollback resets to this commit — with authored files tracked, a
         ;; rollback genuinely reverts an act's outputs instead of no-opping
@@ -288,6 +324,7 @@ Do NOT run the goal. Write files only.")
       (if-let [scaffold-err (:err scaffolded)]
         (str "🚫 Goal failed — " scaffold-err)
         (let [ws (:ws scaffolded)
+              _ (spit (str ws "/spec.txt") spec)
               err (try
                     (if-let [verr (author-with-validation! name ws spec emit)]
                       verr
@@ -295,8 +332,48 @@ Do NOT run the goal. Write files only.")
                     (catch Exception e
                       (str "authoring error: " (.getMessage e))))]
           (if err
-            (str "🚫 Goal authoring failed — " err)
+            (str "🚫 Goal authoring failed — " err
+                 "\nWorkspace kept: `" name "` — reply /goal resume " name " to continue.")
             (str "🚀 Goal `" name "` launched — outcome lands here when it fulfills or halts.")))))))
+
+(defn resume!
+  "Re-enter authoring for a failed/unfinished goal workspace. Authoring
+   failure keeps the scaffold and spec (B1, 2026-09-07: half-built
+   workspaces were orphaned with no resume path) — resume reads the kept
+   spec, re-authors with a continuation note, then launches. Bare resume
+   picks the most recently touched workspace."
+  [slug chat-id thread-id emit]
+  (if-let [active (active-run)]
+    (str "⏳ Goal `" (:name active) "` is already running — one at a time. /goals for status.")
+    (let [name (if (str/blank? slug)
+                 (some->> (fs/list-dir goals-root)
+                          (filter fs/directory?)
+                          (sort-by fs/last-modified-time)
+                          last
+                          .getFileName
+                          str)
+                 slug)
+          ws (str goals-root "/" name)
+          spec-file (io/file (str ws "/spec.txt"))]
+      (cond
+        (str/blank? name) "No goal workspaces to resume."
+        (not (.exists spec-file)) (str "No resumable goal `" name "` (no spec.txt kept).")
+        :else
+        (let [spec (str/trim (slurp spec-file))
+              err (try
+                    (if-let [verr (author-with-validation!
+                                   name ws
+                                   (str spec
+                                        "\n\n[RESUME] The workspace already has files from a previous attempt — READ them and fix what failed instead of starting over.")
+                                   emit)]
+                      verr
+                      (do (launch! name chat-id thread-id) nil))
+                    (catch Exception e
+                      (str "authoring error: " (.getMessage e))))]
+          (if err
+            (str "🚫 Goal authoring failed — " err
+                 "\nWorkspace kept: `" name "` — reply /goal resume " name " to continue.")
+            (str "🚀 Goal `" name "` resumed + launched — outcome lands here when it fulfills or halts.")))))))
 
 (defn- dispatch-spec!
   "Shared spec guard for both entry points: blank/length checks, then the
@@ -316,8 +393,8 @@ Do NOT run the goal. Write files only.")
       (if (= "/goal" trimmed)
         "Usage: /goal <what to build> — I author the goal project, run it supervised, and the outcome lands here."
         (let [spec (str/trim (subs trimmed 5))]
-          (if (or (str/blank? spec) (> (count spec) max-spec-chars))
-            (str "Spec must be 1–" max-spec-chars " characters.")
+          (if (or (= spec "resume") (str/starts-with? spec "resume "))
+            (resume! (str/trim (subs spec 6)) chat-id thread-id emit)
             (dispatch-spec! spec chat-id thread-id emit)))))))
 
 (def build-verbs

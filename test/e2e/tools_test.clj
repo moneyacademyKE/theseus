@@ -33,7 +33,7 @@
                    :status :denied
                    :executed? false
                    :approval/required? true
-                   :error/message "Tool shell requires explicit approval"}]
+                   :error/message "Tool shell requires explicit approval and no approver is present in this turn. Recourse: ask the user to approve, or report this step as skipped — do not silently retry."}]
                  (:tool/results turn)))))
       (finally
         (fs/delete-tree home)))))

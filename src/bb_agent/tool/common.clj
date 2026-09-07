@@ -21,12 +21,26 @@
     :ask :ask
     :denied))
 
-(defn deny-result [{:tool/keys [name] :as request}]
-  {:tool/name name
-   :status :denied
-   :executed? false
-   :approval/required? (:approval/required? request)
-   :error/message (str "Tool " name " requires explicit approval")})
+(defn deny-result
+  "A denied tool call. The message names the denial SOURCE and the recourse
+   (B4, 2026-09-07: a floor-denied `rm` produced a reply that explained
+   nothing) — the model relays this, so the human learns which rule fired
+   and what would grant it, instead of a bare 🚫."
+  ([request] (deny-result request :approval))
+  ([{:tool/keys [name] :as request} source]
+   {:tool/name name
+    :status :denied
+    :executed? false
+    :approval/required? (:approval/required? request)
+    :error/message
+    (case source
+      :policy (str "Tool " name " denied by the tool constitution (brain/rules.clj). "
+                   "Recourse: the owner can grant it by editing brain/rules.clj. "
+                   "Tell the user which rule fired instead of retrying.")
+      :approval (str "Tool " name " requires explicit approval and no approver is "
+                     "present in this turn. Recourse: ask the user to approve, or "
+                     "report this step as skipped — do not silently retry.")
+      (str "Tool " name " requires explicit approval"))}))
 
 (defn ok-result [name body]
   (merge {:tool/name name

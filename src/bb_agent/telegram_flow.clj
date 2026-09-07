@@ -152,7 +152,8 @@
                                    (render-flow @flow) {:parse-mode "HTML"})
       (catch Exception e
         (binding [*out* *err*]
-          (println (str "telegram flow settle failed: " (.getMessage e))))))))
+          (println (str "telegram flow settle failed: " (.getMessage e)
+                        " data=" (pr-str (ex-data e)))))))))
 
 (defn with-flow!
   "Run f (a thunk receiving the emit fn) inside a fresh flow: tool calls

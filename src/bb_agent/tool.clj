@@ -56,7 +56,7 @@
          result (if-let [verdict (policy/verdict request cfg)]
                   (case verdict
                     :allow (execute-tool-request request)
-                    :deny (deny-result request))
+                    :deny (deny-result request :policy))
                   (case (approval-decision request)
                     :approved (execute-tool-request request)
                     :ask (if (and approver (= :approved (approver request)))
