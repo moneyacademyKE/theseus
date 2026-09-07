@@ -50,6 +50,38 @@
        "(" args ") — stopping this turn instead of burning more rounds. "
        "Narrow or rephrase the request."))
 
+(def ^:private default-loop-guard-nudge-threshold 2)
+
+(defn- loop-guard-nudge-message
+  "The warning a repeated call gets BEFORE the kill line — OpenCrabs parity
+   (moe 2026-09-07: the loop guard should nudge on identical repeats, not
+   only end the turn). Skipping execution is the point: the result cannot
+   change, and the model must confront the warning as its tool result."
+  [tool-name occurrence kill-threshold]
+  (str "⚠️ Loop guard notice: `" tool-name "` has now been called " occurrence
+       " times with identical arguments — the result will not change. "
+       "STOP repeating it: use the result you already have, change your "
+       "approach, or produce the final answer now. The next identical call "
+       "ENDS this turn (limit " kill-threshold ")."))
+
+(def ^:private default-reasoning-nudge-threshold 2)
+
+(defn- reasoning-nudge-message
+  "The model produced reasoning but neither an answer nor a tool call —
+   the provider normalizes reasoning away, so it arrives as an empty round.
+   Nudge it to converge instead of killing the turn on the first one
+   (moe 2026-09-07: nudge when the model reasons without answering)."
+  [streak threshold]
+  (str "⚠️ You produced reasoning but no answer and no tool calls. "
+       "Converge NOW: either call a tool to make concrete progress, or "
+       "write the final answer. Empty round " streak " of " (dec threshold)
+       " — the next one ends this turn."))
+
+(defn- reasoning-death-message [streak]
+  (str "⚠️ Turn ended: the model produced reasoning without answering or "
+       "calling a tool " streak " rounds in a row. Narrow or rephrase the "
+       "request."))
+
 (def ^:private provider-breaker
   "Shared per-provider breaker threaded through retry calls. The
   breaker modules stay pure; this atom is the one mutable seam."
@@ -101,10 +133,6 @@
       (fallback/try-chain steps
                           #(complete-retrying cfg (:provider %)
                                               (request-for base-request %))))))
-
-(defn- tool-error-summary [results]
-  (let [names (->> results (map :tool/name) (str/join ", "))]
-    (str "Tool execution finished without final answer: " names)))
 
 (defn- tool-results-summary
   "The user-facing line when every tool call was denied: a clean sentence,
@@ -255,7 +283,8 @@
                  :tool/results []}
            rounds-left max-rounds
            seen-calls {}
-           final-nudge-used? false]
+           final-nudge-used? false
+           reasoning-streak 0]
       (when (neg? rounds-left)
         (throw (ex-info "Exceeded tool rounds" {:rounds max-rounds
                                                 :final-nudge-used? final-nudge-used?})))
@@ -275,6 +304,12 @@
             response (complete-chain cfg request)
             tool-requests (:tool/requests response)
             threshold (or (:loop-guard-threshold cfg) default-loop-guard-threshold)
+            ;; The nudge can never sit at/above the kill line — a misconfig
+            ;; degrades to nudge-one-before-kill instead of silently
+            ;; disabling the warning stage.
+            nudge-threshold (min (or (:loop-guard-nudge-threshold cfg)
+                                     default-loop-guard-nudge-threshold)
+                                 (dec threshold))
             repeated (some (fn [req]
                              (let [k [(:tool/name req) (canonical-args (:tool/args req))]]
                                (when (>= (get seen-calls k 0) (dec threshold)) k)))
@@ -289,14 +324,37 @@
                 ;; channel flips ⚙️→✅/❌ live inside a single flow message.
                 tool-results (when (seq tool-requests)
                                (mapv (fn [req]
-                                       (safe-emit cfg {:status :tool/call
-                                                       :tool (:tool/name req)
-                                                       :args (:tool/args req)})
-                                       (let [result (tool/handle-tool-request req cfg)]
-                                         (safe-emit cfg {:status :tool/done
-                                                         :tool (:tool/name req)
-                                                         :args {:ok? (= :ok (:status result))}})
-                                         result))
+                                       (let [k [(:tool/name req) (canonical-args (:tool/args req))]]
+                                         (if (and (pos? (get seen-calls k 0))
+                                                  (>= (get seen-calls k 0) (dec nudge-threshold)))
+                                           ;; Repeat below the kill line: skip
+                                           ;; execution, feed the warning as the
+                                           ;; tool result. pos? guard: only a call
+                                           ;; that already EXECUTED can be nudged —
+                                           ;; a first occurrence always runs.
+                                           (do (safe-emit cfg {:status :tool/call
+                                                               :tool (:tool/name req)
+                                                               :args (:tool/args req)})
+                                               (safe-emit cfg {:status :tool/done
+                                                               :tool (:tool/name req)
+                                                               :args {:ok? false
+                                                                      :loop-guard :nudged}})
+                                               {:tool/name (:tool/name req)
+                                                :status :error
+                                                :executed? false
+                                                :loop-guard :nudged
+                                                :error/message (loop-guard-nudge-message
+                                                                (:tool/name req)
+                                                                (inc (get seen-calls k 0))
+                                                                threshold)})
+                                           (do (safe-emit cfg {:status :tool/call
+                                                               :tool (:tool/name req)
+                                                               :args (:tool/args req)})
+                                               (let [result (tool/handle-tool-request req cfg)]
+                                                 (safe-emit cfg {:status :tool/done
+                                                                 :tool (:tool/name req)
+                                                                 :args {:ok? (= :ok (:status result))}})
+                                                 result)))))
                                      tool-requests))
                 turn* (cond-> (append-tool-round turn response (or tool-results []))
                         (:fallback/tried response)
@@ -320,8 +378,20 @@
                          turn*
                          (if extend? nudge-final-rounds rounds-next)
                          seen-calls*
-                         (or extend? final-nudge-used?))))
+                         (or extend? final-nudge-used?)
+                         0)))
               (if-let [content (:content response)]
                 (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
-                (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (tool-error-summary (:tool/results turn*)) (:usage response)))))))))
+                (let [streak (inc reasoning-streak)
+                      rthreshold (or (:reasoning-nudge-threshold cfg)
+                                     default-reasoning-nudge-threshold)]
+                  (if (< streak rthreshold)
+                    (recur (conj messages {:role "user"
+                                           :content (reasoning-nudge-message streak rthreshold)})
+                           turn*
+                           (dec rounds-left)
+                           seen-calls*
+                           final-nudge-used?
+                           streak)
+                    (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (reasoning-death-message streak) (:usage response)))))))))))
 )

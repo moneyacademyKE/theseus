@@ -98,3 +98,95 @@
        (is (= "done" (:assistant/final turn)))
        (is (not (str/includes? (all-text requests) "Checkpoint"))
            "interval nudges stay off unless :nudge-interval is set")))))
+
+(defn- drive-repeat-turn!
+  "Run a turn whose model emits the SAME tool call repeat-rounds times, then
+   answers 'done'. Returns [turn handler-call-count captured-requests]."
+  [{:keys [repeat-rounds max-rounds] :or {max-rounds 8}}]
+  (let [requests (atom [])
+        handler-calls (atom 0)
+        rounds (atom 0)]
+    (with-redefs [provider/complete
+                  (fn [_provider request]
+                    (swap! requests conj (:messages request))
+                    (if (< (swap! rounds inc) (inc repeat-rounds))
+                      {:content nil
+                       :tool/requests [{:tool/name "read_file"
+                                        :approval/policy :auto-all
+                                        :tool/args {:path "same.txt"}}]}
+                      {:content "done"}))
+                  tool/handle-tool-request
+                  (fn [_req _cfg]
+                    (swap! handler-calls inc)
+                    {:tool/name "read_file" :status :ok :tool/result "file-bytes"})]
+      [(core/run-turn! {:provider :fake
+                        :model "m"
+                        :session/id (str "loop-nudge-test-" (rand-int 1000000))
+                        :max-tool-rounds max-rounds
+                        :react-ack false}
+                       "read the same file forever")
+       @handler-calls
+       @requests])))
+
+(deftest repetition-nudge-skips-second-execution
+  (with-temp-home
+   (fn []
+     (let [[turn handler-calls requests] (drive-repeat-turn! {:repeat-rounds 2})]
+       (is (= "done" (:assistant/final turn))
+           "the model heeds the nudge and answers")
+       (is (= 1 handler-calls)
+           "the identical repeat is NOT executed — the warning rides back as its result")
+       (is (some #(= :nudged (:loop-guard %)) (:tool/results turn))
+           "the skipped call is marked :loop-guard :nudged in the turn record")
+       (is (str/includes? (all-text requests) "Loop guard notice")
+           "the model must SEE the warning")
+       (is (str/includes? (all-text requests) "result will not change"))))))
+
+(deftest repetition-ladder-ends-at-the-kill-line
+  (with-temp-home
+   (fn []
+     (let [[turn handler-calls _requests] (drive-repeat-turn! {:repeat-rounds 5})]
+       (is (false? (:turn/ok turn)) "a model that ignores the nudge still loses the turn")
+       (is (str/includes? (:assistant/final turn) "Loop guard")
+           "the kill message names the guard")
+       (is (= 1 handler-calls)
+           "ladder: execute once, nudge once, kill before the third")))))
+
+(defn- drive-empty-turn!
+  "Run a turn whose model produces empty rounds (no content, no tools)
+   empty-rounds times, then answers 'done'. Returns [turn captured-requests]."
+  [{:keys [empty-rounds]}]
+  (let [requests (atom [])
+        rounds (atom 0)]
+    (with-redefs [provider/complete
+                  (fn [_provider request]
+                    (swap! requests conj (:messages request))
+                    (if (< (swap! rounds inc) (inc empty-rounds))
+                      {:content nil}
+                      {:content "done"}))]
+      [(core/run-turn! {:provider :fake
+                        :model "m"
+                        :session/id (str "reason-nudge-test-" (rand-int 1000000))
+                        :react-ack false}
+                       "think out loud")
+       @requests])))
+
+(deftest reasoning-without-answering-gets-nudged-not-killed
+  (with-temp-home
+   (fn []
+     (let [[turn requests] (drive-empty-turn! {:empty-rounds 1})]
+       (is (= "done" (:assistant/final turn))
+           "one empty round is a nudge, not a death")
+       (is (not (false? (:turn/ok turn)))
+           "the turn is not marked failed")
+       (is (str/includes? (all-text requests) "no answer and no tool calls")
+           "the model must SEE the converge warning")
+       (is (str/includes? (all-text requests) "Empty round 1 of 1"))))))
+
+(deftest persistent-empty-rounds-end-the-turn
+  (with-temp-home
+   (fn []
+     (let [[turn _requests] (drive-empty-turn! {:empty-rounds 5})]
+       (is (false? (:turn/ok turn)) "a stuck reasoner still loses the turn")
+       (is (str/includes? (:assistant/final turn) "reasoning without answering")
+           "the death message names the real cause")))))
