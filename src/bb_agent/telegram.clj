@@ -2,6 +2,7 @@
   (:require [babashka.http-client :as http]
             [bb-agent.approval :as approval]
             [bb-agent.autonomy :as autonomy]
+            [bb-agent.bot-commands :as bot-commands]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.goal-bridge :as goal-bridge]
@@ -165,7 +166,9 @@
       (when (goal-bridge/build-intent? text) :build-goal))))
 
 (defn- skill-command
-  "If text starts with /<skill-name>, returns composed prompt with skill body or nil."
+  "If text starts with /<skill-name>, returns composed prompt with skill body or nil.
+   Underscore spellings (the only form the Telegram menu can show for
+   hyphenated skills) resolve via bot-commands/resolve-skill."
   [text]
   (when (and text (str/starts-with? (str/trim text) "/"))
     (let [trimmed (str/trim text)
@@ -173,7 +176,7 @@
           cmd-name (subs (first parts) 1)
           input (or (second parts) "")
           skills (skill/discover-all-skills)]
-      (when-let [matched (first (filter #(= cmd-name (:name %)) skills))]
+      (when-let [matched (bot-commands/resolve-skill skills cmd-name)]
         (skill/compose-prompt matched input)))))
 
 (defn- handle-chat-command
@@ -526,8 +529,10 @@
 (defn poll-loop!
   "Continuous polling with a sleep between cycles. Stop with ctrl-c.
    A getUpdates conflict (another active client) backs off 5x for one
-   cycle instead of hammering the API."
+   cycle instead of hammering the API. Registers the Telegram command
+   menu at boot — failure prints one line and never blocks polling."
   [& {:keys [interval-ms] :or {interval-ms 2000}}]
+  (bot-commands/register-safely!)
   (loop []
     (try
       (let [{:keys [conflict?]} (poll-once!)]

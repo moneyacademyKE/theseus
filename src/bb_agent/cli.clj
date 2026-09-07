@@ -15,6 +15,7 @@
             [bb-agent.skill :as skill]
             [bb-agent.skill-research :as skill-research]
             [bb-agent.skill-research-github :as skill-research-github]
+            [bb-agent.bot-commands :as bot-commands]
             [bb-agent.telegram :as telegram]
             [bb-agent.ui :as ui]
             [bb-agent.usage :as usage]
@@ -238,7 +239,11 @@
       "poll"
       (telegram/poll-loop!)
 
-      (usage! "Usage: bb telegram poll-once | poll" 2))))
+      "register-commands"
+      (let [{:keys [ok? count]} (bot-commands/register-safely!)]
+        (println (str "register-commands: ok=" ok? " count=" count)))
+
+      (usage! "Usage: bb telegram poll-once | poll | register-commands" 2))))
 
 (defn- handle-ui-command [args]
   (let [[subcommand] args]
