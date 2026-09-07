@@ -16,6 +16,26 @@
 
 (def ^:private default-max-tool-rounds 8)
 
+(def ^:private default-nudge-final-rounds
+  "Extension window when the budget runs out: one converge-NOW message
+  instead of an instant death (the OpenCrabs nudge, ported in-turn)."
+  10)
+
+(defn- checkpoint-nudge-message
+  "Periodic checkpoint for long turns: refocus before the budget burns."
+  [consumed max-rounds]
+  (str "\u26a1 Checkpoint \u2014 you've used " consumed " of " max-rounds " tool rounds. "
+       "Take stock before continuing: what's done, what remains? Prioritize "
+       "the fastest path to finishing; avoid re-reading files you already "
+       "know or re-running exploratory commands."))
+
+(defn- final-nudge-message
+  "The extension window's opening message: converge now."
+  [rounds]
+  (str "\u26a1 Final " rounds " rounds \u2014 the turn will END when they're gone. "
+       "Converge NOW: finish any in-flight writes with what you already "
+       "know, then produce the final answer. No new exploration."))
+
 (def ^:private default-loop-guard-threshold 3)
 
 (defn- canonical-args
@@ -208,6 +228,8 @@
 (defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
   (let [cfg (model/effective-config cfg)
         max-rounds (or (:max-tool-rounds cfg) default-max-tool-rounds)
+        nudge-interval (:nudge-interval cfg)
+        nudge-final-rounds (or (:nudge-final-rounds cfg) default-nudge-final-rounds)
         provider (:provider cfg)
         id (:session/id cfg)
         user-images (:user/images cfg)
@@ -232,10 +254,19 @@
            turn {:tool/requests []
                  :tool/results []}
            rounds-left max-rounds
-           seen-calls {}]
+           seen-calls {}
+           final-nudge-used? false]
       (when (neg? rounds-left)
-        (throw (ex-info "Exceeded tool rounds" {:rounds max-rounds})))
-      (let [request {:provider provider
+        (throw (ex-info "Exceeded tool rounds" {:rounds max-rounds
+                                                :final-nudge-used? final-nudge-used?})))
+      (let [consumed (max 0 (- max-rounds rounds-left))
+            nudge-msg (when (and nudge-interval
+                                 (pos? consumed)
+                                 (zero? (mod consumed nudge-interval))
+                                 (not final-nudge-used?))
+                        (checkpoint-nudge-message consumed max-rounds))
+            messages (cond-> messages nudge-msg (conj {:role "user" :content nudge-msg}))
+            request {:provider provider
                      :model model
                      :messages messages
                      :memory/matches memory-matches
@@ -279,10 +310,17 @@
             (if (seq tool-requests)
               (if (every? #(= :denied (:status %)) tool-results)
                 (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
-                (recur (continue-messages messages response tool-results)
-                       turn*
-                       (dec rounds-left)
-                       seen-calls*))
+                (let [rounds-next (dec rounds-left)
+                      extend? (and (neg? rounds-next)
+                                   (pos? nudge-final-rounds)
+                                   (not final-nudge-used?))]
+                  (recur (cond-> (continue-messages messages response tool-results)
+                           extend? (conj {:role "user"
+                                          :content (final-nudge-message nudge-final-rounds)}))
+                         turn*
+                         (if extend? nudge-final-rounds rounds-next)
+                         seen-calls*
+                         (or extend? final-nudge-used?))))
               (if-let [content (:content response)]
                 (finish-turn id cfg prompt memory-matches semantic-ctx turn* content (:usage response))
                 (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (tool-error-summary (:tool/results turn*)) (:usage response)))))))))
