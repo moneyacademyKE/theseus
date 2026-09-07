@@ -153,6 +153,7 @@
     ("/usage" "/stats") :usage
     "/autonomy" :autonomy
     "/goals" :goals
+    ("/skills" "/help") :skills
     nil)
       (when (goal-bridge/build-intent? text) :build-goal))))
 
@@ -189,7 +190,18 @@
                   (format ", ~$%.4f" (double (or (:cost/estimate-usd r) 0)))
                   (when (seq by-provider) (str " (" by-provider ")"))))
     :autonomy (autonomy/report (autonomy/granted-tier)
-                               (autonomy/load-ledger))))
+                               (autonomy/load-ledger))
+    :skills (let [skills (skill/discover-all-skills)
+                  native "⌨️ Commands: /new /reset /usage /autonomy /goal <spec> /goals /skills"
+                  lines (map (fn [{:keys [name description]}]
+                               (str "• /" name " — "
+                                    (let [d (str/replace (or description "") #"\s+" " ")]
+                                      (if (> (count d) 60) (str (subs d 0 60) "…") d))))
+                             skills)]
+              (if (seq lines)
+                (str native "\n🧩 Skills (" (count skills) ") — /<name> <input> runs one:\n"
+                     (str/join "\n" lines))
+                (str native "\nNo skills found.")))))
 (defn- notify-turn-failure!
   "A dead turn must never be silent: swap the ack reaction to a failure
    signal and send one bounded error reply. The notice itself failing

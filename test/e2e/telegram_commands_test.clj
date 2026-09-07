@@ -135,6 +135,30 @@
         (finally
           (fs/delete-tree home))))))
 
+(deftest skills-command-lists-skills
+  (testing "/skills lists native commands and discovered skills; empty home degrades honestly"
+    (let [{:keys [home calls]} (run-poll [(dm-message 1 60 "/skills")]
+                                          (fn [home]
+                                            (let [sdir (fs/path home "skills" "explain")]
+                                              (fs/create-dirs sdir)
+                                              (spit (str (fs/path sdir "SKILL.md"))
+                                                    "---\nname: explain\ndescription: Explain concepts concisely\n---\nExplain.\n"))))
+          [reply] (replies calls)]
+      (try
+        (is (str/includes? (or reply "") "/goal <spec>") "native commands listed")
+        (is (str/includes? (or reply "") "Skills (1)") "count present")
+        (is (str/includes? (or reply "") "/explain — Explain concepts concisely")
+            "skill name + description listed")
+        (finally
+          (fs/delete-tree home)))))
+  (testing "no skills on disk → honest empty state"
+    (let [{:keys [home calls]} (run-poll [(dm-message 1 61 "/skills")])
+          [reply] (replies calls)]
+      (try
+        (is (str/includes? (or reply "") "No skills found.") "empty state is honest")
+        (finally
+          (fs/delete-tree home))))))
+
 (deftest goal-seam-answers-in-chat
   (testing "/goal plumbing: usage, honest authoring failure, and /goals listing"
     (let [{:keys [home calls]} (run-poll [(dm-message 1 50 "/goal")
