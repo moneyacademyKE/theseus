@@ -58,6 +58,12 @@
     (doseq [r ["normalize.config.edn" "usage-stats.config.edn"]]
       (when (fs/exists? (str goals-root "/" r))
         (fs/copy (str goals-root "/" r) (str refs "/" r) {:replace-existing true})))
+    ;; The default goal methodology (owner directive 2026-09-07, conf: high)
+    ;; rides into every workspace — the authoring agent reads it like the
+    ;; schema references. Brain knowledge dir is the single source.
+    (let [m (str (config/home) "/brain/knowledge/goal-methodology.md")]
+      (when (fs/exists? m)
+        (fs/copy m (str refs "/goal-methodology.md") {:replace-existing true})))
     (p/shell {:dir ws :out :string :err :string} "git" "init" "-q")
     (p/shell {:dir ws :out :string :err :string} "git" "config" "user.email" "goal-bridge@theseus.local")
     (p/shell {:dir ws :out :string :err :string} "git" "config" "user.name" "goal-bridge")
@@ -65,6 +71,11 @@
 
 (def ^:private author-prompt
   "You are authoring a goal project. Your cwd is the project workdir: %s
+METHODOLOGY (the default goal methodology, owner-stamped): read
+  references/goal-methodology.md
+and follow it — Babashka for anything scripted (Python is floored by the
+constitution; never invoke it), YAGNI, prefer one-liners that honestly carry
+the intent, verify claims from disk rather than reporting intent.
 Before writing anything, READ these reference configs for the exact schema:
   %s
   %s

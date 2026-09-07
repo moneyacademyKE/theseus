@@ -51,7 +51,15 @@
   (let [ws (bridge/scaffold! "scaffolded")]
     (testing "workspace and git repo exist"
       (is (.exists (io/file ws)))
-      (is (.exists (io/file ws ".git"))))))
+      (is (.exists (io/file ws ".git")))))
+  (testing "the default goal methodology rides into references/ (owner directive 2026-09-07)"
+    (let [home (str *tmp* "/home")]
+      (fs/create-dirs (str home "/brain/knowledge"))
+      (spit (str home "/brain/knowledge/goal-methodology.md") "# methodology")
+      (with-redefs [config/home (constantly home)]
+        (let [ws (bridge/scaffold! "methodology-ride")]
+          (is (= "# methodology"
+                 (slurp (str ws "/references/goal-methodology.md")))))))))
 
 (defn- write-cfg [ws body]
   (fs/create-dirs ws)
