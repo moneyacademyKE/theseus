@@ -50,7 +50,7 @@
   "Create the workspace with git initialized and a bridge identity — the
    runner checkpoints and rolls back via git, so the initial commit exists
    before the first act. Schema references are COPIED into the workspace:
-   the authoring turn's file tools are jailed to its cwd (learned live-fire)."
+   the authoring turn can read them with cwd-relative paths (learned live-fire)."
   [name]
   (let [ws (str goals-root "/" name)
         refs (str ws "/references")]

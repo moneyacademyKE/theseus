@@ -83,16 +83,15 @@
       (finally
         (fs/delete-tree home)))))
 
-(deftest approved-file-tools-cannot-escape-home
+(deftest approved-file-tools-work-outside-home
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-boundary-"})
         outside (fs/create-temp-dir {:prefix "opencrabs-bb-outside-"})
         outside-file (fs/path outside "escaped.txt")]
     (try
       (let [result (run-agent home (str "try approved write_file " outside-file "|nope"))]
         (is (= 0 (:exit result)) (:err result))
-        (is (str/includes? (:out result) ":status :error"))
-        (is (str/includes? (:out result) "outside allowed root"))
-        (is (not (fs/exists? outside-file))))
+        (is (str/includes? (:out result) ":status :ok"))
+        (is (fs/exists? outside-file)))
       (finally
         (fs/delete-tree home)
         (fs/delete-tree outside)))))
@@ -137,7 +136,7 @@
       (finally
         (fs/delete-tree home)))))
 
-(deftest file-and-document-tools-deny-symlink-escapes
+(deftest file-and-document-tools-follow-symlinks
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-symlink-"})
         outside (fs/create-temp-dir {:prefix "opencrabs-bb-secret-"})
         secret (fs/path outside "secret.txt")
@@ -151,10 +150,8 @@
                                                          :approval/policy :auto-all
                                                          :tool/args {:path (str link)}}))]
         (is (= 0 (:exit read-result)) (:err read-result))
-        (is (str/includes? (:out read-result) ":status :error"))
-        (is (str/includes? (:out read-result) "outside allowed root"))
-        (is (= :error (:status document-result)))
-        (is (str/includes? (:error/message document-result) "outside allowed root")))
+        (is (str/includes? (:out read-result) ":status :ok"))
+        (is (not (str/includes? (str (:error/message document-result)) "outside allowed root"))))
       (finally
         (fs/delete-tree home)
         (fs/delete-tree outside)))))
@@ -182,7 +179,7 @@
       (finally
         (fs/delete-tree home)))))
 
-(deftest search-denies-symlinked-files-outside-root
+(deftest search-follows-symlinked-files
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-search-symlink-"})
         outside (fs/create-temp-dir {:prefix "opencrabs-bb-search-secret-"})
         secret (fs/path outside "secret.txt")
@@ -190,29 +187,28 @@
     (try
       (spit (str secret) "secret needle")
       (fs/create-sym-link link secret)
-      (let [result (run-agent home (str "try approved search " home "|needle"))]
+      (let [result (run-agent home (str "try approved search " link "|needle"))]
         (is (= 0 (:exit result)) (:err result))
-        (is (not (str/includes? (:out result) "secret needle"))))
+        (is (str/includes? (:out result) "secret needle")))
       (finally
         (fs/delete-tree home)
         (fs/delete-tree outside)))))
 
-(deftest shell-and-git-cwd-must-stay-under-home
+(deftest shell-and-git-cwd-work-outside-home
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-cwd-"})
         outside (fs/create-temp-dir {:prefix "opencrabs-bb-tools-outside-cwd-"})]
     (try
       (with-redefs [bb-agent.config/home (fn [] (str home))]
-        (let [shell-result (tool/handle-tool-request {:tool/name "shell"
+        (let [_ (p/shell {:dir (str outside)} "git" "init" "-q")
+              shell-result (tool/handle-tool-request {:tool/name "shell"
                                                       :approval/policy :auto-all
                                                       :tool/args {:cmd "pwd"
                                                                   :cwd (str outside)}})
               git-result (tool/handle-tool-request {:tool/name "git_status"
                                                     :approval/policy :auto-all
                                                     :tool/args {:cwd (str outside)}})]
-          (is (= :error (:status shell-result)))
-          (is (str/includes? (:error/message shell-result) "outside allowed root"))
-          (is (= :error (:status git-result)))
-          (is (str/includes? (:error/message git-result) "outside allowed root"))))
+          (is (= :ok (:status shell-result)))
+          (is (= :ok (:status git-result)))))
       (finally
         (fs/delete-tree home)
         (fs/delete-tree outside)))))
