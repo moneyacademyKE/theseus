@@ -14,8 +14,8 @@
 (defn with-tmp-goals [f]
   (let [tmp (str (fs/create-temp-dir {:prefix "goal-bridge-test"}))]
     (binding [*tmp* tmp]
-      (with-redefs [bridge/goals-root tmp
-                    bridge/active-file (str tmp "/active.edn")]
+      (with-redefs [bridge/goals-root (constantly tmp)
+                    bridge/active-file (constantly (str tmp "/active.edn"))]
         (f)))))
 
 (use-fixtures :each with-tmp-goals)
@@ -38,12 +38,12 @@
   (testing "no registry file → nil"
     (is (nil? (bridge/active-run))))
   (testing "dead pid → nil and registry cleared"
-    (spit bridge/active-file (pr-str {:pid 99999999 :name "stale"}))
+    (spit (bridge/active-file) (pr-str {:pid 99999999 :name "stale"}))
     (is (nil? (bridge/active-run)))
-    (is (not (.exists (io/file bridge/active-file)))))
+    (is (not (.exists (io/file (bridge/active-file))))))
   (testing "live pid → the run"
     (let [pid (live-pid)]
-      (spit bridge/active-file (pr-str {:pid pid :name "live"}))
+      (spit (bridge/active-file) (pr-str {:pid pid :name "live"}))
       (is (= "live" (:name (bridge/active-run))))
       (p/shell {:continue true} "kill" (str pid)))))
 
@@ -113,7 +113,7 @@
     (is (nil? (bridge/handle-request! "/goals" 1 2 nil))))
   (testing "active run → refusal naming it"
     (let [pid (live-pid)]
-      (spit bridge/active-file (pr-str {:pid pid :name "busy-goal"}))
+      (spit (bridge/active-file) (pr-str {:pid pid :name "busy-goal"}))
       (is (str/includes? (bridge/handle-request! "/goal build x" 1 2 nil) "busy-goal"))
       (p/shell {:continue true} "kill" (str pid))))
   (testing "blank spec → usage (a trimmed blank IS bare /goal)"
@@ -123,13 +123,13 @@
   (testing "authoring failure envelope: a turn that writes an invalid config
             surfaces the validator's verdict, never launches"
     (with-redefs [core/run-turn! (fn [_cfg _prompt]
-                                   (let [d (str bridge/goals-root "/author-fail")]
+                                   (let [d (str (bridge/goals-root) "/author-fail")]
                                      (fs/create-dirs d)
                                      (spit (str d "/project.edn")
                                            "{:name \"bad\" :workdir \".\"}")))]
       (let [reply (bridge/handle-request! "/goal build something nice" 7 9 nil)]
         (is (str/includes? reply "🚫 Goal authoring failed"))
-        (is (not (.exists (io/file bridge/active-file))))))))
+        (is (not (.exists (io/file (bridge/active-file)))))))))
 
 (deftest progress-line-test
   (testing "act lines show progress movement and no-progress flag"

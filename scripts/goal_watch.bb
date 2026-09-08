@@ -111,8 +111,13 @@
                     (try (edit! token chat-id msg-id text ws) (catch Exception _ nil)))
                   (recur (inc i) n (or mid msg-id)))
                 (recur (inc i) seen msg-id))))
-        ;; runner exited (or ceiling): final verdict — edit if we can, else send
+        ;; runner exited (or ceiling): final verdict — edit if we can, else send.
+        ;; The verdict ALSO queues as outcome.edn: the poller's drain turns it
+        ;; into a durable session turn (bot messages never persist otherwise).
         (let [text (final-text name run-log (gb/ledger-events ws))]
+          (try (gb/queue-outcome! name chat-id (some-> thread-id parse-long) text)
+               (catch Exception e
+                 (spit (str ws "/watch.err") (str (.getMessage e) "\n") :append true)))
           (try
             (if msg-id
               (edit! token chat-id msg-id text ws)

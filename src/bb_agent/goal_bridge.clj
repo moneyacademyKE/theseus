@@ -10,6 +10,7 @@
             [babashka.process :as p]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
+            [bb-agent.session :as session]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -17,8 +18,8 @@
             [bb-agent.goal.observe :as observe]
             [bb-agent.goal.predicates :as predicates]))
 
-(def goals-root (str (config/home) "/goals"))
-(def active-file (str goals-root "/active.edn"))
+(defn goals-root [] (str (config/home) "/goals"))
+(defn active-file [] (str (goals-root) "/active.edn"))
 (def max-spec-chars 400)
 (def watcher-max-polls 480) ; 480 * 5s = 40 min ceiling for the watcher
 
@@ -30,7 +31,7 @@
 (defn active-run
   "The live goal run, if any. A stale registry entry (dead pid) is cleared."
   []
-  (let [f (io/file active-file)]
+  (let [f (io/file (active-file))]
     (when (.exists f)
       (let [run (edn/read-string (slurp f))]
         (if (pid-alive? (:pid run))
@@ -52,12 +53,12 @@
    before the first act. Schema references are COPIED into the workspace:
    the authoring turn can read them with cwd-relative paths (learned live-fire)."
   [name]
-  (let [ws (str goals-root "/" name)
+  (let [ws (str (goals-root) "/" name)
         refs (str ws "/references")]
     (fs/create-dirs refs)
     (doseq [r ["normalize.config.edn" "usage-stats.config.edn"]]
-      (when (fs/exists? (str goals-root "/" r))
-        (fs/copy (str goals-root "/" r) (str refs "/" r) {:replace-existing true})))
+      (when (fs/exists? (str (goals-root) "/" r))
+        (fs/copy (str (goals-root) "/" r) (str refs "/" r) {:replace-existing true})))
     ;; The default goal methodology (owner directive 2026-09-07, conf: high)
     ;; rides into every workspace — the authoring agent reads it like the
     ;; schema references. Brain knowledge dir is the single source.
@@ -223,7 +224,7 @@ Do NOT run the goal. Write files only.")
    root (its bb.edn holds the task), register the run, and spawn the outcome
    watcher for this chat/topic."
   [name chat-id thread-id]
-  (let [ws (str goals-root "/" name)
+  (let [ws (str (goals-root) "/" name)
         authored (goal-config/load-config (str ws "/project.edn"))
         cfg-path (str ws "/config.edn")
         log-path (str ws "/run.log")
@@ -241,7 +242,11 @@ Do NOT run the goal. Write files only.")
         ;; thread-id collapse argv so the script read the PID as the thread
         _ (spit (str ws "/watch-args.edn")
                 (pr-str {:name name :chat-id chat-id :thread-id thread-id :pid pid}))
-        _ (spit active-file (pr-str {:pid (parse-long pid) :name name}))
+        ;; active.edn carries the routing needed to recover this run after
+        ;; a poller/daemon restart — pid+name alone orphaned every run that
+        ;; outlived its process (amnesia class, 2026-09-08).
+        _ (spit (active-file) (pr-str {:pid (parse-long pid) :name name
+                                       :chat-id chat-id :thread-id thread-id}))
         watch-args (str ws "/watch-args.edn")]
     (spawn-detached! repo (str "bb scripts/goal_watch.bb " watch-args))
     pid))
@@ -250,7 +255,7 @@ Do NOT run the goal. Write files only.")
   "Scrape the run log for the outcome. The runner's own words are the truth:
    GOAL FULFILLED / HALT lines; anything else while the pid lives is running."
   [name]
-  (let [log (io/file goals-root name "run.log")]
+  (let [log (io/file (goals-root) name "run.log")]
     (cond
       (not (.exists log)) :authored
       :else (let [s (slurp log)]
@@ -262,8 +267,8 @@ Do NOT run the goal. Write files only.")
 (defn list-goals
   "One line per workspace: name + last known status."
   []
-  (when (.exists (io/file goals-root))
-    (->> (fs/list-dir goals-root)
+  (when (.exists (io/file (goals-root)))
+    (->> (fs/list-dir (goals-root))
          (filter #(-> % str io/file .isDirectory))
          (map #(-> % str (str/split #"/") last))
          (remove #{"logs"})
@@ -357,14 +362,14 @@ Do NOT run the goal. Write files only.")
   (if-let [active (active-run)]
     (str "⏳ Goal `" (:name active) "` is already running — one at a time. /goals for status.")
     (let [name (if (str/blank? slug)
-                 (some->> (fs/list-dir goals-root)
+                 (some->> (fs/list-dir (goals-root))
                           (filter fs/directory?)
                           (sort-by fs/last-modified-time)
                           last
                           .getFileName
                           str)
                  slug)
-          ws (str goals-root "/" name)
+          ws (str (goals-root) "/" name)
           spec-file (io/file (str ws "/spec.txt"))]
       (cond
         (str/blank? name) "No goal workspaces to resume."
@@ -393,6 +398,102 @@ Do NOT run the goal. Write files only.")
   (if (or (str/blank? spec) (> (count spec) max-spec-chars))
     (str "Spec must be 1–" max-spec-chars " characters.")
     (launch-spec! spec chat-id thread-id emit)))
+
+(defn resume-detached!
+  "Re-enter a crashed goal WITHOUT blocking the caller: the resume (one or
+   more authoring turns, minutes) runs in a detached bb process that loads
+   its args from an EDN file and queues its result as the workspace's
+   outcome.edn — the poller's drain turns it into a session turn and the
+   re-launched watcher announces progress in the owning topic. Never run
+   authoring on the poll loop."
+  [name chat-id thread-id]
+  (let [ws (str (goals-root) "/" name)
+        args-file (str ws "/resume-args.edn")]
+    (fs/create-dirs ws)
+    (spit args-file (pr-str {:name name :chat-id chat-id :thread-id thread-id}))
+    (spawn-detached! (str (fs/cwd))
+                     (str "bb scripts/goal_resume.bb " args-file))))
+
+(defn- outcome-file [name] (str (goals-root) "/" name "/outcome.edn"))
+
+(defn queue-outcome!
+  "One file, one verdict: the durable handoff from any producer (watcher
+   at exit, restart recovery, detached resume) to the poller's session
+   turn. Consumed exactly once by drain-outcomes!."
+  [name chat-id thread-id text]
+  (let [ws (str (goals-root) "/" name)]
+    (fs/create-dirs ws)
+    (spit (outcome-file name)
+          (pr-str {:name name :chat-id chat-id :thread-id thread-id :text (str text)}))))
+
+(defn drain-outcomes!
+  "Turn every queued goal outcome into a session turn on the chat/topic
+   that launched it, then consume the file. Returns the count drained.
+   A poison file is skipped (kept for inspection) — polling must survive
+   bad bytes in one workspace."
+  []
+  (if-not (fs/directory? (goals-root))
+    0
+    (let [files (->> (fs/glob (goals-root) "*/outcome.edn")
+                     (filter fs/regular-file?))]
+      (count
+       (filter identity
+               (for [f files]
+                 (try
+                   (let [{:keys [name chat-id thread-id text]}
+                         (edn/read-string (slurp (str f)))
+                         sid (cond-> (str "telegram-" chat-id)
+                               thread-id (str "-topic-" thread-id))]
+                     (session/append-turn!
+                      sid {:session/id sid
+                           :user/input (str "[goal " name " finished]")
+                           :assistant/final (str text)
+                           :source :goal-outcome
+                           :created/at (str (java.time.Instant/now))})
+                     (fs/delete f)
+                     true)
+                   (catch Exception e
+                     (println (str "goal outcome drain failed ["
+                                   (.getName (.getClass e)) "] " (.getMessage e)
+                                   " @ " (java.time.Instant/now)))
+                     (flush)
+                     nil))))))))
+
+(defn recover-interrupted!
+  "Poller-boot recovery for goals (amnesia class, 2026-09-08: a daemon
+   restart orphaned every active run silently). active.edn's entry names
+   pid + chat + topic:
+   - pid alive → leave it alone (the runner outlived the poller).
+   - dead pid + verdict in run.log → queue the verdict as an outcome and
+     announce it in the owning topic.
+   - dead pid, no verdict → the run died with the poller: hand it to the
+     detached resume path and say so in the topic.
+   Returns announcements [{:chat-id :thread-id :text}] for the boot path
+   to deliver; registry entries are cleared here so resume!/launch! can
+   re-register."
+  []
+  (let [f (io/file (active-file))]
+    (if-not (.exists f)
+      []
+      (let [run (try (edn/read-string (slurp f)) (catch Exception _ nil))]
+        (if (or (not (map? run)) (not (:pid run)))
+          (do (fs/delete f) [])
+          (if (pid-alive? (:pid run))
+            []
+            (let [{:keys [name chat-id thread-id]} run]
+              (fs/delete f)
+              (case (run-status name)
+                :fulfilled (let [text (str "🎯 goal `" name "`: ✅ GOAL FULFILLED"
+                                           " — recovered after a Theseus restart.")]
+                             (queue-outcome! name chat-id thread-id text)
+                             [{:chat-id chat-id :thread-id thread-id :text text}])
+                :halted (let [text (str "⛔ goal `" name "` halted — recovered after a Theseus restart.")]
+                          (queue-outcome! name chat-id thread-id text)
+                          [{:chat-id chat-id :thread-id thread-id :text text}])
+                ;; :running (no verdict — crashed mid-run) or :authored
+                (let [text (str "🔁 goal `" name "` died with the last restart — resuming it now.")]
+                  (resume-detached! name chat-id thread-id)
+                  [{:chat-id chat-id :thread-id thread-id :text text}])))))))))
 
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
