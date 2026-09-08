@@ -198,9 +198,18 @@
                             :else (decision/decide cfg world state))]
            (case (:type action)
              :done
-             (do (log/event! log-dir :info "GOAL FULFILLED" {:world world})
-                 (log/iteration! log-dir iteration {:event :done :world world})
-                 {:status :done :world world :iterations iteration})
+             (if (zero? iteration)
+               ;; Freshness honesty (2026-09-08 dogfood): a goal predicate
+               ;; that holds BEFORE any act ran means the world already
+               ;; satisfied it — reporting :fulfilled would claim work that
+               ;; never happened. Distinct verdict, distinct log marker.
+               (do (log/event! log-dir :info "GOAL ALREADY SATISFIED"
+                               {:world world :note "goal held before any act ran"})
+                   (log/iteration! log-dir iteration {:event :already-satisfied :world world})
+                   {:status :already-satisfied :world world :iterations iteration})
+               (do (log/event! log-dir :info "GOAL FULFILLED" {:world world})
+                   (log/iteration! log-dir iteration {:event :done :world world})
+                   {:status :done :world world :iterations iteration}))
 
              :halt
              (halt-result! cfg iteration action)

@@ -74,7 +74,7 @@
           run-opts {:max-iters (if (:once opts) 1 (:max-iters opts))
                     :config-path (:config opts)}
           res (core/run! cfg run-opts)]
-      (System/exit (if (= :done (:status res)) 0 1)))))
+      (System/exit (if (contains? #{:done :already-satisfied} (:status res)) 0 1)))))
 
 (defn -main [& args]
   (let [command (control/parse-command (first args))]

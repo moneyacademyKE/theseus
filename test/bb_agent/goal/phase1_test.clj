@@ -75,6 +75,52 @@
         (finally
           (fs/delete-tree dir))))))
 
+(deftest already-satisfied-test
+  (testing "goal true at iteration 0 (pre-existing artifact) reports :already-satisfied, runs no act"
+    (let [dir (str (fs/create-temp-dir))]
+      (try
+        (spit (str dir "/report.txt") "already here\n")
+        ;; the act would leave a fingerprint — its absence proves no act ran
+        (spit (str dir "/act.sh") "#!/usr/bin/env bash\ntouch \"$(dirname \"$0\")/act-ran\"\n")
+        (shq dir "chmod" "+x" (str dir "/act.sh"))
+        (let [cfg {:name "already-satisfied-test"
+                   :workdir dir
+                   :lock (str dir "/.bb-agent.goal.lock")
+                   :log-dir (str dir "/logs")
+                   :observers {:report {:sh "cat report.txt 2>/dev/null | tr -d '\\n'" :parse :string}}
+                   :goal {:op := :ref :report :value "already here"}
+                   :act {:sh "./act.sh {{attempt}}"}
+                   :stall-after 2
+                   :max-rollbacks 1}
+              result (core/run! cfg {:max-iters 10})]
+          (is (= :already-satisfied (:status result))
+              "goal held before any act — verdict must not claim fulfillment")
+          (is (= 0 (:iterations result)))
+          (is (not (fs/exists? (str dir "/act-ran")))
+              "no act executed"))
+        (finally
+          (fs/delete-tree dir)))))
+  (testing "goal false at iteration 0 then made true by an act still reports :done"
+    (let [dir (str (fs/create-temp-dir))]
+      (try
+        (spit (str dir "/act.sh") "#!/usr/bin/env bash\necho built > \"$(dirname \"$0\")/report.txt\"\n")
+        (shq dir "chmod" "+x" (str dir "/act.sh"))
+        (let [cfg {:name "fulfilled-after-work-test"
+                   :workdir dir
+                   :lock (str dir "/.bb-agent.goal.lock")
+                   :log-dir (str dir "/logs")
+                   :observers {:report {:sh "cat report.txt 2>/dev/null | tr -d '\\n'" :parse :string}}
+                   :goal {:op := :ref :report :value "built"}
+                   :act {:sh "./act.sh {{attempt}}"}
+                   :stall-after 2
+                   :max-rollbacks 1}
+              result (core/run! cfg {:max-iters 10})]
+          (is (= :done (:status result))
+              "goal made true by this run's act — honest :fulfilled")
+          (is (pos? (:iterations result))))
+        (finally
+          (fs/delete-tree dir))))))
+
 (defn -main
   "Run the Phase 1 runner tests; exit non-zero on any failure or error."
   [& _]

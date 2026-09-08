@@ -68,6 +68,8 @@
   [name run-log events]
   (let [log (try (slurp run-log) (catch Exception _ ""))
         verdict (cond
+                  (str/includes? log "GOAL ALREADY SATISFIED")
+                  "📦 GOAL ALREADY SATISFIED — no acts ran; the target already held the goal (evidence below is pre-existing, not this run's work)"
                   (str/includes? log "GOAL FULFILLED") "✅ GOAL FULFILLED"
                   :else (or (some->> (re-find #"HALT: \S+[^\n]*" log) (str "⛔ "))
                             "⏱ watcher gave up waiting (run may still be going)"))
