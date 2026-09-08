@@ -225,6 +225,16 @@
         (is (not= :deny (verdict "read_file"
                                  {:path "/Users/moe/theseus/goals/x.config.edn"}))
             "goal-runner configs (*.config.edn) are NOT the secrets file — fence is boundary-anchored (live-fire regression)")
+        ;; 2026-09-08: .key/.pem match only in path context — a Rust struct
+        ;; field named rec.key is not a private key file. Three rustdb build
+        ;; turns died to this overmatch before the fence was narrowed.
+        (is (not= :deny (verdict "shell" {:cmd "perl -0pi -e 's/a/index.remove(&rec.key),/b/' src/lib.rs"}))
+            "rec.key struct field is NOT a secrets hit (rustdb regression)")
+        (is (not= :deny (verdict "shell" {:cmd "grep -rn 'rec.key' src/"}))
+            "grep over struct fields is NOT a secrets hit")
+        (is (= :deny (verdict "shell" {:cmd "cat ~/.ssh/server.key"})) "path-context .key still denied")
+        (is (= :deny (verdict "shell" {:cmd "cat /etc/ssl/cert.pem"})) "path-context .pem still denied")
+        (is (= :deny (verdict "shell" {:cmd "cat ~/.ssh/id_ed25519"})) "id_ed25519 floor")
         (is (= :deny (verdict "shell" {:cmd "sudo ls"})) "sudo floor")
         (is (= :deny (verdict "write_file" {:path "brain/rules.clj"})) "law protects itself")
         ;; regeneration rule as code: every durable deny precedes the first allow

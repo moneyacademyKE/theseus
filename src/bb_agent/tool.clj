@@ -1,5 +1,7 @@
 (ns bb-agent.tool
-  (:require [bb-agent.policy :as policy]
+  (:require [babashka.fs :as fs]
+            [bb-agent.config :as config]
+            [bb-agent.policy :as policy]
             [bb-agent.rtk :as rtk]
             [bb-agent.tool.common :as common]
             [bb-agent.tool.file :as file]
@@ -40,7 +42,16 @@
                         (contains? #{"shell" "git_status" "telegram_send_file"}
                                    (:tool/name request))
                         (nil? (get-in request [:tool/args :cwd])))
-                   (assoc-in [:tool/args :cwd] (:cwd cfg))
+                   ;; A stale/missing session cwd (e.g. a pre-migration
+                   ;; path that no longer exists) must not poison every
+                   ;; shell call — fall back to the home root instead.
+                   ;; (2026-09-08: session metadata carried the dead Desktop
+                   ;; path for a week; every cwd-less shell errored.)
+                   (assoc-in [:tool/args :cwd]
+                             (let [c (:cwd cfg)]
+                               (if (and (string? c) (fs/directory? c))
+                                 c
+                                 (str (config/home)))))
                    (and (map? (:telegram/send-context cfg))
                         (= "telegram_send_file" (:tool/name request)))
                    (assoc-in [:tool/args :telegram-session]

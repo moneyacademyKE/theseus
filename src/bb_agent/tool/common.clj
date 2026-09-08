@@ -35,8 +35,10 @@
     :error/message
     (case source
       :policy (str "Tool " name " denied by the tool constitution (brain/rules.clj). "
-                   "Recourse: the owner can grant it by editing brain/rules.clj. "
-                   "Tell the user which rule fired instead of retrying.")
+                   "This denies the CALL, not the task — recover instead of stopping: "
+                   "use write_file/edit_file for file edits (never perl/sed/awk -i), "
+                   "mv instead of rm, absolute paths inside the home root. "
+                   "Only ask the owner when no alternative exists, and name the rule.")
       :approval (str "Tool " name " requires explicit approval and no approver is "
                      "present in this turn. Recourse: ask the user to approve, or "
                      "report this step as skipped — do not silently retry.")
