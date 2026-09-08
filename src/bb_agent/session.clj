@@ -22,7 +22,16 @@
 (defn load-turns [session-id]
   (let [path (session-file session-id)]
     (if (fs/regular-file? path)
-      (edn/read-string (slurp (str path)))
+      (try (or (edn/read-string (slurp (str path))) [])
+           (catch Exception _
+             ;; A truncated write used to poison the whole session: every
+             ;; later append threw on read, so memory froze at the last
+             ;; good write (amnesia F1, 2026-09-08). Archive the corpse —
+             ;; never eat history silently — and start clean.
+             (try
+               (fs/move path (fs/path (str path ".corrupt-" (System/currentTimeMillis))))
+               (catch Exception _ nil))
+             []))
       [])))
 
 (def ^:private secret-patterns
@@ -39,14 +48,67 @@
   (reduce (fn [acc pat] (str/replace acc pat "<REDACTED-SECRET>"))
           s secret-patterns))
 
-(defn append-turn! [session-id turn]
+(defn- channel-read-all [^java.nio.channels.FileChannel ch]
+  (.position ch 0)
+  (let [sz (.size ch)]
+    (if (zero? sz)
+      ""
+      (let [bb (java.nio.ByteBuffer/allocate (int sz))]
+        (while (.hasRemaining bb) (.read ch bb))
+        (.flip bb)
+        (let [bs (byte-array sz)]
+          (.get bb bs)
+          (String. bs java.nio.charset.StandardCharsets/UTF_8))))))
+
+(defn- channel-overwrite-all [^java.nio.channels.FileChannel ch ^String s]
+  (let [bs (.getBytes s java.nio.charset.StandardCharsets/UTF_8)
+        bb (java.nio.ByteBuffer/wrap bs)]
+    (.position ch 0)
+    (while (.hasRemaining bb) (.write ch bb))
+    (.truncate ch (alength bs))
+    (.force ch true)))
+
+(defn- atomic-mutate-session!
+  "Applies (f current-turns) under an exclusive FileChannel lock on the session
+   file, using the SAME open channel for read, truncate, and rewrite.
+
+   CRITICAL (2026-09-08): POSIX fcntl locks are dropped by the kernel the
+   instant ANY file descriptor to the same file is closed by the process.
+   Slurping or spitting via clojure.java.io within a locked FileChannel opens
+   a second fd whose close silently DISCARDS the process's own lock, exposing
+   the file to concurrent writers mid-turn. All I/O must ride this channel."
+  [session-id f]
   (let [path (session-file session-id)
-        turns (conj (load-turns session-id) turn)]
-    (fs/create-dirs (fs/parent path))
-    (spit (str path) (redact-secrets (pr-str turns)))
-    ;; Born private: tool results may carry anything the world showed us.
-    (fs/set-posix-file-permissions path "rw-------")
-    turns))
+        parent (fs/parent path)]
+    (fs/create-dirs parent)
+    (let [opts (into-array java.nio.file.StandardOpenOption
+                           [java.nio.file.StandardOpenOption/CREATE
+                            java.nio.file.StandardOpenOption/READ
+                            java.nio.file.StandardOpenOption/WRITE])]
+      (with-open [ch (java.nio.channels.FileChannel/open path opts)]
+        (.lock ch)
+        (let [raw (channel-read-all ch)
+              turns (if (str/blank? raw)
+                      []
+                      (try (or (edn/read-string raw) [])
+                           (catch Exception _
+                             ;; Corrupt file under lock — archive and start clean
+                             (try
+                               (let [corrupt (str path ".corrupt-" (System/currentTimeMillis))]
+                                 (spit corrupt raw))
+                               (catch Exception _ nil))
+                             [])))
+              updated (vec (f (vec turns)))
+              payload (redact-secrets (pr-str updated))]
+          (channel-overwrite-all ch payload)
+          (fs/set-posix-file-permissions path "rw-------")
+          updated)))))
+
+(defn append-turn! [session-id turn]
+  (atomic-mutate-session! session-id #(conj % turn)))
+
+(defn save-turns! [session-id turns]
+  (atomic-mutate-session! session-id (constantly (vec turns))))
 
 (defn load-metadata [session-id]
   (let [path (metadata-file session-id)]
