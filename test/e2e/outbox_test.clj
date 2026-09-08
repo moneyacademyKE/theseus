@@ -109,3 +109,18 @@
                                    {:ok true :result {:message_id 1}})})
       :sleep-fn (fn [_])})
     (is (zero? (outbox/pending-count c)))))
+
+(deftest mismatched-filename-cannot-strand-a-record
+  (testing "a foreign file whose name disagrees with its :id is acked by
+            FILE on success — a recomputed path would strand it into
+            endless redelivery"
+    (let [root (temp-root)
+          c (cfg root)]
+      (spit (str root "/foreign-name.edn")
+            (pr-str {:id "different-id" :method "sendMessage" :attempts 0
+                     :created/at "2026-01-01T00:00:00Z"
+                     :params {:chat_id -1 :text "foreign"}
+                     :routing {:chat-id -1}}))
+      (let [result (outbox/drain! c (fn [_] :ok))]
+        (is (= 1 (:sent result)))
+        (is (zero? (outbox/pending-count c)))))))

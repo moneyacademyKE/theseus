@@ -106,6 +106,15 @@
                   dead-dir " @ " (java.time.Instant/now)))
     (flush)))
 
+(defn- mark-file-attempt!
+  "Bump the attempt counter on a listed file, using the record already in
+   hand — no re-read, so the ack/delete race below cannot lose the count."
+  [file record]
+  (let [attempts (inc (long (or (:attempts record) 0)))]
+    (spit (str file) (pr-str (assoc record :attempts attempts
+                                           :last-attempt/at (str (java.time.Instant/now)))))
+    attempts))
+
 (defn drain!
   "Attempt every pending intent (oldest first, capped per call) through the
    injected `attempt-fn` — a fn of one record that returns on success and
@@ -129,14 +138,14 @@
              (update acc :poison inc))
          (try
            (attempt-fn record)
-           (ack! cfg (:id record))
+           ;; Delete the FILE that earned the success — never a recomputed
+           ;; path. A mismatched :id cannot strand the file into endless
+           ;; redelivery this way.
+           (fs/delete-if-exists file)
            (update acc :sent inc)
            (catch Exception e
-             ;; The sender may ack (delete) the file between our listing and
-             ;; this mark — a won race, not an error. Count it as deferred.
-             (let [attempts (try (mark-attempt! cfg (:id record))
-                                 (catch Exception _ :gone))]
-               (if (and (int? attempts) (>= attempts max-attempts))
+             (let [attempts (mark-file-attempt! file record)]
+               (if (>= attempts max-attempts)
                  (do (dead! cfg file record
                             (str "gave up after " max-attempts " attempts"))
                      (update acc :dead inc))
