@@ -260,7 +260,11 @@
   (approval/waiting-approver
    {:session-id session-id
     :channel :telegram
-    :timeout-ms (or (:approval-timeout-ms telegram-cfg) 30000)
+    ;; Groups breathe slower than DMs: a human sees the keyboard, finishes
+    ;; their coffee, types "you have my approval" — 30s was a denial machine
+    ;; (2026-09-08 approval-deadlock). 10 minutes by default in groups.
+    :timeout-ms (or (:approval-timeout-ms telegram-cfg)
+                    (if (or thread-id (neg? (long chat-id))) 600000 30000))
     :notify #(approval-ui/send-approval-request! telegram-cfg chat-id thread-id %)
     :on-expire (fn [pending sent]
                  (when-let [mid (:message-id sent)]
@@ -342,6 +346,16 @@
       (when (= 1 (count delivered))
         (state/record-reply! chat-id reply-to-id
                              (:message-id (first delivered))))
+      ;; 2026-09-08 amnesia fix: Telegram never echoes a bot's own messages
+      ;; back via getUpdates — record the answer in the topic buffer or the
+      ;; agent forgets everything it itself said.
+      (when (and (group/group-chat? input-message)
+                 (seq (str (:assistant/final turn))))
+        (gctx/record! chat-id
+                      {:message-id (or (:message-id (first delivered)) 0)
+                       :from "assistant"
+                       :text (:assistant/final turn)}
+                      :thread-id thread-id))
       delivered)))
 
 (defn- process-message!
@@ -374,30 +388,49 @@
             decision)
            {:thread-id thread-id})
           (if-let [cmd (chat-command text)]
-            (let [sent (delivery/send-message!
-                        telegram-cfg chat-id
-                        (if (contains? #{:goal-request :build-goal} cmd)
-                          (flow/with-flow! telegram-cfg chat-id thread-id
-                            (fn [emit]
-                              (case cmd
-                                :goal-request (goal-bridge/handle-request! text chat-id thread-id emit)
-                                :build-goal (goal-bridge/route-build-request! text chat-id thread-id emit)
-                                nil)))
-                          (handle-chat-command cmd session-id text chat-id thread-id))
+            (let [reply-text (if (contains? #{:goal-request :build-goal} cmd)
+                               (flow/with-flow! telegram-cfg chat-id thread-id
+                                 (fn [emit]
+                                   (case cmd
+                                     :goal-request (goal-bridge/handle-request! text chat-id thread-id emit)
+                                     :build-goal (goal-bridge/route-build-request! text chat-id thread-id emit)
+                                     nil)))
+                               (handle-chat-command cmd session-id text chat-id thread-id))
+                  sent (delivery/send-message!
+                        telegram-cfg chat-id reply-text
                         {:thread-id thread-id
                          :reply-to-message-id (:message_id message)})]
               ;; B2: command replies (goals/goal/usage/autonomy…) rode a
               ;; different send path and never reached the replies ledger,
               ;; so "did Eileen answer?" was unauditable for exactly the
               ;; messages that matter most.
-              (state/record-reply! chat-id (:message_id message) (:message-id sent))
+              (when (and (map? sent) (:message-id sent))
+                (state/record-reply! chat-id (:message_id message) (:message-id sent))
+                ;; 2026-09-08 amnesia fix: a command reply must be memory,
+                ;; not just an audit id — record it in the topic buffer and
+                ;; as a durable session turn (goal launches included), or
+                ;; follow-ups find nothing.
+                (when (group/group-chat? message)
+                  (gctx/record! chat-id
+                                {:message-id (:message-id sent)
+                                 :from "assistant"
+                                 :text (str reply-text)}
+                                :thread-id thread-id))
+                (when-not (= :new cmd)
+                  (session/append-turn!
+                   session-id {:session/id session-id
+                               :user/input text
+                               :assistant/final (str reply-text)
+                               :source :command
+                               :created/at (str (java.time.Instant/now))})))
               sent)
           (let [composed-text (or (skill-command text) text)
                 edit-context (or (edit-notes-context session-id) "")
                 history-context (if (and (:group-context telegram-cfg true)
                                          (group/group-chat? message))
                                   (or (gctx/history-block chat-id (:message_id message)
-                                                          :size (or (:group-context-size telegram-cfg) 30))
+                                                          :size (or (:group-context-size telegram-cfg) 30)
+                                                          :thread-id thread-id)
                                       "")
                                   "")
                 input-message (assoc message :text
@@ -442,7 +475,8 @@
             edit-context (or (edit-notes-context session-id) "")
             history-context (if (:group-context telegram-cfg true)
                               (or (gctx/history-block chat-id (:message_id primary)
-                                                      :size (or (:group-context-size telegram-cfg) 30))
+                                                      :size (or (:group-context-size telegram-cfg) 30)
+                                                      :thread-id (group/topic-id primary))
                                   "")
                               "")
             _ (when (:react-ack telegram-cfg true)
@@ -512,7 +546,8 @@
                                        :from (or (get-in m [:from :first_name])
                                                  (get-in m [:from :username]))
                                        :text (or (:text m) (:caption m))}
-                                  :size (or (:group-context-size telegram-cfg) 30))))))
+                                  :size (or (:group-context-size telegram-cfg) 30)
+                                  :thread-id (group/topic-id m))))))
             (if (:album? batch)
               (process-album! cfg bot batch)
               (process-message! cfg bot (:message (first (:updates batch)))))
@@ -524,6 +559,11 @@
               (when (:callback_query u)
                 (approval-ui/handle-callback! cfg u)))
             (mark-done! seen processed [u])))))
+    ;; 2026-09-08: watcher/recovery verdicts land in goals/<name>/outcome.edn
+    ;; — drain them into session turns every cycle so finished work becomes
+    ;; memory instead of a message that evaporates. A drain failure must
+    ;; never kill polling.
+    (try (goal-bridge/drain-outcomes!) (catch Exception _ nil))
     {:updates @processed :conflict? conflict?}))
 
 (defn poll-loop!
@@ -533,6 +573,19 @@
    menu at boot — failure prints one line and never blocks polling."
   [& {:keys [interval-ms] :or {interval-ms 2000}}]
   (bot-commands/register-safely!)
+  ;; 2026-09-08 restart auto-resume: a poller/daemon restart used to orphan
+  ;; every active goal silently. Recover: announce verdicts that landed
+  ;; while we were down, re-launch runs that died mid-flight (detached —
+  ;; never author on the boot path).
+  (try
+    (let [telegram-cfg (:telegram (config/load-config))]
+      (doseq [{:keys [chat-id thread-id text]} (goal-bridge/recover-interrupted!)]
+        (try (delivery/send-message! telegram-cfg chat-id text {:thread-id thread-id})
+             (catch Exception e
+               (println (str "recovery announce failed: " (.getMessage e)))))))
+    (catch Exception e
+      (println (str "goal recovery at boot failed: " (.getMessage e)))))
+  (flush)
   (loop []
     (try
       (let [{:keys [conflict?]} (poll-once!)]
