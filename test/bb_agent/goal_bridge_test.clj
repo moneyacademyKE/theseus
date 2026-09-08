@@ -233,3 +233,23 @@
       (is (= "s3cr3t" (-> cfg :notify :hmac-secret)) "secret rides from runtime config"))
     (let [cfg (bridge/promote-config {:name "llm-guess" :goal {}} "bridge-slug")]
       (is (= "bridge-slug" (:name cfg)) "bridge data wins over anything the LLM wrote"))))
+
+(deftest authoring-timeout-test
+  (testing "a wedged authoring turn returns a stall string instead of parking forever"
+    (with-redefs [config/load-config (constantly {:goal/authoring-timeout-ms 100})
+                  core/run-turn! (fn [& _] (Thread/sleep 5000))]
+      (let [ws (str *tmp* "/ws-stall")
+            _ (fs/create-dirs ws)
+            started (System/currentTimeMillis)
+            result (#'bridge/author-with-validation! "stall-goal" ws "spec" nil)]
+        (is (string? result))
+        (is (str/includes? result "authoring stalled"))
+        (is (< (- (System/currentTimeMillis) started) 4000)))))
+  (testing "a non-timeout result flows through unchanged (validation failure string)"
+    (with-redefs [config/load-config (constantly {:goal/authoring-timeout-ms 30000})
+                  core/run-turn! (fn [& _] nil)]
+      (let [ws (str *tmp* "/ws-invalid")
+            _ (fs/create-dirs ws)
+            result (#'bridge/author-with-validation! "invalid-goal" ws "spec" nil)]
+        (is (string? result))
+        (is (not (str/includes? result "authoring stalled")))))))

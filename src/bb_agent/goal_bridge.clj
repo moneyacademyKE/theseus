@@ -185,17 +185,20 @@ Do NOT run the goal. Write files only.")
            "the first act. Either make act.sh's first-run path establish them, "
            "or move that check into :goal instead of :integrity."))))
 
-(defn ^:private author-with-validation!
+(def ^:private default-authoring-timeout-ms
+  "Wall-clock budget for the whole authoring phase. 2026-09-08: a resume sat
+   60+ min parked on a dead provider wait (0% CPU, no ledgers, no verdict) —
+   from outside, provider latency and a hang are indistinguishable, so the
+   phase needs its own clock. Override via :goal/authoring-timeout-ms."
+  600000)
+
+(defn ^:private author-attempts!
   "One authoring turn, then the validator judges; on failure, one repair
    turn carrying the exact validation errors; then the baseline-integrity
    pre-flight (the runner's iteration-0 halt, pre-paid) with one repair.
    Returns nil on success or the problems string."
-  [name ws spec emit]
-  (let [cfg-path (str ws "/project.edn")
-        acfg (cond-> (author-cfg name ws)
-               emit (assoc :status/emit emit))
-        refs [(str ws "/references/normalize.config.edn")
-              (str ws "/references/usage-stats.config.edn")]]
+  [name ws spec acfg refs]
+  (let [cfg-path (str ws "/project.edn")]
     (core/run-turn! acfg
                     (format author-prompt ws (first refs) (second refs) ws
                             (subs name 0 (min 12 (count name))) spec))
@@ -217,6 +220,25 @@ Do NOT run the goal. Write files only.")
                 (recur 1))
             baseline)
           nil)))))
+
+(defn ^:private author-with-validation!
+  "author-attempts! under a wall-clock budget: a wedged provider call must
+   not park the poller (launch authors inline) or a detached resume forever.
+   On timeout the abandoned thread lingers parked — bounded waste, never a
+   hang (same contract as policy.clj's pred eval). Returns nil on success,
+   else the problems/stall string."
+  [name ws spec emit]
+  (let [acfg (cond-> (author-cfg name ws)
+               emit (assoc :status/emit emit))
+        refs [(str ws "/references/normalize.config.edn")
+              (str ws "/references/usage-stats.config.edn")]
+        budget (or (:goal/authoring-timeout-ms acfg) default-authoring-timeout-ms)
+        result (deref (future (author-attempts! name ws spec acfg refs))
+                      budget ::timed-out)]
+    (if (= ::timed-out result)
+      (str "authoring stalled: no completion within " (quot budget 60000)
+           " min (provider hang or wedged turn)")
+      result)))
 
 (defn ^:private spawn-detached!
   "nohup + background + echo pid: the child survives the poller and reports
