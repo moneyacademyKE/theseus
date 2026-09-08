@@ -99,7 +99,8 @@
       (let [result (run-agent home "read note")
             turn (first (edn/read-string (slurp (str session-file))))]
         (is (= 0 (:exit result)) (:err result))
-        (is (str/includes? (:out result) "🚫 read_file denied")
+        (is (or (str/includes? (:out result) "🚫 read_file denied")
+                (str/includes? (:out result) "🚫 read_file needs your approval"))
             "user-facing denial is a clean sentence, never raw EDN")
         (is (= 1 @calls))
         (is (= ["read_file"] (mapv :tool/name (:tool/requests turn))))

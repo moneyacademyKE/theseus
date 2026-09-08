@@ -183,5 +183,7 @@
         "the approval prompt was sent")
     (is (some (fn [t] (and t (str/includes? t "xpired"))) edit-texts)
         "the expired prompt's keyboard is removed")
-    (is (some (fn [t] (and t (str/includes? t "denied"))) texts)
+    (is (some (fn [t] (and t (or (str/includes? t "denied")
+                                 (str/includes? t "needs your approval"))))
+              texts)
         "the denial is the final receipt")))

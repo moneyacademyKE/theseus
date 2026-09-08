@@ -21,7 +21,8 @@
     (try
       (let [result (run-agent home (str "try denied shell " denied-command))]
         (is (= 0 (:exit result)) (:err result))
-        (is (str/includes? (:out result) "🚫 shell denied"))
+        (is (or (str/includes? (:out result) "🚫 shell denied")
+                (str/includes? (:out result) "🚫 shell needs your approval")))
         (is (not (str/includes? (:out result) "tool-results="))
             "the user-facing text is a clean sentence, never raw EDN")
         (is (not (fs/exists? side-effect-file)))

@@ -141,7 +141,9 @@
    reply the human reads."
   [results]
   (let [names (->> results (map :tool/name) distinct (str/join ", "))]
-    (str "🚫 " names " denied — needs explicit approval.")))
+    (str "🚫 " names " needs your approval — it's waiting right now. "
+         "Reply `approve` (or tap Allow on the request) to let it run, "
+         "`deny` to refuse. The request stays open for up to 10 minutes.")))
 
 (defn- safe-emit
   "Best-effort status event. A broken status surface must never kill the turn."
