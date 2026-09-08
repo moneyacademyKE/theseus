@@ -586,6 +586,61 @@
     (try (drain-outbox! telegram-cfg) (catch Exception _ nil))
     {:updates @processed :conflict? conflict?}))
 
+(defn- install-shutdown-hook!
+  "SIGTERM (launchd kickstart, system stop) used to amputate the poller
+   mid-cycle: in-flight sends died and the getUpdates request stayed held,
+   so the replacement process ate a 409 Conflict and one delivery was lost
+   (2026-09-08). The hook flips :running? off, then gives an in-flight cycle
+   up to `grace-ms` to finish before the VM halts. A sleeping poller exits
+   immediately; a working one gets bounded grace and no more.
+
+   No final drain here: the outbox drains every cycle during life and again
+   on the next boot, so a hook-side drain would duplicate responsibility for
+   zero additional guarantee."
+  [lifecycle grace-ms]
+  (.addShutdownHook
+   (Runtime/getRuntime)
+   (Thread.
+    (fn []
+      (swap! lifecycle assoc :running? false)
+      (let [deadline (+ (System/currentTimeMillis) grace-ms)]
+        (while (and (:in-cycle? @lifecycle)
+                    (< (System/currentTimeMillis) deadline))
+          (Thread/sleep 50)))
+      (println (str "poller: graceful shutdown (in-flight-cycle="
+                    (boolean (:in-cycle? @lifecycle)) ") @ "
+                    (java.time.Instant/now)))
+      (flush))))
+  lifecycle)
+
+(defn run-poll-cycles!
+  "The poll-loop skeleton with its body injected, so the lifecycle is
+   testable without the Bot API. Runs `body-fn` until :running? flips false
+   (the shutdown hook does that on SIGTERM); :in-cycle? is true exactly
+   while a body run is in flight so the hook waits for the current cycle
+   instead of cutting it. Sleeps interval-ms between cycles, 5x after a
+   getUpdates conflict. Body errors print one line and cost one interval —
+   polling must survive a bad cycle. Returns the completed cycle count."
+  [lifecycle interval-ms body-fn]
+  (loop [cycles 0]
+    (if-not (:running? @lifecycle)
+      cycles
+      (let [backoff? (try
+                       (swap! lifecycle assoc :in-cycle? true)
+                       (boolean (:conflict? (body-fn)))
+                       (catch Exception e
+                         (println (str "telegram poll error ["
+                                       (.getName (.getClass e)) "] "
+                                       (.getMessage e)
+                                       (when-let [d (ex-data e)]
+                                         (str " data " (pr-str d)))
+                                       " @ " (java.time.Instant/now)))
+                         (flush)
+                         false))]
+        (swap! lifecycle assoc :in-cycle? false)
+        (Thread/sleep (long (if backoff? (* 5 interval-ms) interval-ms)))
+        (recur (inc cycles))))))
+
 (defn poll-loop!
   "Continuous polling with a sleep between cycles. Stop with ctrl-c.
    A getUpdates conflict (another active client) backs off 5x for one
@@ -606,15 +661,7 @@
     (catch Exception e
       (println (str "goal recovery at boot failed: " (.getMessage e)))))
   (flush)
-  (loop []
-    (try
-      (let [{:keys [conflict?]} (poll-once!)]
-        (Thread/sleep (long (if conflict? (* 5 interval-ms) interval-ms))))
-      (catch Exception e
-        (println (str "telegram poll error [" (.getName (.getClass e))
-                      "] " (.getMessage e)
-                      (when-let [d (ex-data e)] (str " data " (pr-str d)))
-                      " @ " (java.time.Instant/now)))
-        (flush)
-        (Thread/sleep (long interval-ms))))
-    (recur)))
+  (let [lifecycle (install-shutdown-hook!
+                   (atom {:running? true :in-cycle? false}) 10000)]
+    (run-poll-cycles! lifecycle interval-ms
+                      (fn [] (poll-once!)))))

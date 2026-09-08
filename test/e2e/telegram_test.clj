@@ -1,6 +1,7 @@
 (ns e2e.telegram-test
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [bb-agent.telegram :as telegram]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -384,3 +385,26 @@
       (finally
         (stop-server)
         (fs/delete-tree home)))))
+
+(deftest poll-cycle-lifecycle
+  (testing "the loop stops when :running? flips and never leaves a cycle dangling"
+    (let [lifecycle (atom {:running? true :in-cycle? false})
+          calls (atom 0)
+          cycles (telegram/run-poll-cycles!
+                  lifecycle 1
+                  (fn [] (when (= 2 (swap! calls inc))
+                           (swap! lifecycle assoc :running? false))
+                    {:conflict? false}))]
+      (is (= 2 cycles))
+      (is (= 2 @calls))
+      (is (false? (:in-cycle? @lifecycle)))))
+  (testing "a throwing body prints, counts, and still honours the stop"
+    (let [lifecycle (atom {:running? true :in-cycle? false})
+          calls (atom 0)]
+      (telegram/run-poll-cycles!
+       lifecycle 1
+       (fn [] (when (= 3 (swap! calls inc))
+                (swap! lifecycle assoc :running? false))
+         (throw (ex-info "bad cycle" {}))))
+      (is (= 3 @calls))
+      (is (false? (:in-cycle? @lifecycle))))))
