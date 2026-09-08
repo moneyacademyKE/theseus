@@ -8,6 +8,7 @@
    never mistake silence for delivery. HTTP and sleep are injectable for
    deterministic tests."
   (:require [babashka.http-client :as http]
+            [bb-agent.outbox :as outbox]
             [bb-agent.telegram-rich :as tr]
             [cheshire.core :as json]
             [clojure.string :as str]))
@@ -104,13 +105,37 @@
                           :attempts attempt})))))
 
 (defn- post-message
+  "Every sendMessage rides the durable edge: the intent is enqueued BEFORE
+   the attempt, and only a confirmed API success acks it. A crash mid-send
+   leaves the file for the next drain — at-least-once, never silent loss.
+   An outbox write failure must not block an attempt: durability is a
+   safety net, not a gate (the send proceeds and the throw surfaces)."
   [cfg chat-id text opts {:keys [transport sleep-fn]}]
-  (post-api cfg "sendMessage"
-            {:headers {"content-type" "application/json"}
-             :body (json/generate-string
-                    (request-body chat-id text opts))}
-            {:chat-id chat-id :thread-id (:thread-id opts)}
-            {:transport transport :sleep-fn sleep-fn}))
+  (let [body (request-body chat-id text opts)
+        intent-id (try
+                    (outbox/enqueue! cfg {:method "sendMessage"
+                                          :params body
+                                          :routing {:chat-id chat-id
+                                                    :thread-id (:thread-id opts)}})
+                    (catch Exception e
+                      (println (str "outbox enqueue failed (sending anyway): "
+                                    (.getMessage e)
+                                    " @ " (java.time.Instant/now)))
+                      (flush)
+                      nil))]
+    (try
+      (let [result (post-api cfg "sendMessage"
+                             {:headers {"content-type" "application/json"}
+                              :body (json/generate-string body)}
+                             {:chat-id chat-id :thread-id (:thread-id opts)}
+                             {:transport transport :sleep-fn sleep-fn})]
+        (when intent-id (outbox/ack! cfg intent-id))
+        result)
+      (catch Exception e
+        (when intent-id
+          (try (outbox/mark-attempt! cfg intent-id)
+               (catch Exception _ nil)))
+        (throw e)))))
 
 (def ^:private pre-code-re #"(?s)<(pre|code)[^>]*>(.*?)</\1>")
 (def ^:private link-re #"(?s)<a\s+href=\"([^\"]+)\"[^>]*>(.*?)</a>")

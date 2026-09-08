@@ -5,7 +5,10 @@
 
 (def telegram-config
   {:base-url "https://telegram.test"
-   :token "TESTTOKEN"})
+   :token "TESTTOKEN"
+   ;; 2026-09-08 durable outbox: every send now persists intent first — point
+   ;; the queue at a throwaway dir so tests never touch a live home.
+   :outbox-root (str (System/getProperty "java.io.tmpdir") "/delivery-test-outbox")})
 
 (defn- response
   [status body]

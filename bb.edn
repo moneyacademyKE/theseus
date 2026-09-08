@@ -189,6 +189,7 @@
                       :requires ([clojure.test :as t]
                                  [e2e.telegram-test]
                                  [e2e.telegram-delivery-test]
+                                 [e2e.outbox-test]
                                  [e2e.telegram-attachment-test]
                                  [e2e.telegram-extract-test]
                                  [e2e.telegram-presence-test]
@@ -204,6 +205,7 @@
                       :task (let [{:keys [fail error]}
                                   (t/run-tests 'e2e.telegram-test
                                                'e2e.telegram-delivery-test
+                                               'e2e.outbox-test
                                                'e2e.telegram-attachment-test
                                                'e2e.telegram-extract-test
                                                'e2e.telegram-presence-test

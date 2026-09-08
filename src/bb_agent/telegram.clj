@@ -6,6 +6,7 @@
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.goal-bridge :as goal-bridge]
+            [bb-agent.outbox :as outbox]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
@@ -512,6 +513,21 @@
       (state/save-seen! @seen)
       (state/save-offset! (inc last-id)))))
 
+(defn- drain-outbox!
+  "Re-attempt every persisted-but-unconfirmed outbound message through the
+   same result-aware delivery ladder as a live send. Runs at boot and every
+   poll cycle: a kill between enqueue and confirmed send replays from disk
+   instead of vanishing (the 2026-09-08 409 casualty)."
+  [telegram-cfg]
+  (outbox/drain!
+   telegram-cfg
+   (fn [record]
+     (delivery/post-api telegram-cfg (:method record)
+                        {:headers {"content-type" "application/json"}
+                         :body (json/generate-string (:params record))}
+                        (:routing record)
+                        delivery/default-runtime))))
+
 (defn poll-once! []
   (let [cfg (config/load-config)
         telegram-cfg (:telegram cfg)
@@ -564,6 +580,10 @@
     ;; memory instead of a message that evaporates. A drain failure must
     ;; never kill polling.
     (try (goal-bridge/drain-outcomes!) (catch Exception _ nil))
+    ;; 2026-09-08 durable outbox: any send that died mid-flight (process
+    ;; kill, provider blackout) is retried from disk every cycle. Same rule
+    ;; as above — a drain failure must never kill polling.
+    (try (drain-outbox! telegram-cfg) (catch Exception _ nil))
     {:updates @processed :conflict? conflict?}))
 
 (defn poll-loop!
