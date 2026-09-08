@@ -111,6 +111,45 @@
         (is (fs/exists? (str home "/goals/active.edn")) "registry untouched")
         (is (not (fs/exists? (str ws "/outcome.edn"))))))))
 
+(deftest recover-handles-parallel-topics-independently
+  "Topic-scoped registry (parallelism, 2026-09-08): each dead run is
+   announced in ITS own topic and a live runner in another topic survives
+   the recovery untouched."
+  (with-home
+    (fn [home]
+      (doseq [[gname log] [["topic-196-goal" "GOAL FULFILLED {}"]
+                           ["topic-200-goal" "act 1 ok"]]]
+        (let [ws (str home "/goals/" gname)]
+          (fs/create-dirs ws)
+          (spit (str ws "/run.log") log)))
+      (let [live-pid (.pid (java.lang.ProcessHandle/current))
+            resumed (atom [])
+            _ (spit (str home "/goals/active.edn")
+                    (pr-str {[-1001 196] {:pid dead-pid :name "topic-196-goal"
+                                          :chat-id -1001 :thread-id 196}
+                             [-1001 200] {:pid dead-pid :name "topic-200-goal"
+                                          :chat-id -1001 :thread-id 200}
+                             [-1001 999] {:pid live-pid :name "still-running"
+                                          :chat-id -1001 :thread-id 999}}))
+            anns (with-redefs [gb/resume-detached!
+                               (fn [gname chat-id thread-id]
+                                 (swap! resumed conj [gname chat-id thread-id])
+                                 "spawned")]
+                   (gb/recover-interrupted!))]
+        (is (= 2 (count anns)) "two dead runs announced; the live runner is ignored")
+        (is (= #{196 200} (set (map :thread-id anns)))
+            "each announcement routes to its own topic")
+        (is (= [["topic-200-goal" -1001 200]] @resumed)
+            "only the verdict-less dead run is resumed")
+        (let [a196 (some #(when (= 196 (:thread-id %)) %) anns)
+              a200 (some #(when (= 200 (:thread-id %)) %) anns)]
+          (is (str/includes? (:text a196) "FULFILLED"))
+          (is (str/includes? (:text a200) "resuming")))
+        (is (= {[-1001 999] {:pid live-pid :name "still-running"
+                             :chat-id -1001 :thread-id 999}}
+               (edn/read-string (slurp (str home "/goals/active.edn"))))
+            "live entry survives; handled entries are dropped")))))
+
 (deftest recover-without-active-run-is-noop
   (with-home
     (fn [home]

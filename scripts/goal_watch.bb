@@ -90,7 +90,6 @@
       pid (some-> pid str)
       ws (str (home) "/goals/" name)
       run-log (str ws "/run.log")
-      active (str (home) "/goals/active.edn")
       token (bot-token)]
   (when-not (map? args)
     (spit (str (home) "/goals/.watch-last-error")
@@ -124,5 +123,6 @@
               (post! token chat-id thread-id text ws))
             (catch Exception e
               (spit (str ws "/watch.err") (.getMessage e))))))))
-  (when (.exists (io/file active))
-    (try (io/delete-file active) (catch Exception _))))
+  ;; topic-scoped registry: drop ONLY this goal's entry — a raw file delete
+  ;; would wipe other topics' live runs (parallelism, 2026-09-08).
+  (try (gb/unregister-run! name) (catch Exception _ nil)))

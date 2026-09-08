@@ -34,18 +34,47 @@
   []
   (.pid (:proc (p/process "sleep" "30"))))
 
-(deftest active-run-test
-  (testing "no registry file → nil"
-    (is (nil? (bridge/active-run))))
-  (testing "dead pid → nil and registry cleared"
-    (spit (bridge/active-file) (pr-str {:pid 99999999 :name "stale"}))
-    (is (nil? (bridge/active-run)))
-    (is (not (.exists (io/file (bridge/active-file))))))
-  (testing "live pid → the run"
+(deftest registry-test
+  (testing "no registry file → empty"
+    (is (= {} (bridge/read-runs)))
+    (is (nil? (bridge/active-run-for 7 9))))
+  (testing "live pid → the topic's run (legacy single-run shape re-keyed)"
     (let [pid (live-pid)]
-      (spit (bridge/active-file) (pr-str {:pid pid :name "live"}))
-      (is (= "live" (:name (bridge/active-run))))
-      (p/shell {:continue true} "kill" (str pid)))))
+      (spit (bridge/active-file) (pr-str {:pid pid :name "live" :chat-id 7 :thread-id 9}))
+      (is (= "live" (:name (bridge/active-run-for 7 9))))
+      (is (nil? (bridge/active-run-for 7 10)) "a different topic sees nothing")
+      (p/shell {:continue true} "kill" (str pid))))
+  (testing "dead pid → nil and the entry is cleared"
+    (spit (bridge/active-file)
+          (pr-str {[7 9] {:pid 99999999 :name "stale" :chat-id 7 :thread-id 9}}))
+    (is (nil? (bridge/active-run-for 7 9)))
+    (is (not (.exists (io/file (bridge/active-file)))))))
+
+(deftest parallel-topics-test
+  "The registry is keyed by [chat-id thread-id] so topics run goals in
+   parallel (owner directive 2026-09-08: linkcheck + mdtoc simultaneously,
+   no context pollution, one goal per topic)."
+  (testing "two live topics coexist in the registry"
+    (let [pid-a (live-pid)
+          pid-b (live-pid)]
+      (bridge/register-run! 1 196 {:pid pid-a :name "goal-a" :chat-id 1 :thread-id 196})
+      (bridge/register-run! 1 200 {:pid pid-b :name "goal-b" :chat-id 1 :thread-id 200})
+      (is (= "goal-a" (:name (bridge/active-run-for 1 196))))
+      (is (= "goal-b" (:name (bridge/active-run-for 1 200))))
+      (testing "a finishing run unregisters by name, leaving the other topic alone"
+        (bridge/unregister-run! "goal-a")
+        (is (nil? (bridge/active-run-for 1 196)))
+        (is (= "goal-b" (:name (bridge/active-run-for 1 200)))))
+      (p/shell {:continue true} "kill" (str pid-b))
+      (is (nil? (bridge/active-run-for 1 200)) "dead pid self-clears")
+      (is (not (.exists (io/file (bridge/active-file))))
+          "last entry cleared → registry file removed")))
+  (testing "dead entries stay visible to the pure read — recovery owns them"
+    (spit (bridge/active-file)
+          (pr-str {[1 5] {:pid 99999999 :name "dead" :chat-id 1 :thread-id 5}}))
+    (is (= 1 (count (bridge/read-runs))))
+    (bridge/active-run-for 1 5)
+    (is (not (.exists (io/file (bridge/active-file)))))))
 
 (deftest scaffold-test
   (let [ws (bridge/scaffold! "scaffolded")]
@@ -111,11 +140,15 @@
     (is (str/includes? (bridge/handle-request! "/goal" 1 2 nil) "Usage:")))
   (testing "/goals is not hijacked by the /goal seam"
     (is (nil? (bridge/handle-request! "/goals" 1 2 nil))))
-  (testing "active run → refusal naming it"
+  (testing "busy topic → refusal naming it; another topic is not blocked"
     (let [pid (live-pid)]
-      (spit (bridge/active-file) (pr-str {:pid pid :name "busy-goal"}))
-      (is (str/includes? (bridge/handle-request! "/goal build x" 1 2 nil) "busy-goal"))
-      (p/shell {:continue true} "kill" (str pid))))
+      (bridge/register-run! 1 2 {:pid pid :name "busy-goal" :chat-id 1 :thread-id 2})
+      (let [refusal (bridge/handle-request! "/goal build x" 1 2 nil)]
+        (is (str/includes? refusal "busy-goal"))
+        (is (str/includes? refusal "one goal per topic")))
+      (is (nil? (bridge/active-run-for 3 4)) "a different topic is free to launch")
+      (p/shell {:continue true} "kill" (str pid))
+      (bridge/unregister-run! "busy-goal"))) ; explicit cleanup: later tests in this deftest assert an empty registry
   (testing "blank spec → usage (a trimmed blank IS bare /goal)"
     (is (str/includes? (bridge/handle-request! "/goal    " 1 2 nil) "Usage:"))
     (is (str/includes? (bridge/handle-request! (str "/goal " (apply str (repeat 500 "x"))) 1 2 nil)

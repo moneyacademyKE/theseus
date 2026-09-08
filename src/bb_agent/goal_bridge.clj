@@ -4,8 +4,8 @@
    judge, one repair round), scaffolds a workspace OUTSIDE the repo (rollback
    restores the whole workdir — configs must not live inside), launches
    `bb goal` detached with a watcher that posts the outcome to the requesting
-   topic. One goal at a time; the runner's lock is per-workdir so the bridge
-   keeps its own registry."
+   topic. One goal per topic (registry keyed by [chat-id thread-id]);
+   the runner's lock is per-workdir so the bridge keeps its own registry."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
             [bb-agent.config :as config]
@@ -28,15 +28,59 @@
     (zero? (:exit (p/shell {:continue true :out :string :err :string} "kill" "-0" (str pid))))
     (catch Exception _ false)))
 
-(defn active-run
-  "The live goal run, if any. A stale registry entry (dead pid) is cleared."
+(defn- runs-map
+  "Registry content → {[chat-id thread-id] entry}. The legacy single-run
+   shape (a bare {:pid ...} map) is re-keyed, so a registry written before
+   parallelism upgrades in place; malformed entries (no pid) are dropped."
+  [content]
+  (let [m (cond
+            (and (map? content) (contains? content :pid))
+            {[(:chat-id content) (:thread-id content)] content}
+            (map? content) content
+            :else {})]
+    (into {} (filter (comp :pid val)) m)))
+
+(defn read-runs
+  "The goal registry, keyed by [chat-id thread-id]. Pure read: dead
+   entries stay visible — recovery owns them (pruning on read would
+   orphan the restart-announcement path)."
   []
   (let [f (io/file (active-file))]
-    (when (.exists f)
-      (let [run (edn/read-string (slurp f))]
-        (if (pid-alive? (:pid run))
-          run
-          (do (fs/delete f) nil))))))
+    (if (.exists f)
+      (runs-map (try (edn/read-string (slurp f)) (catch Exception _ nil)))
+      {})))
+
+(defn write-runs!
+  "Persist the registry; an empty map removes the file."
+  [runs]
+  (let [f (io/file (active-file))]
+    (if (empty? runs)
+      (when (.exists f) (fs/delete f))
+      (spit f (pr-str runs)))))
+
+(defn register-run!
+  "Merge one topic's entry into the registry (launch! registration)."
+  [chat-id thread-id entry]
+  (write-runs! (assoc (read-runs) [chat-id thread-id] entry)))
+
+(defn unregister-run!
+  "Drop the entry whose :name matches — the watcher knows the goal name,
+   not its key. No-op when absent."
+  [goal-name]
+  (let [runs (read-runs)
+        kept (into {} (remove (comp #(= goal-name (:name %)) val)) runs)]
+    (when (not= kept runs) (write-runs! kept))))
+
+(defn active-run-for
+  "The topic's live goal run, if any. A stale entry (dead pid) is cleared —
+   same self-healing contract as the pre-parallelism single-slot registry."
+  [chat-id thread-id]
+  (let [k [chat-id thread-id]
+        entry (get (read-runs) k)]
+    (when entry
+      (if (pid-alive? (:pid entry))
+        entry
+        (do (write-runs! (dissoc (read-runs) k)) nil)))))
 
 (defn slugify
   "Short filesystem-safe goal name, uniquified by a time suffix."
@@ -242,11 +286,13 @@ Do NOT run the goal. Write files only.")
         ;; thread-id collapse argv so the script read the PID as the thread
         _ (spit (str ws "/watch-args.edn")
                 (pr-str {:name name :chat-id chat-id :thread-id thread-id :pid pid}))
-        ;; active.edn carries the routing needed to recover this run after
+        ;; the registry carries the routing needed to recover this run after
         ;; a poller/daemon restart — pid+name alone orphaned every run that
-        ;; outlived its process (amnesia class, 2026-09-08).
-        _ (spit (active-file) (pr-str {:pid (parse-long pid) :name name
-                                       :chat-id chat-id :thread-id thread-id}))
+        ;; outlived its process (amnesia class, 2026-09-08). Keyed by
+        ;; [chat-id thread-id] so topics run goals in parallel.
+        _ (register-run! chat-id thread-id
+                         {:pid (parse-long pid) :name name
+                          :chat-id chat-id :thread-id thread-id})
         watch-args (str ws "/watch-args.edn")]
     (spawn-detached! repo (str "bb scripts/goal_watch.bb " watch-args))
     pid))
@@ -330,8 +376,8 @@ Do NOT run the goal. Write files only.")
    so a normal prompt and the slash command behave identically. emit
    (optional) streams the authoring phase's tool calls to the requester."
   [spec chat-id thread-id emit]
-  (if-let [active (active-run)]
-    (str "⏳ Goal `" (:name active) "` is already running — one at a time. /goals for status.")
+  (if-let [active (active-run-for chat-id thread-id)]
+    (str "⏳ Goal `" (:name active) "` is already running in this topic — one goal per topic. /goals for status.")
     (let [name (slugify spec)
           scaffolded (try
                        {:ws (scaffold! name)}
@@ -359,8 +405,8 @@ Do NOT run the goal. Write files only.")
    spec, re-authors with a continuation note, then launches. Bare resume
    picks the most recently touched workspace."
   [slug chat-id thread-id emit]
-  (if-let [active (active-run)]
-    (str "⏳ Goal `" (:name active) "` is already running — one at a time. /goals for status.")
+  (if-let [active (active-run-for chat-id thread-id)]
+    (str "⏳ Goal `" (:name active) "` is already running in this topic — one goal per topic. /goals for status.")
     (let [name (if (str/blank? slug)
                  (some->> (fs/list-dir (goals-root))
                           (filter fs/directory?)
@@ -461,39 +507,43 @@ Do NOT run the goal. Write files only.")
 
 (defn recover-interrupted!
   "Poller-boot recovery for goals (amnesia class, 2026-09-08: a daemon
-   restart orphaned every active run silently). active.edn's entry names
-   pid + chat + topic:
+   restart orphaned every active run silently). The registry maps
+   [chat-id thread-id] → {:pid :name :chat-id :thread-id}; per entry:
    - pid alive → leave it alone (the runner outlived the poller).
    - dead pid + verdict in run.log → queue the verdict as an outcome and
      announce it in the owning topic.
    - dead pid, no verdict → the run died with the poller: hand it to the
      detached resume path and say so in the topic.
    Returns announcements [{:chat-id :thread-id :text}] for the boot path
-   to deliver; registry entries are cleared here so resume!/launch! can
-   re-register."
+   to deliver; handled entries are dropped, live entries kept, so
+   resume!/launch! can re-register."
   []
-  (let [f (io/file (active-file))]
-    (if-not (.exists f)
+  (let [runs (read-runs)]
+    (if (empty? runs)
       []
-      (let [run (try (edn/read-string (slurp f)) (catch Exception _ nil))]
-        (if (or (not (map? run)) (not (:pid run)))
-          (do (fs/delete f) [])
-          (if (pid-alive? (:pid run))
-            []
-            (let [{:keys [name chat-id thread-id]} run]
-              (fs/delete f)
-              (case (run-status name)
-                :fulfilled (let [text (str "🎯 goal `" name "`: ✅ GOAL FULFILLED"
-                                           " — recovered after a Theseus restart.")]
-                             (queue-outcome! name chat-id thread-id text)
-                             [{:chat-id chat-id :thread-id thread-id :text text}])
-                :halted (let [text (str "⛔ goal `" name "` halted — recovered after a Theseus restart.")]
-                          (queue-outcome! name chat-id thread-id text)
-                          [{:chat-id chat-id :thread-id thread-id :text text}])
-                ;; :running (no verdict — crashed mid-run) or :authored
-                (let [text (str "🔁 goal `" name "` died with the last restart — resuming it now.")]
-                  (resume-detached! name chat-id thread-id)
-                  [{:chat-id chat-id :thread-id thread-id :text text}])))))))))
+      (let [[handled kept]
+            (reduce (fn [[handled kept] [k {:keys [pid name chat-id thread-id] :as run}]]
+                      (if (pid-alive? pid)
+                        [handled (assoc kept k run)]
+                        (let [status (run-status name)
+                              text (case status
+                                     :fulfilled (str "🎯 goal `" name "`: ✅ GOAL FULFILLED"
+                                                     " — recovered after a Theseus restart.")
+                                     :halted (str "⛔ goal `" name "` halted — recovered after a Theseus restart.")
+                                     ;; :running (no verdict — crashed mid-run) or :authored
+                                     (str "🔁 goal `" name "` died with the last restart — resuming it now."))]
+                          (case status
+                            (:fulfilled :halted) (queue-outcome! name chat-id thread-id text)
+                            (resume-detached! name chat-id thread-id))
+                          ;; dissoc, not just return kept: the accumulator
+                          ;; STARTS as the full runs map — a handled entry
+                          ;; must leave it or the write-back never fires.
+                          [(conj handled {:chat-id chat-id :thread-id thread-id :text text})
+                           (dissoc kept k)])))
+                    [[] runs]
+                    runs)]
+        (when (not= kept runs) (write-runs! kept))
+        handled))))
 
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
