@@ -9,7 +9,7 @@
          '[babashka.fs :as fs])
 
 (def goals-root (str (System/getenv "HOME") "/theseus/goals"))
-(def ws-name (or (second *command-line-args*)
+(def ws-name (or (first *command-line-args*)
                  (do (println "usage: dogfood_evidence.bb <workspace-name>") (System/exit 1)))
   )
 (def ws (str goals-root "/" ws-name))
@@ -22,14 +22,13 @@
   (if (fs/exists? cfg-path)
     (let [cfg (edn/read-string (slurp cfg-path))]
       (println {:name (:name cfg)
-                :stages (count (get-in cfg [:goal :stages]))
-                :stage-summary (mapv (fn [s] (subs (str (or (:name s) (:description s) "?")) 0
-                                                    (min 60 (count (str (or (:name s) (:description s) "?"))))))
-                                     (get-in cfg [:goal :stages]))
-                :validators (count (:validators cfg))})
-      (doseq [[i v] (map-indexed vector (:validators cfg))]
-        (println (str "  v" i ":") (subs (str (:cmd v) (or (:predicate v) "")) 0
-                                         (min 100 (count (str (:cmd v) (or (:predicate v) ""))))))))
+                :goal-predicate (:goal cfg)
+                :integrity-count (count (:integrity cfg))
+                :observers (vec (keys (:observers cfg)))
+                :checkpoint (:checkpoint cfg)
+                :max-rollbacks (:max-rollbacks cfg)
+                :stall-after (:stall-after cfg)
+                :act (:act cfg)}))
     (println "NO project.edn — authoring did not complete")))
 
 ;; 2. Ledger intervals (persisted evidence standard)
@@ -67,9 +66,13 @@
       hits (atom [])]
   (when (fs/exists? sess)
     (let [raw (slurp sess)]
-      (doseq [skill ["verification-witness" "frontend-design" "adr" "review" "openspeq"]]
-        (when (str/includes? raw skill)
-          (swap! hits conj {:skill skill :source "author-session"})))))
+      (doseq [skill ["verification-witness" "frontend-design" "adr" "review" "openspeq"]
+              :let [bare (count (re-seq (re-pattern skill) raw))
+                    paths (count (re-seq (re-pattern (str "skills/" skill "/")) raw))]]
+        (when (pos? bare)
+          (swap! hits conj {:skill skill
+                            :path-refs paths          ; tool-level reads of the skill file
+                            :bare-mentions (- bare paths)})))))
   (let [logs (str ws "/logs")]
     (when (fs/exists? logs)
       (doseq [f (filter #(str/ends-with? (str %) ".edn") (fs/list-dir logs))
@@ -89,8 +92,9 @@
       (doseq [l lines] (when (re-find #"FULFILLED|HALT|FAILED|VERDICT|verdict" l)
                          (println l))))
     (println "no run.log (runner did not start)"))
-  (let [workdir (some-> (str ws "/config.edn") fs/exists?
-                        (slurp) edn/read-string :workdir)]
+  (let [cfg (when (fs/exists? (str ws "/config.edn"))
+              (edn/read-string (slurp (str ws "/config.edn"))))
+        workdir (:workdir cfg)]
     (println {:workdir workdir})
     (when (and workdir (fs/exists? workdir))
       (println "workdir files:")
