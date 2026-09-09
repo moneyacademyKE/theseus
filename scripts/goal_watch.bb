@@ -19,12 +19,76 @@
 (def max-polls 480)          ; 480 * 5s = 40 min ceiling
 (def poll-ms 5000)
 
-(defn home [] (or (System/getenv "OPENCRABS_HOME")
-                  (str (System/getProperty "user.home") "/.opencrabs-bb")))
+(def args-file* (first *command-line-args*))
+
+(def args* (when args-file*
+             (try (edn/read-string (slurp args-file*)) (catch Exception _ nil))))
+
+(defn home []
+  "The dispatching process's home rides the args file (:home) — this child
+   does NOT trust the ambient env (a test's redef or a launchd override)."
+  (or (:home args*)
+      (System/getenv "OPENCRABS_HOME")
+      (str (System/getProperty "user.home") "/.opencrabs-bb")))
 
 (defn bot-token []
   (let [cfg (edn/read-string (slurp (str (home) "/config.edn")))]
     (get-in cfg [:telegram :token])))
+
+(defn base-url []
+  "Honors :base-url — self-hosted gateways and test fake servers ride the
+   same ladder as production Telegram."
+  (let [cfg (try (edn/read-string (slurp (str (home) "/config.edn")))
+                 (catch Exception _ nil))]
+    (or (get-in cfg [:telegram :base-url]) "https://api.telegram.org")))
+
+(def max-deliverables 3)
+(def max-deliverable-bytes (* 45 1024 1024)) ; Telegram hard-caps at 50 MB
+
+(defn deliverables
+  "Declared artifacts that actually exist: config.edn's :deliverables are
+   workdir-relative paths. Guards: regular file, ≤ 45 MB, max 3 — a
+   declared-but-missing file is skipped, never a launch blocker."
+  [ws]
+  (when-let [cfg (try (edn/read-string (slurp (str ws "/config.edn")))
+                      (catch Exception _ nil))]
+    (->> (:deliverables cfg)
+         (map (fn [p] (str ws "/" p)))
+         (filter (fn [p] (let [f (io/file p)]
+                           (and (.isFile f)
+                                (<= (.length f) max-deliverable-bytes)))))
+         (take max-deliverables))))
+
+(defn upload!
+  "sendDocument — a FILE UPLOAD is multipart, not a JSON body. Receipted to
+   watch.log like every other Bot API call this watcher makes."
+  [token chat-id thread-id path caption ws]
+  (let [args (cond-> ["curl" "-s" "-X" "POST"
+                      (str (base-url) "/bot" token "/sendDocument")
+                      "-F" (str "chat_id=" chat-id)
+                      "-F" (str "caption=" caption)
+                      "-F" (str "document=@" path)]
+               (seq (str thread-id))
+               (concat ["-F" (str "message_thread_id=" (parse-long (str thread-id)))]))
+        res (apply p/shell {:continue true :out :string :err :string} args)
+        r (try (json/parse-string (:out res) true) (catch Exception _ nil))]
+    (spit (str ws "/watch.log")
+          (str (java.util.Date.) " sendDocument " path
+               " ok=" (:ok r) " res=" (or (get-in r [:result :document :file_name])
+                                          (:description r)) "\n")
+          :append true)
+    r))
+
+(defn ship-deliverables!
+  "V2 (bk-7496): on fulfillment, the goal's declared artifacts go to the
+   topic as documents — goals build files; topics shouldn't get paragraphs."
+  [token chat-id thread-id ws name]
+  (doseq [path (deliverables ws)]
+    (try (upload! token chat-id thread-id path
+                  (str "📦 `" name "` deliverable — " (.getName (io/file path))) ws)
+         (catch Exception e
+           (spit (str ws "/watch.err") (str "deliverable: " (.getMessage e) "\n")
+                 :append true)))))
 
 (defn pid-alive? [pid]
   (try (zero? (:exit (p/shell {:continue true :out :string :err :string} "kill" "-0" pid)))
@@ -38,7 +102,7 @@
     (spit payload (json/generate-string body))
     (let [res (p/shell {:continue true :out :string :err :string}
                        "curl" "-s" "-X" "POST"
-                       (str "https://api.telegram.org/bot" token "/" method)
+                       (str (base-url) "/bot" token "/" method)
                        "-H" "Content-Type: application/json"
                        "-d" (str "@" payload))
           r (try (json/parse-string (:out res) true) (catch Exception _ nil))]
@@ -127,7 +191,10 @@
               (edit! token chat-id msg-id text ws)
               (post! token chat-id thread-id text ws))
             (catch Exception e
-              (spit (str ws "/watch.err") (.getMessage e))))))))
+              (spit (str ws "/watch.err") (.getMessage e))))
+          ;; V2: fulfilled goals ship their DECLARED artifacts to the topic
+          (when (str/includes? text "GOAL FULFILLED")
+            (ship-deliverables! token chat-id thread-id ws name))))))
   ;; topic-scoped registry: drop ONLY this goal's entry — a raw file delete
   ;; would wipe other topics' live runs (parallelism, 2026-09-08).
   (try (registry/unregister-run! name) (catch Exception _ nil)))

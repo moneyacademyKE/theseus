@@ -121,6 +121,10 @@ Then write exactly two files:
    Do NOT add a :notify block — the bridge injects it at launch, and writing
    config.edn is fenced. Name your config file project.edn.
 2. act.sh — idempotent, each run under 60 seconds, executable (chmod +x).
+3. Declare :deliverables [\"relative/path.ext\", ...] in project.edn — the
+   files this goal PRODUCED that the requesting topic should receive when
+   the goal fulfills (max 3, each ≤ 45 MB). Declare only real outputs;
+   declared-but-missing files are skipped honestly at ship time.
 
 The project to build: %s
 Do NOT run the goal. Write files only.")
@@ -355,19 +359,21 @@ Do NOT run the goal. Write files only.")
         _ (p/shell {:dir ws :out :string :err :string} "git" "add" "-A")
         _ (p/shell {:dir ws :out :string :err :string} "git" "commit" "-q" "-m" "baseline: authored project")
          pid (spawn-detached! repo (str "bb goal " cfg-path " > " log-path " 2>&1"))
-        ;; watcher args ride an EDN file — shell-joining them let an empty
-        ;; thread-id collapse argv so the script read the PID as the thread
-        _ (spit (str ws "/watch-args.edn")
-                (pr-str {:name name :chat-id chat-id :thread-id thread-id :pid pid}))
         ;; the registry carries the routing needed to recover this run after
         ;; a poller/daemon restart — pid+name alone orphaned every run that
         ;; outlived its process (amnesia class, 2026-09-08). Keyed by
-        ;; [chat-id thread-id] so topics run goals in parallel.
+        ;; [chat-id thread-id] so topics run goals in parallel. :home rides
+        ;; the args file — the watcher reads config from THIS home, never
+        ;; ambient env (same contract as goal_launch.bb). Args ride an EDN
+        ;; file, never shell-joined: an empty thread-id collapsed argv once
+        ;; and the script read the PID as the thread.
         _ (registry/register-run! chat-id thread-id
                          {:pid (parse-long pid) :name name
                           :chat-id chat-id :thread-id thread-id})
-        watch-args (str ws "/watch-args.edn")]
-    (spawn-detached! repo (str "bb scripts/goal_watch.bb " watch-args))
+         _ (spit (str ws "/watch-args.edn")
+                 (pr-str {:name name :home (str (config/home))
+                          :chat-id chat-id :thread-id thread-id :pid pid}))]
+    (spawn-detached! repo (str "bb scripts/goal_watch.bb " (str ws "/watch-args.edn")))
     pid))
 
 (defn launch-scaffolded!

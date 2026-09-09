@@ -128,7 +128,10 @@
 (deftest author-prompt-carries-skill-contract
   (testing "author prompt pins read-before-claim for skills (bk-d8a0)"
     (is (str/includes? @#'bridge/author-prompt "SKILL CONTRACT"))
-    (is (str/includes? @#'bridge/author-prompt ":skills-used"))))
+    (is (str/includes? @#'bridge/author-prompt ":skills-used")))
+  (testing "author prompt carries the deliverables contract (bk-7496)"
+    (is (str/includes? @#'bridge/author-prompt ":deliverables"))
+    (is (str/includes? @#'bridge/author-prompt "45 MB"))))
 
 (deftest run-status-test
   (testing "missing log → :authored"
