@@ -36,6 +36,7 @@
                                [bb-agent.core-test]
                                [bb-agent.goal-methodology-test]
                                [bb-agent.boot-health-test]
+                               [bb-agent.skill-economy-test]
                                [bb-agent.goal.author-progress-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
@@ -46,6 +47,7 @@
                                              'bb-agent.autonomy-test
                                              'bb-agent.core-test
                                              'bb-agent.goal-methodology-test
+                                             'bb-agent.skill-economy-test
                                              'bb-agent.boot-health-test
                                              'bb-agent.goal.author-progress-test)]
                                  (when (pos? (+ fail error))
@@ -68,6 +70,13 @@
      stats {:doc "One-screen ops summary: usage, outbox depth, goal verdicts (audit F5)."
             :requires ([bb-agent.stats :as stats])
             :task (stats/print-summary!)}
+     skill-economy {:doc "Claims-vs-reads ledger over goal workspaces (V4). Usage: bb skill-economy [goals-root]"
+                    :requires ([bb-agent.skill-economy :as se]
+                               [bb-agent.config :as config]
+                               [babashka.fs :as fs])
+                    :task (let [root (or (first *command-line-args*)
+                                         (str (config/home) "/goals"))]
+                            (println (se/render (se/fleet-report root))))}
      usage:index {:doc "Rebuild the sqlite usage index from state/usage.edn."
                   :requires ([bb-agent.store :as store])
                   :task (println "indexed" (store/index-usage!) "events")}
