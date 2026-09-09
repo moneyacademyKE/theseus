@@ -34,7 +34,7 @@
   "One Bot API call; parsed JSON response or nil. Every call is receipted to
    the workspace watch.log — a silent watcher is an unobservable watcher."
   [token method body ws]
-  (let [payload (str (home) "/goals/.watch-payload.json")]
+  (let [payload (str ws "/.watch-payload.json")]
     (spit payload (json/generate-string body))
     (let [res (p/shell {:continue true :out :string :err :string}
                        "curl" "-s" "-X" "POST"
