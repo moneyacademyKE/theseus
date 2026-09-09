@@ -36,6 +36,12 @@
     (spit (str path) (pr-str seen))
     seen))
 
+(defn- ->long [x]
+  (cond (number? x) (long x)
+        (string? x) (or (parse-long x)
+                        (throw (ex-info "non-numeric message id" {:id x})))
+        :else (throw (ex-info "non-numeric message id" {:id x}))))
+
 (defn- reply-file [chat-id]
   (fs/path (config/home) "state" "telegram-replies" (str chat-id ".edn")))
 
@@ -43,10 +49,13 @@
   (when (and chat-id user-msg-id bot-reply-msg-id)
     (let [path (reply-file chat-id)]
       (fs/create-dirs (fs/parent path))
+      ;; self-heal: a corrupt ledger (throwing OR non-map, e.g. a stray
+      ;; symbol) restarts the map instead of poisoning assoc
       (let [m (if (fs/regular-file? path)
-                (or (try (edn/read-string (slurp (str path))) (catch Exception _ {})) {})
+                (let [v (try (edn/read-string (slurp (str path))) (catch Exception _ nil))]
+                  (if (map? v) v {}))
                 {})]
-        (spit (str path) (pr-str (assoc m (long user-msg-id) (long bot-reply-msg-id))))
+        (spit (str path) (pr-str (assoc m (->long user-msg-id) (->long bot-reply-msg-id))))
         bot-reply-msg-id))))
 
 (defn lookup-reply [chat-id user-msg-id]
@@ -54,4 +63,4 @@
     (let [path (reply-file chat-id)]
       (when (fs/regular-file? path)
         (get (try (edn/read-string (slurp (str path))) (catch Exception _ nil))
-             (long user-msg-id))))))
+             (->long user-msg-id))))))
