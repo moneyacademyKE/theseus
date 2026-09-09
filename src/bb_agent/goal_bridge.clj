@@ -56,6 +56,46 @@
     (p/shell {:dir ws :out :string :err :string} "git" "config" "user.name" "goal-bridge")
     ws))
 
+;; ── authoring lock ─────────────────────────────────────────────────────
+;; Authoring is detached (V1a: it never runs on the poll loop), so the
+;; registry's active-run guard fires only AFTER a launch — two /goal calls
+;; in one topic would author two workspaces before either registered. The
+;; lock is one pid-stamped file per [chat thread]; a dead pid makes it
+;; stale, and stale is removable (same contract as registry pid-alive?).
+
+(defn- authoring-lock-file [chat-id thread-id]
+  (io/file (registry/goals-root)
+           (str ".authoring-" chat-id "-" (or thread-id 0) ".edn")))
+
+(defn authoring-busy?
+  "True when a live authoring process holds this topic's lock. A lock whose
+   pid can't be read is stale by definition — unreadable must mean free,
+   or one corrupt file wedges the topic's authoring forever."
+  [chat-id thread-id]
+  (let [f (authoring-lock-file chat-id thread-id)]
+    (and (.exists f)
+         (let [{:keys [pid]} (try (edn/read-string (slurp f))
+                                  (catch Exception _ nil))]
+           (and (number? pid)
+                (registry/pid-alive? pid))))))
+
+(defn authoring-lock!
+  "Stamp the topic's authoring lock with this process's pid. Returns true
+   when acquired, false when another live process holds it."
+  [chat-id thread-id]
+  (if (authoring-busy? chat-id thread-id)
+    false
+    (do (spit (authoring-lock-file chat-id thread-id)
+              (pr-str {:pid (.pid (java.lang.ProcessHandle/current))}))
+        true)))
+
+(defn authoring-unlock!
+  "Release the topic's authoring lock. Safe when absent."
+  [chat-id thread-id]
+  (let [f (authoring-lock-file chat-id thread-id)]
+    (when (.exists f) (.delete f))
+    true))
+
 (def ^:private author-prompt
   "You are authoring a goal project. Your cwd is the project workdir: %s
 METHODOLOGY (the default goal methodology, owner-stamped): read
@@ -311,15 +351,45 @@ Do NOT run the goal. Write files only.")
     (spawn-detached! repo (str "bb scripts/goal_watch.bb " watch-args))
     pid))
 
-(defn launch-spec!
-  "Shared launch path for /goal and the launch_goal tool: scaffold, author
-   (validator as judge), launch detached + watcher, announcement out. The
-   caller's chat/thread ids route watcher updates to the requesting topic,
-   so a normal prompt and the slash command behave identically. emit
-   (optional) streams the authoring phase's tool calls to the requester."
-  [spec chat-id thread-id emit]
+(defn launch-scaffolded!
+  "Author + launch an already-scaffolded workspace (spec.txt written).
+   Called by the detached goal_launch.bb script with a real progress emit
+   (V1a) — never on the poll loop. Returns the user-facing reply string."
+  [name ws spec chat-id thread-id emit]
   (if-let [active (registry/active-run-for chat-id thread-id)]
     (str "⏳ Goal `" (:name active) "` is already running in this topic — one goal per topic. /goals for status.")
+    (let [err (try
+                (if-let [verr (author-with-validation! name ws spec emit)]
+                  verr
+                  (do (launch! name chat-id thread-id) nil))
+                (catch Exception e
+                  (str "authoring error: " (.getMessage e))))]
+      (if err
+        (str "🚫 Goal authoring failed — " err
+             "\nWorkspace kept: `" name "` — reply /goal resume " name " to continue.")
+        (str "🚀 Goal `" name "` launched — outcome lands here when it fulfills or halts.")))))
+
+(defn dispatch-spec!
+  "Shared spec guard for every entry point (chat /goal, build-verb route,
+   launch_goal tool): blank/length checks, per-topic authoring-lock check,
+   scaffold, then DETACH authoring into goal_launch.bb. V1a: authoring
+   never runs on the poll loop or inside a turn — it can take 10-45
+   honest minutes, and inline authoring parked the whole service (the
+   dogfood's silent 44). Returns the immediate reply; the authoring result
+   reaches the topic via the progress message and the outcome queue."
+  [spec chat-id thread-id]
+  (cond
+    (or (str/blank? spec) (> (count spec) max-spec-chars))
+    (str "Spec must be 1–" max-spec-chars " characters.")
+
+    (authoring-busy? chat-id thread-id)
+    "⏳ This topic is already authoring a goal — the outcome will land here."
+
+    (registry/active-run-for chat-id thread-id)
+    (str "⏳ Goal `" (:name (registry/active-run-for chat-id thread-id))
+         "` is already running in this topic — one goal per topic. /goals for status.")
+
+    :else
     (let [name (slugify spec)
           scaffolded (try
                        {:ws (scaffold! name)}
@@ -327,18 +397,19 @@ Do NOT run the goal. Write files only.")
                          {:err (str "workspace error: " (.getMessage e))}))]
       (if-let [scaffold-err (:err scaffolded)]
         (str "🚫 Goal failed — " scaffold-err)
-        (let [ws (:ws scaffolded)
-              _ (spit (str ws "/spec.txt") spec)
-              err (try
-                    (if-let [verr (author-with-validation! name ws spec emit)]
-                      verr
-                      (do (launch! name chat-id thread-id) nil))
-                    (catch Exception e
-                      (str "authoring error: " (.getMessage e))))]
-          (if err
-            (str "🚫 Goal authoring failed — " err
-                 "\nWorkspace kept: `" name "` — reply /goal resume " name " to continue.")
-            (str "🚀 Goal `" name "` launched — outcome lands here when it fulfills or halts.")))))))
+        (let [ws (:ws scaffolded)]
+          (spit (str ws "/spec.txt") spec)
+          ;; :home rides the args file — the detached child does NOT inherit
+          ;; this process's config/home (env var, or a test's redef); it must
+          ;; read config from the SAME home that dispatched it.
+          (spit (str ws "/launch-args.edn")
+                (pr-str {:name name :spec spec :home (str (config/home))
+                         :chat-id chat-id :thread-id thread-id}))
+          (spawn-detached! (str (fs/cwd))
+                           (str "bb scripts/goal_launch.bb "
+                                (str ws "/launch-args.edn")
+                                " >> " (str ws "/launch.log") " 2>&1"))
+          (str "🚀 Goal `" name "` — authoring started, progress updates below."))))))
 
 (defn resume!
   "Re-enter authoring for a failed/unfinished goal workspace. Authoring
@@ -379,14 +450,6 @@ Do NOT run the goal. Write files only.")
                  "\nWorkspace kept: `" name "` — reply /goal resume " name " to continue.")
             (str "🚀 Goal `" name "` resumed + launched — outcome lands here when it fulfills or halts.")))))))
 
-(defn- dispatch-spec!
-  "Shared spec guard for both entry points: blank/length checks, then the
-   launch. Returns the user-facing reply string either way."
-  [spec chat-id thread-id emit]
-  (if (or (str/blank? spec) (> (count spec) max-spec-chars))
-    (str "Spec must be 1–" max-spec-chars " characters.")
-    (launch-spec! spec chat-id thread-id emit)))
-
 (defn resume-detached!
   "Re-enter a crashed goal WITHOUT blocking the caller: the resume (one or
    more authoring turns, minutes) runs in a detached bb process that loads
@@ -398,7 +461,10 @@ Do NOT run the goal. Write files only.")
   (let [ws (str (registry/goals-root) "/" name)
         args-file (str ws "/resume-args.edn")]
     (fs/create-dirs ws)
-    (spit args-file (pr-str {:name name :chat-id chat-id :thread-id thread-id}))
+    ;; :home rides the args file — the detached child must read config from
+    ;; the SAME home that dispatched it (see dispatch-spec!).
+    (spit args-file (pr-str {:name name :home (str (config/home))
+                             :chat-id chat-id :thread-id thread-id}))
     (spawn-detached! (str (fs/cwd))
                      (str "bb scripts/goal_resume.bb " args-file))))
 
@@ -444,17 +510,22 @@ Do NOT run the goal. Write files only.")
 
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
-   usage. Otherwise delegates to launch-spec!. emit (optional) streams the
-   authoring tool calls to the requester."
-  [text chat-id thread-id emit]
+   usage. Launch/resume detach immediately (V1a) — authoring never runs on
+   the poll loop."
+  [text chat-id thread-id]
   (let [trimmed (when text (str/trim text))]
     (when (and trimmed (or (str/starts-with? trimmed "/goal ") (= "/goal" trimmed)))
       (if (= "/goal" trimmed)
         "Usage: /goal <what to build> — I author the goal project, run it supervised, and the outcome lands here."
         (let [spec (str/trim (subs trimmed 5))]
           (if (or (= spec "resume") (str/starts-with? spec "resume "))
-            (resume! (str/trim (subs spec 6)) chat-id thread-id emit)
-            (dispatch-spec! spec chat-id thread-id emit)))))))
+            (let [slug (str/trim (subs spec 6))]
+              (if (authoring-busy? chat-id thread-id)
+                "⏳ This topic is already authoring a goal — the outcome will land here."
+                (do (resume-detached! slug chat-id thread-id)
+                    (str "🔁 Resuming" (when-not (str/blank? slug) (str " `" slug "`"))
+                         " — authoring detached, progress updates below."))))
+            (dispatch-spec! spec chat-id thread-id)))))))
 
 (def build-verbs
   "First-word production verbs that force the goal loop (owner directive
@@ -479,6 +550,6 @@ Do NOT run the goal. Write files only.")
 
 (defn route-build-request!
   "Auto-route a plain build-verb message into the goal loop. The FULL text
-   is the spec — no /goal prefix. Same honest guard, same launch path."
-  [text chat-id thread-id emit]
-  (dispatch-spec! (str/trim (or text "")) chat-id thread-id emit))
+   is the spec — no /goal prefix. Same honest guard, same detached path."
+  [text chat-id thread-id]
+  (dispatch-spec! (str/trim (or text "")) chat-id thread-id))

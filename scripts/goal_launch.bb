@@ -1,12 +1,11 @@
 #!/usr/bin/env bb
-;; goal_resume.bb — detached resume of a goal that died with a poller
-;; restart, or of a stalled/failed workspace (/goal resume). Usage:
-;; bb goal_resume.bb <workspace>/resume-args.edn ; args {:name :chat-id :thread-id}
-;; Calls goal-bridge/resume! (re-authors, re-launches, spawns a fresh
-;; watcher) with a live progress message in the owning topic (V1a, bk-4876),
-;; queues the reply string as the workspace's outcome.edn so the poller's
-;; drain records it as a session turn. Never run this on the poll loop —
-;; authoring takes minutes.
+;; goal_launch.bb — detached authoring + launch of a NEW goal spec (V1a).
+;; Usage: bb goal_launch.bb <workspace>/launch-args.edn
+;; args {:name :spec :chat-id :thread-id}. The dispatch (bridge/dispatch-spec!)
+;; scaffolds and spawns this BEFORE any authoring, so the poll loop/turn
+;; returns in milliseconds; authoring runs here with a live progress
+;; message edited in place in the owning topic (bk-4876). Never run this
+;; on the poll loop. Same dependency-free curl pattern as goal_watch.bb.
 
 (require '[babashka.process :as p]
          '[cheshire.core :as json]
@@ -23,16 +22,15 @@
              (try (edn/read-string (slurp args-file*)) (catch Exception _ nil))))
 
 ;; The dispatching process's home rides the args file — this child does NOT
-;; trust the ambient env (see goal_launch.bb).
+;; trust the ambient env (a test's redef, a launchd override): it reads
+;; config from the SAME home that dispatched it.
 (when-let [h (:home args*)]
   (alter-var-root #'config/home (constantly (fn [] h))))
 
-(defn home [] (or (System/getenv "OPENCRABS_HOME")
-                  (str (System/getProperty "user.home") "/.opencrabs-bb")))
-
 (defn api!
   "One Bot API call; parsed JSON or nil. Receipted to the workspace's
-   launch.log (same file the launcher uses). Honors :base-url."
+   launch.log — a silent progress surface is still observable. Honors the
+   config's :base-url (the e2e fake server and self-hosted gateways)."
   [token method body ws]
   (let [payload (str ws "/.launch-payload.json")
         base (or (get-in (config/load-config) [:telegram :base-url])
@@ -66,16 +64,16 @@
   (api! token "editMessageText"
         {:chat_id chat-id :message_id msg-id :text text} ws))
 
-(let [{:keys [name chat-id thread-id]} (if (map? args*) args* {})
+(let [{:keys [name spec chat-id thread-id]} (if (map? args*) args* {})
       ws (if args-file* (.getParent (io/file args-file*)) nil)]
-  (when-not (and name chat-id ws)
+  (when-not (and name spec chat-id ws)
     (binding [*out* *err*]
-      (println (str "goal_resume: bad args " (pr-str *command-line-args*))))
+      (println (str "goal_launch: bad args " (pr-str *command-line-args*))))
     (System/exit 1))
-  ;; one authoring process per topic (V1a lock — shared with the launcher)
+  ;; one authoring process per topic — the detached twin of the registry guard
   (when-not (gb/authoring-lock! chat-id thread-id)
     (outcomes/queue-outcome! name chat-id thread-id
-                             "⏳ Another goal in this topic was already authoring — this resume was dropped.")
+                             "⏳ Another goal in this topic was already authoring — this launch was dropped.")
     (System/exit 0))
   (let [token (get-in (config/load-config) [:telegram :token])
         progress (when (author-progress/enabled?)
@@ -83,11 +81,11 @@
                     {:send! (fn [text] (when-let [id (post! token chat-id thread-id text ws)]
                                          {:message-id id}))
                      :edit! (fn [message-id text] (edit! token chat-id message-id text ws))}))
-        reply (try (gb/resume! name chat-id thread-id (:emit progress))
+        reply (try (gb/launch-scaffolded! name ws spec chat-id thread-id (:emit progress))
                    (catch Exception e
-                     (str "🚫 resume of `" name "` failed: " (.getMessage e))))]
+                     (str "🚫 Goal authoring failed — " (.getMessage e)
+                          "\nWorkspace kept: `" name "` — reply /goal resume " name " to continue.")))]
     (when (:finish! progress)
       ((:finish! progress) reply))
-    (outcomes/queue-outcome! name chat-id thread-id
-                             (str "🔁 resume report for `" name "`: " reply))
+    (outcomes/queue-outcome! name chat-id thread-id reply)
     (gb/authoring-unlock! chat-id thread-id)))

@@ -160,18 +160,35 @@
           (fs/delete-tree home))))))
 
 (deftest goal-seam-answers-in-chat
-  (testing "/goal plumbing: usage, honest authoring failure, and /goals listing"
+  (testing "/goal plumbing: usage, detached authoring with queued failure
+            verdict, and /goals listing (V1a: the launch acks instantly; the
+            authoring verdict arrives via the outcome queue)"
     (let [{:keys [home calls]} (run-poll [(dm-message 1 50 "/goal")
                                           (dm-message 2 51 "/goal build a hello world script")
                                           (dm-message 3 52 "/goals")])
           [usage-reply goal-reply goals-reply] (replies calls)]
       (try
         (is (str/includes? (or usage-reply "") "Usage:") "bare /goal explains itself")
-        (is (str/includes? (or goal-reply "") "🚫 Goal authoring failed")
-            "fake provider writes no config — the validator judges and the seam says so")
+        (is (str/includes? (or goal-reply "") "authoring started")
+            "the launch acks immediately — authoring is detached (V1a)")
         (is (some #(str/includes? % "build-a-hello-world-scri")
                   (re-seq #"build-a-hello-world-scri[^\"]*" (or goals-reply "")))
             (str "/goals reply was: " (pr-str goals-reply)))
+        (testing "the detached author's failure verdict lands via the outcome queue"
+          (let [ws-dir (java.io.File. (str (fs/path home "goals")))
+                deadline (+ (System/currentTimeMillis) 30000)]
+            (loop []
+              (let [outcome (when (.exists ws-dir)
+                              (some (fn [d]
+                                      (let [f (java.io.File. d "outcome.edn")]
+                                        (when (.exists f) (slurp f))))
+                                    (.listFiles ws-dir)))]
+                (cond
+                  (and outcome (str/includes? outcome "🚫 Goal authoring failed"))
+                  (is true "fake provider wrote no config — the validator judged, honestly")
+                  (< (System/currentTimeMillis) deadline)
+                  (do (Thread/sleep 500) (recur))
+                  :else (is (some? outcome) "outcome file never landed"))))))
         (finally
           (fs/delete-tree home))))))
 
@@ -181,12 +198,27 @@
                                           (dm-message 2 61 "tell me a joke")])
           [build-reply joke-reply] (replies calls)]
       (try
-        (is (str/includes? (or build-reply "") "🚫 Goal authoring failed")
-            "build verb → goal path (fake provider authors, validator judges)")
+        (is (str/includes? (or build-reply "") "authoring started")
+            "build verb → detached goal path (V1a ack)")
         (is (not (str/includes? (or build-reply "") "fake:"))
             "never an inline LLM answer for build verbs")
         (is (str/includes? (or joke-reply "") "fake:")
             "non-build text still gets the normal inline turn")
+        (testing "the routed goal's verdict lands via the outcome queue"
+          (let [ws-dir (java.io.File. (str (fs/path home "goals")))
+                deadline (+ (System/currentTimeMillis) 30000)]
+            (loop []
+              (let [outcome (when (.exists ws-dir)
+                              (some (fn [d]
+                                      (let [f (java.io.File. d "outcome.edn")]
+                                        (when (.exists f) (slurp f))))
+                                    (.listFiles ws-dir)))]
+                (cond
+                  (and outcome (str/includes? outcome "🚫 Goal authoring failed"))
+                  (is true "goal loop took it — validator judged")
+                  (< (System/currentTimeMillis) deadline)
+                  (do (Thread/sleep 500) (recur))
+                  :else (is (some? outcome) "outcome file never landed"))))))
         (finally
           (fs/delete-tree home))))))
 

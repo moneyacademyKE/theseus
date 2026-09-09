@@ -153,32 +153,35 @@
 
 (deftest handle-request-test
   (testing "non-goal text → nil"
-    (is (nil? (bridge/handle-request! "hello there" 1 2 nil))))
+    (is (nil? (bridge/handle-request! "hello there" 1 2))))
   (testing "bare /goal → usage"
-    (is (str/includes? (bridge/handle-request! "/goal" 1 2 nil) "Usage:")))
+    (is (str/includes? (bridge/handle-request! "/goal" 1 2) "Usage:")))
   (testing "/goals is not hijacked by the /goal seam"
-    (is (nil? (bridge/handle-request! "/goals" 1 2 nil))))
+    (is (nil? (bridge/handle-request! "/goals" 1 2))))
   (testing "busy topic → refusal naming it; another topic is not blocked"
     (let [pid (live-pid)]
       (registry/register-run! 1 2 {:pid pid :name "busy-goal" :chat-id 1 :thread-id 2})
-      (let [refusal (bridge/handle-request! "/goal build x" 1 2 nil)]
+      (let [refusal (bridge/handle-request! "/goal build x" 1 2)]
         (is (str/includes? refusal "busy-goal"))
         (is (str/includes? refusal "one goal per topic")))
       (is (nil? (registry/active-run-for 3 4)) "a different topic is free to launch")
       (p/shell {:continue true} "kill" (str pid))
       (registry/unregister-run! "busy-goal"))) ; explicit cleanup: later tests in this deftest assert an empty registry
   (testing "blank spec → usage (a trimmed blank IS bare /goal)"
-    (is (str/includes? (bridge/handle-request! "/goal    " 1 2 nil) "Usage:"))
-    (is (str/includes? (bridge/handle-request! (str "/goal " (apply str (repeat 500 "x"))) 1 2 nil)
+    (is (str/includes? (bridge/handle-request! "/goal    " 1 2) "Usage:"))
+    (is (str/includes? (bridge/handle-request! (str "/goal " (apply str (repeat 500 "x"))) 1 2)
                        "characters")))
   (testing "authoring failure envelope: a turn that writes an invalid config
-            surfaces the validator's verdict, never launches"
+            surfaces the validator's verdict, never launches (V1a: this is
+            launch-scaffolded!'s contract — the detached script calls it and
+            queues the reply; dispatch itself just acks)"
     (with-redefs [core/run-turn! (fn [_cfg _prompt]
                                    (let [d (str (registry/goals-root) "/author-fail")]
                                      (fs/create-dirs d)
                                      (spit (str d "/project.edn")
                                            "{:name \"bad\" :workdir \".\"}")))]
-      (let [reply (bridge/handle-request! "/goal build something nice" 7 9 nil)]
+      (let [ws (str (registry/goals-root) "/author-fail")
+            reply (bridge/launch-scaffolded! "author-fail" ws "build something nice" 7 9 nil)]
         (is (str/includes? reply "🚫 Goal authoring failed"))
         (is (not (.exists (io/file (registry/active-file)))))))))
 

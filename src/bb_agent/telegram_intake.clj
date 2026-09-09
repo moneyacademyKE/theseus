@@ -120,10 +120,10 @@
 (defn- handle-chat-command
   [cmd session-id text chat-id thread-id]
   (case cmd
-    ;; :goal-request/:build-goal are intercepted by the with-flow! branch in
-    ;; the dispatch — unreachable here, and deliberately NOT cased: the bridge
-    ;; entry points are 4-arity (they take the flow's emit), so a stray 3-arg
-    ;; call would be a silent break waiting to happen.
+    ;; :goal-request/:build-goal are intercepted in the dispatch before this
+    ;; runs (V1a: detached authoring, no flow wrapper needed) — deliberately
+    ;; NOT cased here so an un-intercepted goal request can never silently
+    ;; take the generic-command path.
     :goals (or (when-let [lines (goal-progress/list-goals)]
                  (str "🎯 Goals:\n" (str/join "\n" lines)))
                "No goals yet — /goal <what to build> launches one.")
@@ -328,12 +328,13 @@
            {:thread-id thread-id})
           (if-let [cmd (chat-command text)]
             (let [reply-text (if (contains? #{:goal-request :build-goal} cmd)
-                               (flow/with-flow! telegram-cfg chat-id thread-id
-                                 (fn [emit]
-                                   (case cmd
-                                     :goal-request (goal-bridge/handle-request! text chat-id thread-id emit)
-                                     :build-goal (goal-bridge/route-build-request! text chat-id thread-id emit)
-                                     nil)))
+                               ;; V1a: goal launches return instantly (authoring
+                               ;; is detached into goal_launch.bb with its own
+                               ;; progress message) — no turn-scoped flow needed
+                               (case cmd
+                                 :goal-request (goal-bridge/handle-request! text chat-id thread-id)
+                                 :build-goal (goal-bridge/route-build-request! text chat-id thread-id)
+                                 nil)
                                (handle-chat-command cmd session-id text chat-id thread-id))
                   sent (delivery/send-message!
                         telegram-cfg chat-id reply-text
