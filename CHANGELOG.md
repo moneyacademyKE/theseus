@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **V1 — detached authoring + live progress** (`fafb577`, `54bc1a5`, `2282b9e`): `/goal` and build-verb launches scaffold and ack in milliseconds; authoring runs in a detached process with an edited-in-place progress message in the owning topic, a pid-stamped per-topic authoring lock, and a two-clock stall detector (8-min idle fuse on tool-call emits, 45-min ceiling). `:goal/author-model` overrides the model for authoring only; every authoring run persists `authoring.edn` (model, rounds, duration) so latency claims are measured, not vibes. A child process reads config from the dispatching home (`:home` in the args file), never ambient env.
+- **V2 — artifacts out** (`b314e1a`): `project.edn` declares `:deliverables`; on fulfillment the watcher uploads them to the owning topic via multipart `sendDocument` (max 3, ≤45 MB each, missing files skipped honestly).
+- **V3 — goal control from chat** (`3f98952`): `/goal cancel` appends an honest HALT verdict to run.log before killing the runner (the watcher announces ⛔ with attribution, never "gave up waiting"); `/goal status [name]` reads the runner's own words; workspaces stay resumable.
+- **V4 — skill economy** (`5dc2233`): `bb skill-economy` renders a claims-vs-reads ledger over goal workspaces (`:skills-used` claims against tool-level SKILL.md read receipts) and names prune candidates — skills claimed but never once read.
+- **V5 — durable goal queue + concurrency cap** (`72142c0`): a second `/goal` in a busy topic queues (`state/goal-queue.edn`, durable FIFO) instead of being refused; `:goal/max-concurrent` (default 2) caps simultaneous goals. Drains at goal end, authoring end, and poller boot — always by spawning the launcher, never authoring inline.
+- **V7 — daily owner digest** (`3606ee8`): at/after 08:00 local, once per calendar day, stats render into the owner's DM through the durable outbox. The poller cycle is the clock; no cron infrastructure to forget.
+- **`bb release`** (bk-5e88): changelog-driven release cutting — promotes `## Unreleased`, bumps `version.clj`, commits and tags; `--dry-run` prints the plan.
+
+### Changed
+
+- Authoring no longer runs on the poll loop (the dogfood's silent 44-minute park); the child launcher, watcher, and resume scripts honor `:base-url` (self-hosted gateways and test fake servers ride the same ladder as production Telegram).
+- Stale-pid handling consolidated: the registry prunes dead entries on read; the authoring lock treats unreadable pids as free.
+
 ## v0.9.0 - 2026-09-09
 
 ### Added
