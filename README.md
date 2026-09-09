@@ -96,3 +96,21 @@ bb test:e2e:all
 ## Documentation
 
 See `docs/babashka-rewrite/` for the product spec, roadmap, tasklist, and ADR.
+
+## Releases & rollback
+
+The running version is printed at poller boot (`theseus vX.Y.Z booting`,
+first line of `state/telegram-poll.log` after a restart). Tags mark every
+release; `git tag` lists them.
+
+Roll back to a known-good release (local service, no push required):
+
+```sh
+git checkout v0.9.0
+launchctl kickstart -k gui/$(id -u)/com.theseus.telegram
+tail -f ~/theseus/state/telegram-poll.log   # watch the boot health lines
+```
+
+Durable state (`state/`) is forward-compatible: sessions, the outbox, the
+poll offset, and goal workspaces survive any checkout, so a rollback costs
+nothing that already happened.

@@ -19,6 +19,7 @@
             [bb-agent.telegram-intake :as intake]
             [bb-agent.telegram-media :as media]
             [bb-agent.telegram-state :as state]
+            [bb-agent.version :as version]
             [cheshire.core :as json]
             [clojure.string :as str]))
 
@@ -241,6 +242,8 @@
      (str (fs/path (config/home) "state" "telegram-poll.log"))
      (get-in boot-cfg [:telegram :log-max-bytes] log-cap/default-max-bytes)
      (get-in boot-cfg [:telegram :log-keep-bytes] log-cap/default-keep-bytes))
+    ;; bk-173e: the boot log answers "what version is running" — no ps, no prayer.
+    (println (str "theseus " version/v " booting"))
     (bot-commands/register-safely!)
     ;; bk-1825: doctor-lite at boot. Print every check; on errors, shout —
     ;; log line + owner DM via the durable outbox. Never throws: a health

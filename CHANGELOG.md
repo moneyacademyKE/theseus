@@ -1,9 +1,21 @@
 # Changelog
 
-## Unreleased
+## v0.9.0 - 2026-09-09
 
 ### Added
 
+- Production-hardening week, roadmap R1–R5 (product-readiness audit 2026-09-09):
+  - **Durable outbox** (`bb-agent.outbox`): every outbound message persists under `state/outbox/` before the send attempt; only a confirmed send deletes it. A drain replays survivors every poll cycle, dead-letters after 5 attempts (reason-tagged). Kill-mid-send no longer loses the message (P0).
+  - **Graceful shutdown**: SIGTERM flips a lifecycle flag and gives an in-flight cycle up to 10s to finish — kills the kickstart 409 `getUpdates` conflict race at its root (P1).
+  - **Boot health**: doctor-lite runs at poller boot, 11 checks printed; any error shouts once to the log and the owner DM through the outbox (bk-1825).
+  - **Log cap** (`bb-agent.log-cap`): boot-time in-place truncation over 10 MB, whole-line tail preserved; launchd's O_APPEND fd stays on the inode (bk-e6ff).
+  - **`bb stats`** (`bb-agent.stats`): one-screen ops summary — usage events/tokens, outbox depth + dead letters, goal verdict counts — read from ledgers that already exist. No metrics stack (bk-203f).
+  - **State hygiene gate** (`bb-agent.state-hygiene`): `state/` holds only the durable allowlist; scratch exiled to a sibling `scratch/`. Gate pins it in every e2e run (bk-a764).
+  - **Authoring timeout**: goal author/resume runs under a wall-clock budget (`:goal/authoring-timeout-ms`, 10 min default) instead of parking forever on a wedged provider (bk-963f).
+  - **`:already-satisfied` verdict**: a goal whose predicate already holds at iteration 0 reports 📦 pre-existing evidence instead of ✅ claiming this run's work (bk-e827).
+  - **Approval buttons gate** (`:approval-buttons`, default on) (bk-9640).
+  - **Offset semantics suite**: poll-cursor fail-loud on corruption (replay-storm prevention), reply-ledger self-heal on non-map corruption, id coercion — two latent defects found by the pins (bk-1c3b).
+  - **Boot-load pins**: fresh bb processes must analyze the poller and goal-runner require chains; red-verified by fault injection (bk-1fe8).
 - Telegram delivery integrity (`bb-agent.telegram-delivery`): all finals and approval replies now validate both HTTP and Bot API success, retry only 429/`retry_after` failures for at most 3 attempts, cap each inline wait at 30 seconds, preserve chat/topic/reply routing on every attempt, fall back once from a rejected HTML chunk to plain text through the same checked path, stop later chunks after terminal failure, and surface structured failure context without message content or credentials (issue #25; `docs/TELEGRAM_DELIVERY_INTEGRITY_PARITY.md`).
 - Authorized inbound Telegram attachments (`bb-agent.telegram-attachment`): documents and supported media persist as inert bytes under `channel_attachments/telegram/<chat-id>/topic-<thread-id>/` before the agent turn. Authorization runs before `getFile` or download; filenames and Telegram paths are sanitized; size is bounded by `:attachment-max-bytes` (20 MiB default). No STT, parsing, execution, or automatic trust is implied.
 
@@ -15,6 +27,12 @@
 
 - Telegram gateway tier 2 (`bb-agent.telegram-group` + adapter/guard wiring): sender-scoped group ACLs, per-group `:open`/`:respond-to` policy, mention/reply activation, bot-loop suppression, genuine forum-topic session keys (`chat-id + topic-id`), topic-preserving final/approval replies, sender/reply context, command-suffix normalization, and a shared-session privacy gate that blocks private/global memory attachment and semantic indexing in groups. Verified live against the target shape: **Sly Theseus** (`-1003995594829`), forum-enabled with `@eileenslybot` as admin. Group suite 10/55; full gate 26 suites, 147 tests / 613 assertions, zero failures/errors (issue #18; `docs/TELEGRAM_GROUP_PARITY.md`).
 - Telegram gateway tier 1 (`bb-agent.telegram-render`, `bb-agent.telegram-guard`): md→HTML rendering with 4096-char splitting, fail-closed owner allowlist (`:allowed-chat-ids`), HTML `parse_mode` on gateway replies, continuous `bb telegram poll` loop, and a deny-path e2e asserting denied chats get no reply and no session. Suites: telegram-rich 5/8, telegram-guard 4/7, gateway 4/22, all in `test:e2e:all` (GAP_ANALYSIS §23).
+
+### Changed
+
+- `telegram.clj` (695 LOC, last ceiling violation) split into `bb-agent.telegram-intake` (update consumption, 436 LOC) and `bb-agent.telegram-lifecycle` (polling, durability ledger, shutdown, boot, 278 LOC). Zero behavior change; black-box e2e untouched (bk-bf8b).
+- `goal_bridge.clj` split into `bb-agent.goal.registry` / `goal.outcomes` / `goal.progress` (bk-c60f).
+- A config with no `:telegram` section now fails `bb doctor` (exit 1) — telegram-first is the product (bk-1825).
 
 ## v0.8.0 - 2026-08-30
 
