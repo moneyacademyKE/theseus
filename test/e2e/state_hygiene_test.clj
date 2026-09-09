@@ -36,3 +36,28 @@
       (is (= [] (hygiene/violations state-dir))
           (str "scratch in " state-dir " — move to scratch/"))
       (is true "no state dir on this host"))))
+
+(deftest clean-goals-dir-has-no-violations
+  (let [home (fs/create-temp-dir {:prefix "goals-hygiene-clean-"})]
+    (try
+      (fs/create-dirs (fs/path home "goals" "build-thing-123"))
+      (spit (str (fs/path home "goals" "active.edn")) "{}")
+      (is (= [] (hygiene/goals-violations (fs/path home "goals"))))
+      (finally (fs/delete-tree home)))))
+
+(deftest goals-scratch-files-are-flagged
+  (let [home (fs/create-temp-dir {:prefix "goals-hygiene-dirty-"})]
+    (try
+      (fs/create-dirs (fs/path home "goals" "build-thing-123"))
+      (doseq [e ["probe-196.out" "parallel-timeline.log" "normalize.config.edn"]]
+        (spit (str (fs/path home "goals" e)) ""))
+      (is (= ["normalize.config.edn" "parallel-timeline.log" "probe-196.out"]
+             (hygiene/goals-violations (fs/path home "goals"))))
+      (finally (fs/delete-tree home)))))
+
+(deftest live-goals-dir-is-clean
+  (let [goals-dir (fs/path (config/home) "goals")]
+    (if (fs/directory? goals-dir)
+      (is (= [] (hygiene/goals-violations goals-dir))
+          (str "scratch files in " goals-dir " — move to scratch/"))
+      (is true "no goals dir on this host"))))
