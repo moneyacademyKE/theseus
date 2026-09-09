@@ -7,6 +7,7 @@
             [babashka.http-client :as http]
             [bb-agent.bot-commands :as bot-commands]
             [bb-agent.config :as config]
+            [bb-agent.digest :as digest]
             [bb-agent.doctor :as doctor]
             [bb-agent.goal-bridge :as goal-bridge]
             [bb-agent.goal.outcomes :as goal-outcomes]
@@ -172,6 +173,13 @@
     ;; kill, provider blackout) is retried from disk every cycle. Same rule
     ;; as above — a drain failure must never kill polling.
     (try (drain-outbox! telegram-cfg) (catch Exception _ nil))
+    ;; V7: daily owner digest — the poller cycle is the clock (drift OK,
+    ;; silence isn't). A digest failure must never kill polling either.
+    (try (digest/maybe-digest!
+          telegram-cfg
+          {:today (str (java.time.LocalDate/now))
+           :hour (.getHour (java.time.LocalTime/now))})
+         (catch Exception _ nil))
     {:updates @processed :conflict? conflict?}))
 
 (defn- install-shutdown-hook!
