@@ -255,6 +255,16 @@
     (let [cfg (bridge/promote-config {:name "llm-guess" :goal {}} "bridge-slug")]
       (is (= "bridge-slug" (:name cfg)) "bridge data wins over anything the LLM wrote"))))
 
+(deftest author-model-override-test
+  (testing ":goal/author-model overrides the model for authoring only; absent key keeps the turn model (V1b)"
+    (with-redefs [config/load-config (constantly {:provider :fake :model "main-model"
+                                                  :goal/author-model "fast-model"})]
+      (is (= "fast-model" (:model (#'bridge/author-cfg "x" "/tmp/ws")))
+          "authoring rides the override model")
+    (with-redefs [config/load-config (constantly {:provider :fake :model "main-model"})]
+      (is (= "main-model" (:model (#'bridge/author-cfg "x" "/tmp/ws")))
+          "absent override = authoring rides the configured model")))))
+
 (deftest authoring-timeout-test
   (testing "a wedged authoring turn returns a stall string instead of parking forever"
     (with-redefs [config/load-config (constantly {:goal/authoring-timeout-ms 100})

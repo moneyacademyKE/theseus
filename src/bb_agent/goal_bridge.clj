@@ -129,17 +129,21 @@ Do NOT run the goal. Write files only.")
   "Config for an authoring turn. Authoring a real project costs far more
    rounds than chat (:max-tool-rounds 24 died mid-project live 2026-09-07),
    so the budget is its own key: :goal/max-authoring-rounds, floor 48.
+   :goal/author-model overrides the model for AUTHORING ONLY (V1b) — a
+   fast non-reasoning author against a 44-minute reasoning one; turns keep
+   the configured model. Absent key = same model everywhere.
    The approver is constant-approved: authoring turns are non-interactive,
    so :ask would deny with no human to ask (B3) — the user pre-consented
    by launching the goal, and the constitution still vetoes first (policy
    :deny short-circuits before the approval gate)."
   [name ws]
   (let [base (config/load-config)]
-    (-> base
-        (assoc :session/id (str "goal-author-" name) :cwd ws)
-        (assoc :max-tool-rounds (max (or (:max-tool-rounds base) 8)
-                                     (or (:goal/max-authoring-rounds base) 48)))
-        (assoc :approval/ask (constantly :approved)))))
+    (cond-> (-> base
+                (assoc :session/id (str "goal-author-" name) :cwd ws)
+                (assoc :max-tool-rounds (max (or (:max-tool-rounds base) 8)
+                                             (or (:goal/max-authoring-rounds base) 48)))
+                (assoc :approval/ask (constantly :approved)))
+      (:goal/author-model base) (assoc :model (:goal/author-model base)))))
 
 (defn validate!
   "Run the runner's own validator over the authored config. Returns nil when
