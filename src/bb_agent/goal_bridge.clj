@@ -242,16 +242,22 @@ Do NOT run the goal. Write files only.")
         :else (do (Thread/sleep (long (or poll-ms 250)))
                   (recur))))))
 
-(defn ^:private author-with-validation!
+(defn- author-with-validation!
   "author-attempts! under a two-clock budget (see watch-authoring!). The
    emit channel — one event per authoring tool call — doubles as the
    progress signal: it is always wrapped so it bumps last-progress even
    when no requester is listening (emit nil), because a hang must be
    detectable whether or not anyone is watching. Returns nil on success,
-   else the stall/problems string."
+   else the stall/problems string.
+   Every run persists <ws>/authoring.edn — {:model :rounds :duration-ms
+   :result :finished} (V1c): the 44-minute silence must never be
+   unmeasured again, and model comparisons (V1b) read data, not vibes."
   [name ws spec emit]
-  (let [last-progress (atom (System/nanoTime))
+  (let [started-ms (System/currentTimeMillis)
+        rounds (atom 0)
+        last-progress (atom (System/nanoTime))
         progress-emit (fn [ev]
+                        (when (= (:status ev) :tool/call) (swap! rounds inc))
                         (reset! last-progress (System/nanoTime))
                         (when emit (emit ev)))
         acfg (-> (author-cfg name ws)
@@ -263,7 +269,16 @@ Do NOT run the goal. Write files only.")
         result (watch-authoring!
                 (future (author-attempts! name ws spec acfg refs))
                 last-progress
-                {:idle-ms idle :ceiling-ms budget :poll-ms 250})]
+                {:idle-ms idle :ceiling-ms budget :poll-ms 250})
+        record {:model (or (:goal/author-model acfg) (:model acfg))
+                :rounds @rounds
+                :duration-ms (- (System/currentTimeMillis) started-ms)
+                :result (case result
+                          ::stalled :stalled
+                          ::timed-out :timed-out
+                          :authored)
+                :finished (str (java.time.Instant/now))}]
+    (try (spit (str ws "/authoring.edn") (pr-str record)) (catch Exception _))
     (cond
       (= ::stalled result)
       (str "authoring stalled: no progress for " (quot idle 60000)

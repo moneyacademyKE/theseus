@@ -265,6 +265,26 @@
       (is (= "main-model" (:model (#'bridge/author-cfg "x" "/tmp/ws")))
           "absent override = authoring rides the configured model")))))
 
+(deftest authoring-instrumentation-test
+  (testing "every authoring run persists <ws>/authoring.edn with model, rounds, duration (V1c)"
+    (with-redefs [config/load-config (constantly {:provider :fake :model "main-model"
+                                                  :goal/authoring-idle-timeout-ms 5000
+                                                  :goal/authoring-timeout-ms 30000})
+                  core/run-turn! (fn [cfg _prompt]
+                                   (when-let [emit (:status/emit cfg)]
+                                     (emit {:status :tool/call :tool "read_file"})
+                                     (emit {:status :tool/done :tool "read_file"})))]
+      (let [ws (str *tmp* "/ws-instr")
+            _ (fs/create-dirs ws)
+            result (#'bridge/author-with-validation! "instr-goal" ws "spec" nil)]
+        (is (string? result) "fake provider writes no config — validator verdict")
+        (let [rec (edn/read-string (slurp (str ws "/authoring.edn")))]
+          (is (= "main-model" (:model rec)))
+          (is (= 2 (:rounds rec)) "initial turn + repair turn, one tool call each")
+          (is (number? (:duration-ms rec)))
+          (is (= :authored (:result rec)))
+          (is (string? (:finished rec))))))))
+
 (deftest authoring-timeout-test
   (testing "a wedged authoring turn returns a stall string instead of parking forever"
     (with-redefs [config/load-config (constantly {:goal/authoring-timeout-ms 100})
