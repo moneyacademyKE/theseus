@@ -27,7 +27,7 @@
         by-name (group-by :command cmds)]
     (is (= 1 (count (get by-name "goal")))
         "a skill cannot shadow or duplicate a native command")
-    (is (= "Supervised goal build: /goal <what to build>"
+    (is (= "Supervised goal build: /goal <what to build> · cancel · status <name> · resume <name>"
            (:description (first (get by-name "goal"))))
         "the native entry keeps its own description")
     (is (= 1 (count (get by-name "foo_bar")))

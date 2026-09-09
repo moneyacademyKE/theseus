@@ -533,24 +533,64 @@ Do NOT run the goal. Write files only.")
         (when (not= kept runs) (registry/write-runs! kept))
         handled))))
 
+(defn cancel!
+  "Stop this topic's running goal (V3): append an honest HALT verdict to
+   run.log BEFORE killing the runner, so the watcher announces ⛔ with
+   attribution instead of 'gave up waiting'; then SIGTERM the pid and
+   unregister. The workspace is kept — /goal resume picks it up.
+   Stale (dead-pid) registry entries never reach here: active-run-for
+   prunes them on read — the registry owns that contract."
+  [chat-id thread-id]
+  (if-let [{:keys [pid name]} (registry/active-run-for chat-id thread-id)]
+    (do (try
+          (spit (str (registry/goals-root) "/" name "/run.log")
+                (str "\nHALT: cancelled by operator via /goal cancel at "
+                     (java.time.Instant/now) "\n")
+                  :append true)
+          (catch Exception _))
+        (p/shell {:continue true} "kill" (str pid))
+        (registry/unregister-run! name)
+        (str "⛔ Goal `" name "` cancelled — workspace kept, `/goal resume " name "` to continue."))
+    "No goal is running in this topic."))
+
+(defn status-of
+  "One targeted status line for a goal workspace (V3): the runner's own
+   verdict from run.log, plus the registry's live-pid flag."
+  [slug]
+  (let [ws (io/file (registry/goals-root) (str slug))]
+    (if (not (.exists ws))
+      (str "No goal workspace `" slug "`.")
+      (let [live (some (fn [[_ {:keys [pid name]}]]
+                         (and (= name slug) (registry/pid-alive? pid)))
+                       (registry/read-runs))]
+        (str "`" slug "` — " (name (progress/run-status (str slug)))
+             (when live " (runner alive)"))))))
+
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
    usage. Launch/resume detach immediately (V1a) — authoring never runs on
-   the poll loop."
+   the poll loop. cancel/status are instant control verbs (V3)."
   [text chat-id thread-id]
   (let [trimmed (when text (str/trim text))]
     (when (and trimmed (or (str/starts-with? trimmed "/goal ") (= "/goal" trimmed)))
       (if (= "/goal" trimmed)
-        "Usage: /goal <what to build> — I author the goal project, run it supervised, and the outcome lands here."
+        "Usage: /goal <what to build> — I author the goal project, run it supervised, and the outcome lands here.\n/goal cancel — stop this topic's running goal.\n/goal status <name> — one goal's status.\n/goal resume <name> — re-author a kept workspace."
         (let [spec (str/trim (subs trimmed 5))]
-          (if (or (= spec "resume") (str/starts-with? spec "resume "))
+          (cond
+            (= spec "cancel") (cancel! chat-id thread-id)
+            (= spec "status")
+            (if-let [active (:name (registry/active-run-for chat-id thread-id))]
+              (status-of active)
+              "No goal is running in this topic — /goals lists all.")
+            (str/starts-with? spec "status ") (status-of (str/trim (subs spec 7)))
+            (or (= spec "resume") (str/starts-with? spec "resume "))
             (let [slug (str/trim (subs spec 6))]
               (if (authoring-busy? chat-id thread-id)
                 "⏳ This topic is already authoring a goal — the outcome will land here."
                 (do (resume-detached! slug chat-id thread-id)
                     (str "🔁 Resuming" (when-not (str/blank? slug) (str " `" slug "`"))
                          " — authoring detached, progress updates below."))))
-            (dispatch-spec! spec chat-id thread-id)))))))
+            :else (dispatch-spec! spec chat-id thread-id)))))))
 
 (def build-verbs
   "First-word production verbs that force the goal loop (owner directive

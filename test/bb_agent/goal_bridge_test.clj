@@ -288,6 +288,51 @@
           (is (= :authored (:result rec)))
           (is (string? (:finished rec))))))))
 
+(deftest goal-cancel-and-status-test
+  (testing "V3 control verbs: cancel stops the topic's runner with an honest
+            HALT verdict; status reads the runner's own words; both route
+            through handle-request! without ever scaffolding"
+    (testing "cancel with no run in topic"
+      (is (str/includes? (bridge/cancel! 55 66) "No goal is running")))
+    (testing "cancel with a live runner: verdict appended, pid killed, unregistered"
+      (let [pid (live-pid)
+            ws (str *tmp* "/cancel-me")]
+        (fs/create-dirs ws)
+        (spit (str ws "/run.log") "iteration 1 ok\n")
+        (registry/register-run! 55 66 {:pid pid :name "cancel-me" :chat-id 55 :thread-id 66})
+        (let [reply (bridge/handle-request! "/goal cancel" 55 66)]
+          (is (str/includes? reply "cancel-me"))
+          (is (str/includes? reply "⛔"))
+          (is (str/includes? (slurp (str ws "/run.log"))
+                             "HALT: cancelled by operator")
+              "the watcher will announce ⛔ with attribution, not 'gave up'")
+          (is (nil? (registry/active-run-for 55 66)) "unregistered")
+          (p/shell {:continue true} "kill" (str pid)))))
+    (testing "a dead-pid registry entry is pruned on read — cancel sees nothing"
+      (registry/register-run! 55 66 {:pid 4000000000 :name "ghost" :chat-id 55 :thread-id 66})
+      (is (str/includes? (bridge/cancel! 55 66) "No goal is running"))
+      (is (nil? (registry/active-run-for 55 66)) "the read pruned the ghost")))
+  (testing "/goal status <name> reports the runner's verdict"
+    (let [ws (str *tmp* "/status-goal")]
+      (fs/create-dirs ws)
+      (spit (str ws "/run.log") "GOAL FULFILLED\n")
+      (is (str/includes? (bridge/status-of "status-goal") "fulfilled"))
+      (is (str/includes? (bridge/status-of "never-was") "No goal workspace"))))
+  (testing "status of this topic's active goal via bare /goal status"
+    (let [pid (live-pid)
+          ws (str *tmp* "/active-status")]
+      (fs/create-dirs ws)
+      (spit (str ws "/run.log") "iteration 2 ok\n")
+      (registry/register-run! 71 72 {:pid pid :name "active-status" :chat-id 71 :thread-id 72})
+      (is (str/includes? (bridge/handle-request! "/goal status" 71 72) "running"))
+      (p/shell {:continue true} "kill" (str pid))
+      (registry/unregister-run! "active-status")))
+  (testing "/goal cancel never reaches the spec dispatcher"
+    (let [spawned (atom false)]
+      (with-redefs [bridge/scaffold! (fn [_] (reset! spawned true) (str *tmp* "/x"))]
+        (bridge/handle-request! "/goal cancel" 99 98)
+        (is (false? @spawned) "control verbs are not build specs")))))
+
 (deftest authoring-timeout-test
   (testing "a wedged authoring turn returns a stall string instead of parking forever"
     (with-redefs [config/load-config (constantly {:goal/authoring-timeout-ms 100})

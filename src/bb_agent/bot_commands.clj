@@ -22,7 +22,7 @@
    ["reset" "Clear conversation state"]
    ["usage" "Show token usage"]
    ["autonomy" "Show RSI autonomy tier status"]
-   ["goal" "Supervised goal build: /goal <what to build>"]
+   ["goal" "Supervised goal build: /goal <what to build> · cancel · status <name> · resume <name>"]
    ["goals" "List goal runs and their status"]
    ["model" "Show or switch the LLM model"]
    ["skills" "List all commands and skills"]
