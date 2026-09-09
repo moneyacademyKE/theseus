@@ -43,8 +43,8 @@
         refs (str ws "/references")]
     (fs/create-dirs refs)
     (doseq [r ["normalize.config.edn" "usage-stats.config.edn"]]
-      (when (fs/exists? (str (registry/goals-root) "/" r))
-        (fs/copy (str (registry/goals-root) "/" r) (str refs "/" r) {:replace-existing true})))
+      (when (fs/exists? (str (config/home) "/references/" r))
+        (fs/copy (str (config/home) "/references/" r) (str refs "/" r) {:replace-existing true})))
     ;; The default goal methodology (owner directive 2026-09-07, conf: high)
     ;; rides into every workspace — the authoring agent reads it like the
     ;; schema references. Brain knowledge dir is the single source.
