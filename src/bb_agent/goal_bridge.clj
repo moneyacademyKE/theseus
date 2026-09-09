@@ -128,11 +128,22 @@ Do NOT run the goal. Write files only.")
            "or move that check into :goal instead of :integrity."))))
 
 (def ^:private default-authoring-timeout-ms
-  "Wall-clock budget for the whole authoring phase. 2026-09-08: a resume sat
-   60+ min parked on a dead provider wait (0% CPU, no ledgers, no verdict) —
-   from outside, provider latency and a hang are indistinguishable, so the
-   phase needs its own clock. Override via :goal/authoring-timeout-ms."
-  600000)
+  "Hard ceiling for the whole authoring phase — the backstop, not the
+   primary clock. 2026-09-09 dogfood: a complex spec on a reasoning model
+   authors honestly for 10-20+ min, and the old 10-min total budget
+   amputated live work mid-round every time. Primary clock is progress
+   (see default-authoring-idle-ms); this only fires when work is STILL
+   moving past any sane total. Override via :goal/authoring-timeout-ms."
+  2700000)
+
+(def ^:private default-authoring-idle-ms
+  "No-progress clock for the authoring phase — the real stall detector.
+   A healthy authoring round emits a tool call every minute or two; a
+   wedged provider call emits nothing and pins 0% CPU. 2026-09-08's 60-min
+   parked resume was zero progress for an hour; that invariant — silence,
+   not duration — is what a stall is. Override via
+   :goal/authoring-idle-timeout-ms."
+  480000)
 
 (defn ^:private author-attempts!
   "One authoring turn, then the validator judges; on failure, one repair
@@ -163,24 +174,58 @@ Do NOT run the goal. Write files only.")
             baseline)
           nil)))))
 
+(defn ^:private watch-authoring!
+  "Await an authoring future under a two-clock budget:
+   - idle: no progress bump for idle-ms → ::stalled (the real hang detector)
+   - ceiling: total wall-clock exceeds ceiling-ms → ::timed-out (backstop)
+   last-progress is an atom of System/nanoTime, bumped by the emit wrapper
+   around every authoring tool call. A completed future returns its value
+   untouched. The losing future is abandoned, not killed — bounded waste,
+   never a hang (same contract as policy.clj's pred eval)."
+  [fut last-progress {:keys [idle-ms ceiling-ms poll-ms]}]
+  (let [deadline (+ (System/nanoTime) (* (long ceiling-ms) 1000000))
+        idle-nanos (* (long idle-ms) 1000000)]
+    (loop []
+      (cond
+        (realized? fut) @fut
+        (> (System/nanoTime) deadline) ::timed-out
+        (> (- (System/nanoTime) @last-progress) idle-nanos) ::stalled
+        :else (do (Thread/sleep (long (or poll-ms 250)))
+                  (recur))))))
+
 (defn ^:private author-with-validation!
-  "author-attempts! under a wall-clock budget: a wedged provider call must
-   not park the poller (launch authors inline) or a detached resume forever.
-   On timeout the abandoned thread lingers parked — bounded waste, never a
-   hang (same contract as policy.clj's pred eval). Returns nil on success,
-   else the problems/stall string."
+  "author-attempts! under a two-clock budget (see watch-authoring!). The
+   emit channel — one event per authoring tool call — doubles as the
+   progress signal: it is always wrapped so it bumps last-progress even
+   when no requester is listening (emit nil), because a hang must be
+   detectable whether or not anyone is watching. Returns nil on success,
+   else the stall/problems string."
   [name ws spec emit]
-  (let [acfg (cond-> (author-cfg name ws)
-               emit (assoc :status/emit emit))
+  (let [last-progress (atom (System/nanoTime))
+        progress-emit (fn [ev]
+                        (reset! last-progress (System/nanoTime))
+                        (when emit (emit ev)))
+        acfg (-> (author-cfg name ws)
+                 (assoc :status/emit progress-emit))
         refs [(str ws "/references/normalize.config.edn")
               (str ws "/references/usage-stats.config.edn")]
+        idle (or (:goal/authoring-idle-timeout-ms acfg) default-authoring-idle-ms)
         budget (or (:goal/authoring-timeout-ms acfg) default-authoring-timeout-ms)
-        result (deref (future (author-attempts! name ws spec acfg refs))
-                      budget ::timed-out)]
-    (if (= ::timed-out result)
-      (str "authoring stalled: no completion within " (quot budget 60000)
+        result (watch-authoring!
+                (future (author-attempts! name ws spec acfg refs))
+                last-progress
+                {:idle-ms idle :ceiling-ms budget :poll-ms 250})]
+    (cond
+      (= ::stalled result)
+      (str "authoring stalled: no progress for " (quot idle 60000)
            " min (provider hang or wedged turn)")
-      result)))
+
+      (= ::timed-out result)
+      (str "authoring stalled: exceeded total budget of " (quot budget 60000)
+           " min while still making progress — raise :goal/authoring-timeout-ms"
+           " or simplify the spec")
+
+      :else result)))
 
 (defn ^:private spawn-detached!
   "nohup + background + echo pid: the child survives the poller and reports

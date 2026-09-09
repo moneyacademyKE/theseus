@@ -255,3 +255,61 @@
             result (#'bridge/author-with-validation! "invalid-goal" ws "spec" nil)]
         (is (string? result))
         (is (not (str/includes? result "authoring stalled")))))))
+
+(def ^:private stalled :bb-agent.goal-bridge/stalled)
+(def ^:private timed-out :bb-agent.goal-bridge/timed-out)
+
+(deftest watch-authoring-test
+  (testing "no progress at all: the idle clock fires, not the ceiling"
+    (let [fut (future (Thread/sleep 30000))
+          started (System/currentTimeMillis)
+          r (#'bridge/watch-authoring! fut (atom (System/nanoTime))
+                                     {:idle-ms 200 :ceiling-ms 30000 :poll-ms 25})]
+      (is (= stalled r))
+      (is (< (- (System/currentTimeMillis) started) 5000)
+          "idle (200ms) fired, ceiling (30s) never got near"))))
+  (testing "steady progress survives past where the old total budget would die"
+    (let [prog (atom (System/nanoTime))
+          bumper (future (loop [i 0]
+                           (if (< i 12)
+                             (do (reset! prog (System/nanoTime))
+                                 (Thread/sleep 50)
+                                 (recur (inc i)))
+                             :done)))
+          fut (future @bumper)]
+      (is (= :done (#'bridge/watch-authoring! fut prog
+                                              {:idle-ms 200 :ceiling-ms 30000 :poll-ms 25}))
+          "12 emits over 600ms keep resetting the idle clock")))
+  (testing "ceiling still wins while progress continues (hard backstop)"
+    (let [prog (atom (System/nanoTime))
+          bumper (future (while true
+                           (reset! prog (System/nanoTime))
+                           (Thread/sleep 50)))
+          fut (future (Thread/sleep 30000))
+          started (System/currentTimeMillis)
+          r (#'bridge/watch-authoring! fut prog {:idle-ms 2000 :ceiling-ms 1000 :poll-ms 25})]
+      (future-cancel bumper)
+      (is (= timed-out r))
+      (is (< (- (System/currentTimeMillis) started) 3000))))
+  (testing "a realized future returns its value untouched"
+    (is (= :ok (#'bridge/watch-authoring! (future :ok) (atom (System/nanoTime))
+                                          {:idle-ms 1000 :ceiling-ms 5000 :poll-ms 25}))))
+
+(deftest authoring-progress-emit-test
+  (testing "emit activity bumps the idle clock AND forwards to the requester"
+    (let [received (atom [])
+          ws (str *tmp* "/ws-progress")
+          _ (fs/create-dirs ws)]
+      (with-redefs [config/load-config (constantly {:goal/authoring-idle-timeout-ms 300
+                                                    :goal/authoring-timeout-ms 60000})
+                    core/run-turn! (fn [cfg _]
+                                     (let [emit (:status/emit cfg)]
+                                       (dotimes [_ 5]
+                                         (emit {:status :tool/call :tool "read_file"})
+                                         (Thread/sleep 80))
+                                       nil))]
+        (let [result (#'bridge/author-with-validation! "progress-goal" ws "spec" #(swap! received conj %))]
+          (is (not (str/includes? (str result) "authoring stalled"))
+              "5 emits over 400ms with a 300ms idle budget: progress kept it alive")
+          (is (pos? (count @received))
+              "the requester's emit channel still receives forwarded events"))))))
