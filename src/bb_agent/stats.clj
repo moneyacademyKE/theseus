@@ -57,6 +57,7 @@
   []
   (let [{:keys [usage outbox goals]} (summary)]
     (println "== Theseus stats ==")
+    (println (str "home:       " (config/home)))
     (println (format "usage:      %d events, %d tokens, $%.4f est"
                      (:usage/events usage) (:tokens/total usage)
                      (:cost/estimate-usd usage)))
