@@ -27,9 +27,14 @@
 
 (defn send-approval-request!
   "Send the tool-approval prompt with inline buttons bound to this pending
-   approval's id. Text commands stay valid alongside the buttons."
+   approval's id. Text commands stay valid alongside the buttons.
+
+   Config-gated: :approval-buttons false sends the prompt as plain text
+   (no inline keyboard). Default on - buttons shipped live 2026-09-05, so
+   an absent key must not silently strip them from the running bot."
   [cfg chat-id thread-id pending]
-  (let [id (:approval/id pending)]
+  (let [id (:approval/id pending)
+        buttons? (not (false? (:approval-buttons cfg)))]
     (delivery/send-message!
      cfg chat-id
      (str "Tool approval requested\n"
@@ -37,12 +42,13 @@
           "tool=" (:tool/name pending) "\n"
           (pr-str (:tool/args pending)) "\n"
           "Reply /approve, /deny, or /approve-rest - or use the buttons.")
-     {:thread-id thread-id
-      :reply-markup
-      {:inline_keyboard
-       [[{:text "✅ Approve" :callback_data (str "appr:" id)}
-         {:text "❌ Deny" :callback_data (str "deny:" id)}]
-        [{:text "✅ Approve rest" :callback_data (str "apprrest:" id)}]]}})))
+     (cond-> {:thread-id thread-id}
+       buttons?
+       (assoc :reply-markup
+              {:inline_keyboard
+               [[{:text "✅ Approve" :callback_data (str "appr:" id)}
+                 {:text "❌ Deny" :callback_data (str "deny:" id)}]
+                [{:text "✅ Approve rest" :callback_data (str "apprrest:" id)}]]})))))
 
 (defn expire-keyboard!
   "Replace an expired approval prompt's text, which drops its inline

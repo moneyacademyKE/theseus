@@ -154,6 +154,41 @@
         (stop-server)
         (fs/delete-tree home)))))
 
+(deftest approval-buttons-are-config-gated
+  (let [home (fs/create-temp-dir {:prefix "theseus-approvals-gate-"})
+        port (free-port)
+        calls (atom [])
+        stop-server
+        (server/run-server
+         (fn [req]
+            (let [body (when-let [stream (:body req)] (slurp stream))]
+             (swap! calls conj {:uri (:uri req) :body body})
+             {:status 200
+              :headers {"content-type" "application/json"}
+              :body (json/generate-string {:ok true :result {:message_id 91}})}))
+         {:port port})]
+    (try
+      (with-redefs [config/home (fn [] (str home))]
+        (approval-ui/send-approval-request!
+         {:token "TESTTOKEN" :base-url (str "http://127.0.0.1:" port)
+          :approval-buttons false}
+         group-id topic-id
+         {:approval/id approval-id :tool/name "shell"
+          :tool/args {:cmd "cargo test"}})
+        (let [send (->> @calls
+                        (filter #(= "/botTESTTOKEN/sendMessage" (:uri %)))
+                        first :body
+                        (#(json/parse-string % keyword)))]
+          (testing "gate off: the prompt still sends, bound to the thread"
+            (is (some? send))
+            (is (= topic-id (:message_thread_id send)))
+            (is (str/includes? (:text send) approval-id)))
+          (testing "gate off: no inline keyboard rides along"
+            (is (nil? (:reply_markup send))))))
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))
+
 (deftest callback-queries-resolve-pending-approvals
   (let [home (fs/create-temp-dir {:prefix "theseus-approvals-e2e-"})
         port (free-port)
