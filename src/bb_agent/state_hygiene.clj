@@ -11,7 +11,7 @@
    durable data (sessions, outbox, ledgers), durable config state
    (offsets, seen-set, memory), and live runtime artifacts (log, pids)."
   #{"sessions" "session-metadata" "session-archive" "cursor-archive"
-    "group-context" "telegram-replies" "outbox" "rsi"
+    "group-context" "telegram-replies" "outbox" "rsi" "goal-queue.edn"
     "memory.edn" "session-summaries.edn" "usage.edn" "usage-index.db"
     "telegram-offset.edn" "telegram-seen.edn"
     "telegram-poll.log" "telegram-poller.pid" "gateway.pid"})

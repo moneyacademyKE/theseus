@@ -88,4 +88,6 @@
     (when (:finish! progress)
       ((:finish! progress) reply))
     (outcomes/queue-outcome! name chat-id thread-id reply)
-    (gb/authoring-unlock! chat-id thread-id)))
+    (gb/authoring-unlock! chat-id thread-id)
+    ;; V5: authoring done — a slot freed; start the next queued goal
+    (try (gb/launch-next-queued!) (catch Exception _ nil))))

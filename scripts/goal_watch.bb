@@ -165,36 +165,42 @@
           (str "bad watcher args: " (pr-str *command-line-args*))))
   (if (not token)
     (spit (str ws "/watch.err") "no telegram token; watcher ran silent")
-    (loop [i 0, seen 0, msg-id nil]
-      (if (and (< i max-polls) (pid-alive? pid))
-        (do (Thread/sleep poll-ms)
-            (let [events (progress/ledger-events ws)
-                  n (count events)]
-              (if (> n seen)
-                (let [text (progress/progress-text name events)
-                      mid (or msg-id
-                              (try (post! token chat-id thread-id text ws)
-                                   (catch Exception _ nil)))]
-                  (when (and msg-id mid)
-                    (try (edit! token chat-id msg-id text ws) (catch Exception _ nil)))
-                  (recur (inc i) n (or mid msg-id)))
-                (recur (inc i) seen msg-id))))
-        ;; runner exited (or ceiling): final verdict — edit if we can, else send.
-        ;; The verdict ALSO queues as outcome.edn: the poller's drain turns it
-        ;; into a durable session turn (bot messages never persist otherwise).
-        (let [text (final-text name run-log (progress/ledger-events ws))]
-          (try (outcomes/queue-outcome! name chat-id (some-> thread-id parse-long) text)
-               (catch Exception e
-                 (spit (str ws "/watch.err") (str (.getMessage e) "\n") :append true)))
-          (try
-            (if msg-id
-              (edit! token chat-id msg-id text ws)
-              (post! token chat-id thread-id text ws))
-            (catch Exception e
-              (spit (str ws "/watch.err") (.getMessage e))))
-          ;; V2: fulfilled goals ship their DECLARED artifacts to the topic
-          (when (str/includes? text "GOAL FULFILLED")
-            (ship-deliverables! token chat-id thread-id ws name))))))
-  ;; topic-scoped registry: drop ONLY this goal's entry — a raw file delete
-  ;; would wipe other topics' live runs (parallelism, 2026-09-08).
-  (try (registry/unregister-run! name) (catch Exception _ nil)))
+    (do
+      ;; poll the runner pid; each new iteration ledger edits ONE topic
+      ;; message in place; the final edit carries the runner's verdict.
+      (loop [i 0, seen 0, msg-id nil]
+        (if (and (< i max-polls) (pid-alive? pid))
+          (do (Thread/sleep poll-ms)
+              (let [events (progress/ledger-events ws)
+                    n (count events)]
+                (if (> n seen)
+                  (let [text (progress/progress-text name events)
+                        mid (or msg-id
+                                (try (post! token chat-id thread-id text ws)
+                                     (catch Exception _ nil)))]
+                    (when (and msg-id mid)
+                      (try (edit! token chat-id msg-id text ws) (catch Exception _ nil)))
+                    (recur (inc i) n (or mid msg-id)))
+                  (recur (inc i) seen msg-id))))
+          ;; runner exited (or ceiling): final verdict — edit if we can, else send.
+          ;; The verdict ALSO queues as outcome.edn: the poller's drain turns it
+          ;; into a durable session turn (bot messages never persist otherwise).
+          (do
+            (let [text (final-text name run-log (progress/ledger-events ws))]
+              (try (outcomes/queue-outcome! name chat-id (some-> thread-id parse-long) text)
+                   (catch Exception e
+                     (spit (str ws "/watch.err") (str (.getMessage e) "\n") :append true)))
+              (try
+                (if msg-id
+                  (edit! token chat-id msg-id text ws)
+                  (post! token chat-id thread-id text ws))
+                (catch Exception e
+                  (spit (str ws "/watch.err") (.getMessage e))))
+              ;; V2: fulfilled goals ship their DECLARED artifacts to the topic
+              (when (str/includes? text "GOAL FULFILLED")
+                (ship-deliverables! token chat-id thread-id ws name)))
+            ;; V5: a slot just freed — launch the oldest queued goal, if any
+            (try (gb/launch-next-queued!) (catch Exception _ nil)))))
+      ;; topic-scoped registry: drop ONLY this goal's entry — a raw file delete
+      ;; would wipe other topics' live runs (parallelism, 2026-09-08).
+      (try (registry/unregister-run! name) (catch Exception _ nil)))))

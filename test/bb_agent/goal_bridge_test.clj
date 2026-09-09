@@ -161,13 +161,17 @@
     (is (str/includes? (bridge/handle-request! "/goal" 1 2) "Usage:")))
   (testing "/goals is not hijacked by the /goal seam"
     (is (nil? (bridge/handle-request! "/goals" 1 2))))
-  (testing "busy topic → refusal naming it; another topic is not blocked"
+  (testing "busy topic → queued behind the running goal; another topic is free"
     (let [pid (live-pid)]
       (registry/register-run! 1 2 {:pid pid :name "busy-goal" :chat-id 1 :thread-id 2})
-      (let [refusal (bridge/handle-request! "/goal build x" 1 2)]
-        (is (str/includes? refusal "busy-goal"))
-        (is (str/includes? refusal "one goal per topic")))
-      (is (nil? (registry/active-run-for 3 4)) "a different topic is free to launch")
+      (with-redefs [bridge/scaffold! (fn [name] (str *tmp* "/" name))
+                    bridge/spawn-detached! (fn [_ _] "0")
+                    config/home (constantly *tmp*)]
+        (let [reply (bridge/handle-request! "/goal build x" 1 2)]
+          (is (str/includes? reply "queued"))
+          (is (str/includes? reply "busy-goal")
+              "the queue reply names what it waits behind"))
+        (is (nil? (registry/active-run-for 3 4)) "a different topic is free to launch"))
       (p/shell {:continue true} "kill" (str pid))
       (registry/unregister-run! "busy-goal"))) ; explicit cleanup: later tests in this deftest assert an empty registry
   (testing "blank spec → usage (a trimmed blank IS bare /goal)"

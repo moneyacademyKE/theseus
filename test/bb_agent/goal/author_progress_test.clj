@@ -125,22 +125,54 @@
           (is (str/includes? (str (:home args)) "author-progress-test")
               "the child reads config from the dispatching home — data, not ambient env"))))))
 
-(deftest dispatch-busy-authoring-test
-  (testing "a live authoring lock gives the immediate busy reply (no second
-            wasted authoring in one topic)"
+(deftest dispatch-queues-when-busy-test
+  (testing "V5: a busy topic queues instead of refusing — authoring lock"
     (bridge/authoring-lock! -32 4722)
-    (let [reply (bridge/dispatch-spec! "build another thing" -32 4722)]
-      (is (str/includes? reply "already authoring")))
-    (bridge/authoring-unlock! -32 4722)))
+    (with-redefs [bridge/scaffold! (fn [name] (str *tmp* "/" name))
+                  bridge/spawn-detached! (fn [_ _] "0")]
+      (let [reply (bridge/dispatch-spec! "build another thing" -32 4722)]
+        (is (str/includes? reply "queued"))
+        (is (= 1 (count (bridge/read-queue))) "the queued goal is durable state"))
+      (bridge/authoring-unlock! -32 4722)
+      (bridge/write-queue! []))))
 
-(deftest dispatch-busy-registry-test
-  (testing "a registered RUNNING goal also refuses at dispatch (the registry
-            guard moved to the front line when authoring went detached)"
-    (let [pid (.pid (java.lang.ProcessHandle/current)) ; this test process is alive
+(deftest dispatch-queues-when-cap-full-test
+  (testing "V5: at :goal/max-concurrent live runs, a fresh launch queues"
+    (let [pid (.pid (java.lang.ProcessHandle/current))
           f (str *tmp* "/active.edn")]
-      (with-redefs [registry/active-file (constantly f)]
-        (registry/register-run! -33 4723 {:pid pid :name "runner-alive"
-                                          :chat-id -33 :thread-id 4723})
-        (let [reply (bridge/dispatch-spec! "build a third thing" -33 4723)]
-          (is (str/includes? reply "runner-alive"))
-          (is (str/includes? reply "one goal per topic")))))))
+      (with-redefs [registry/active-file (constantly f)
+                    config/load-config (constantly {:goal/max-concurrent 1})]
+        (registry/register-run! -34 4724 {:pid pid :name "cap-filler"
+                                          :chat-id -34 :thread-id 4724})
+        (with-redefs [bridge/scaffold! (fn [name] (str *tmp* "/" name))
+                      bridge/spawn-detached! (fn [_ _] "0")]
+          (let [reply (bridge/dispatch-spec! "build the overflow" -35 4725)]
+            (is (str/includes? reply "queued"))
+            (is (= 1 (bridge/live-run-count)) "one live run")
+            (is (= 1 (count (bridge/read-queue))) "the overflow goal waits")))
+        (registry/unregister-run! "cap-filler")
+        (bridge/write-queue! [])))))
+
+(deftest queue-drains-fifo-test
+  (testing "V5: launch-next-queued! spawns the OLDEST queueable goal and
+            drops it from the queue; no free topic, no launch"
+    (let [spawned (atom [])]
+      (bridge/write-queue!
+       [{:name "first" :spec "build first" :chat-id -40 :thread-id 1
+         :queued-at "2026-09-09T10:00:00Z"}
+        {:name "second" :spec "build second" :chat-id -41 :thread-id 2
+         :queued-at "2026-09-09T10:01:00Z"}])
+      (with-redefs [bridge/scaffold! (fn [name]
+                                       (let [d (str *tmp* "/" name)]
+                                         (fs/create-dirs d) d))
+                    bridge/spawn-detached! (fn [_ cmd] (swap! spawned conj cmd) "0")]
+        (is (= "first" (bridge/launch-next-queued!)) "oldest first")
+        (is (= 1 (count @spawned)))
+        (is (str/includes? (first @spawned) "first"))
+        (is (= "second" (:name (first (bridge/read-queue)))) "second still queued")
+        ;; cap: a full roster launches nothing
+        (with-redefs [config/load-config (constantly {:goal/max-concurrent 1})
+                      bridge/live-run-count (constantly 1)]
+          (is (nil? (bridge/launch-next-queued!)) "cap full → nothing launches")
+          (is (= 1 (count (bridge/read-queue))) "the queued goal is still queued"))))
+    (bridge/write-queue! [])))

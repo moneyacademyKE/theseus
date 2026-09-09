@@ -394,6 +394,73 @@ Do NOT run the goal. Write files only.")
              "\nWorkspace kept: `" name "` — reply /goal resume " name " to continue.")
         (str "🚀 Goal `" name "` launched — outcome lands here when it fulfills or halts.")))))
 
+;; ── goal queue (V5) ────────────────────────────────────────────────────
+;; One durable FIFO in state/goal-queue.edn. Per-topic: a second /goal in
+;; a busy topic queues (it used to be refused — 'one goal per topic' stays
+;; true for RUNNING goals, but waiting is honest, silence isn't). Global:
+;; :goal/max-concurrent caps simultaneous goals; excess queues.
+
+(defn- queue-file []
+  (io/file (config/home) "state" "goal-queue.edn"))
+
+(defn read-queue []
+  "The queue FIFO, oldest first. Missing/corrupt file = empty — the queue
+   never blocks launches on its own bookkeeping."
+  (or (try (edn/read-string (slurp (queue-file)))
+           (catch Exception _ nil))
+      []))
+
+(defn write-queue! [entries]
+  (fs/create-dirs (io/file (config/home) "state"))
+  (spit (queue-file) (pr-str (vec entries))))
+
+(defn enqueue! [name spec chat-id thread-id]
+  (write-queue! (conj (read-queue)
+                      {:name name :spec spec :chat-id chat-id
+                       :thread-id thread-id
+                       ;; string, not an Instant: the queue must round-trip
+                       ;; through EDN, and ISO-8601 sorts lexicographically
+                       :queued-at (str (java.time.Instant/now))})))
+
+(defn live-run-count []
+  (count (filter (fn [[_ {:keys [pid]}]] (and pid (registry/pid-alive? pid)))
+                 (registry/read-runs))))
+
+(defn max-concurrent []
+  (max 1 (or (:goal/max-concurrent (config/load-config)) 2)))
+
+(defn- spawn-launch!
+  "Scaffold + write launch args + spawn goal_launch.bb — the one true launch
+   path (dispatch and the queue drain both ride it). The spawned process
+   authors with its own progress message; never author inline here."
+  [name spec chat-id thread-id]
+  (let [ws (scaffold! name)]
+    (spit (str ws "/spec.txt") spec)
+    (spit (str ws "/launch-args.edn")
+          (pr-str {:name name :spec spec :home (str (config/home))
+                   :chat-id chat-id :thread-id thread-id}))
+    (spawn-detached! (str (fs/cwd))
+                     (str "bb scripts/goal_launch.bb "
+                          (str ws "/launch-args.edn")
+                          " >> " (str ws "/launch.log") " 2>&1"))))
+
+(defn launch-next-queued!
+  "Free slot + free topic? Launch the OLDEST queued goal by SPAWNING
+   goal_launch.bb (never authoring inline — the watcher/launcher that call
+   this have no progress surface to offer) and drop it from the queue.
+   Called when a goal ends (watcher), when an authoring finishes (launcher),
+   and at poller boot (recovery). Returns the goal name launched, or nil."
+  []
+  (let [cap-ok? (< (live-run-count) (max-concurrent))
+        candidate (first (filter (fn [{:keys [chat-id thread-id]}]
+                                   (not (authoring-busy? chat-id thread-id)))
+                                 (read-queue)))]
+    (when (and cap-ok? candidate)
+      (write-queue! (remove #(= candidate %) (read-queue)))
+      (spawn-launch! (:name candidate) (:spec candidate)
+                     (:chat-id candidate) (:thread-id candidate))
+      (:name candidate))))
+
 (defn dispatch-spec!
   "Shared spec guard for every entry point (chat /goal, build-verb route,
    launch_goal tool): blank/length checks, per-topic authoring-lock check,
@@ -407,34 +474,21 @@ Do NOT run the goal. Write files only.")
     (or (str/blank? spec) (> (count spec) max-spec-chars))
     (str "Spec must be 1–" max-spec-chars " characters.")
 
-    (authoring-busy? chat-id thread-id)
-    "⏳ This topic is already authoring a goal — the outcome will land here."
-
-    (registry/active-run-for chat-id thread-id)
-    (str "⏳ Goal `" (:name (registry/active-run-for chat-id thread-id))
-         "` is already running in this topic — one goal per topic. /goals for status.")
+    (or (authoring-busy? chat-id thread-id)
+        (registry/active-run-for chat-id thread-id)
+        (>= (live-run-count) (max-concurrent)))
+    (let [name (slugify spec)
+          running (:name (registry/active-run-for chat-id thread-id))]
+      (enqueue! name spec chat-id thread-id)
+      (str "⏳ Goal `" name "` queued"
+           (when running (str " behind `" running "`"))
+           " — position " (count (read-queue))
+           ". Progress updates land here when it starts."))
 
     :else
-    (let [name (slugify spec)
-          scaffolded (try
-                       {:ws (scaffold! name)}
-                       (catch Exception e
-                         {:err (str "workspace error: " (.getMessage e))}))]
-      (if-let [scaffold-err (:err scaffolded)]
-        (str "🚫 Goal failed — " scaffold-err)
-        (let [ws (:ws scaffolded)]
-          (spit (str ws "/spec.txt") spec)
-          ;; :home rides the args file — the detached child does NOT inherit
-          ;; this process's config/home (env var, or a test's redef); it must
-          ;; read config from the SAME home that dispatched it.
-          (spit (str ws "/launch-args.edn")
-                (pr-str {:name name :spec spec :home (str (config/home))
-                         :chat-id chat-id :thread-id thread-id}))
-          (spawn-detached! (str (fs/cwd))
-                           (str "bb scripts/goal_launch.bb "
-                                (str ws "/launch-args.edn")
-                                " >> " (str ws "/launch.log") " 2>&1"))
-          (str "🚀 Goal `" name "` — authoring started, progress updates below."))))))
+    (let [name (slugify spec)]
+      (spawn-launch! name spec chat-id thread-id)
+      (str "🚀 Goal `" name "` — authoring started, progress updates below."))))
 
 (defn resume!
   "Re-enter authoring for a failed/unfinished goal workspace. Authoring
@@ -510,10 +564,13 @@ Do NOT run the goal. Write files only.")
     (if (empty? runs)
       []
       (let [[handled kept]
-            (reduce (fn [[handled kept] [k {:keys [pid name chat-id thread-id] :as run}]]
-                      (if (registry/pid-alive? pid)
-                        [handled (assoc kept k run)]
-                        (let [status (progress/run-status name)
+            (reduce (fn [[handled kept] [k {:keys [pid name chat-id thread-id status] :as run}]]
+                      (cond
+                        ;; V5: queued entries have no pid yet — they wait for
+                        ;; the boot drain below, not a crash-resume
+                        (= status :queued) [handled (assoc kept k run)]
+                        (registry/pid-alive? pid) [handled (assoc kept k run)]
+                        :else (let [status (progress/run-status name)
                               text (case status
                                      :fulfilled (str "🎯 goal `" name "`: ✅ GOAL FULFILLED"
                                                      " — recovered after a Theseus restart.")
@@ -531,6 +588,11 @@ Do NOT run the goal. Write files only.")
                     [[] runs]
                     runs)]
         (when (not= kept runs) (registry/write-runs! kept))
+        ;; V5: boot drains the queue too — a restart must not strand queued
+        ;; goals behind a cap that just reset to zero
+        (loop []
+          (when (try (launch-next-queued!) (catch Exception _ nil))
+            (recur)))
         handled))))
 
 (defn cancel!
