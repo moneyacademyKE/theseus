@@ -8,6 +8,8 @@
             [bb-agent.core :as core]
             [bb-agent.doctor :as doctor]
             [bb-agent.goal-bridge :as goal-bridge]
+            [bb-agent.goal.outcomes :as goal-outcomes]
+            [bb-agent.goal.progress :as goal-progress]
             [bb-agent.log-cap :as log-cap]
             [bb-agent.outbox :as outbox]
             [bb-agent.telegram-approval-ui :as approval-ui]
@@ -190,7 +192,7 @@
     ;; the dispatch — unreachable here, and deliberately NOT cased: the bridge
     ;; entry points are 4-arity (they take the flow's emit), so a stray 3-arg
     ;; call would be a silent break waiting to happen.
-    :goals (or (when-let [lines (goal-bridge/list-goals)]
+    :goals (or (when-let [lines (goal-progress/list-goals)]
                  (str "🎯 Goals:\n" (str/join "\n" lines)))
                "No goals yet — /goal <what to build> launches one.")
     :new (do (session/reset! session-id)
@@ -582,7 +584,7 @@
     ;; — drain them into session turns every cycle so finished work becomes
     ;; memory instead of a message that evaporates. A drain failure must
     ;; never kill polling.
-    (try (goal-bridge/drain-outcomes!) (catch Exception _ nil))
+    (try (goal-outcomes/drain-outcomes!) (catch Exception _ nil))
     ;; 2026-09-08 durable outbox: any send that died mid-flight (process
     ;; kill, provider blackout) is retried from disk every cycle. Same rule
     ;; as above — a drain failure must never kill polling.

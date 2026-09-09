@@ -11,7 +11,10 @@
          '[clojure.edn :as edn]
          '[clojure.java.io :as io]
          '[clojure.string :as str]
-         '[bb-agent.goal-bridge :as gb])
+         '[bb-agent.goal-bridge :as gb]
+         '[bb-agent.goal.outcomes :as outcomes]
+         '[bb-agent.goal.progress :as progress]
+         '[bb-agent.goal.registry :as registry])
 
 (def max-polls 480)          ; 480 * 5s = 40 min ceiling
 (def poll-ms 5000)
@@ -101,10 +104,10 @@
     (loop [i 0, seen 0, msg-id nil]
       (if (and (< i max-polls) (pid-alive? pid))
         (do (Thread/sleep poll-ms)
-            (let [events (gb/ledger-events ws)
+            (let [events (progress/ledger-events ws)
                   n (count events)]
               (if (> n seen)
-                (let [text (gb/progress-text name events)
+                (let [text (progress/progress-text name events)
                       mid (or msg-id
                               (try (post! token chat-id thread-id text ws)
                                    (catch Exception _ nil)))]
@@ -115,8 +118,8 @@
         ;; runner exited (or ceiling): final verdict — edit if we can, else send.
         ;; The verdict ALSO queues as outcome.edn: the poller's drain turns it
         ;; into a durable session turn (bot messages never persist otherwise).
-        (let [text (final-text name run-log (gb/ledger-events ws))]
-          (try (gb/queue-outcome! name chat-id (some-> thread-id parse-long) text)
+        (let [text (final-text name run-log (progress/ledger-events ws))]
+          (try (outcomes/queue-outcome! name chat-id (some-> thread-id parse-long) text)
                (catch Exception e
                  (spit (str ws "/watch.err") (str (.getMessage e) "\n") :append true)))
           (try
@@ -127,4 +130,4 @@
               (spit (str ws "/watch.err") (.getMessage e))))))))
   ;; topic-scoped registry: drop ONLY this goal's entry — a raw file delete
   ;; would wipe other topics' live runs (parallelism, 2026-09-08).
-  (try (gb/unregister-run! name) (catch Exception _ nil)))
+  (try (registry/unregister-run! name) (catch Exception _ nil)))

@@ -9,7 +9,8 @@
 (require '[babashka.process :as p]
          '[clojure.edn :as edn]
          '[clojure.java.io :as io]
-         '[bb-agent.goal-bridge :as gb])
+         '[bb-agent.goal-bridge :as gb]
+         '[bb-agent.goal.outcomes :as outcomes])
 
 (defn home [] (or (System/getenv "OPENCRABS_HOME")
                   (str (System/getProperty "user.home") "/.opencrabs-bb")))
@@ -29,5 +30,5 @@
   (let [reply (try (gb/resume! name chat-id thread-id nil)
                    (catch Exception e
                      (str "🚫 resume of `" name "` failed: " (.getMessage e))))]
-    (gb/queue-outcome! name chat-id thread-id
+    (outcomes/queue-outcome! name chat-id thread-id
                        (str "🔁 resume report for `" name "`: " reply))))

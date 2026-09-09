@@ -7,6 +7,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.goal-bridge :as gb]
+            [bb-agent.goal.outcomes :as outcomes]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
@@ -39,7 +40,7 @@
       (spit (str home "/goals/build-x-1/outcome.edn")
             (pr-str {:name "build-x-1" :chat-id -1001 :thread-id 196
                      :text "🎯 goal `build-x-1`: ✅ GOAL FULFILLED"}))
-      (is (= 1 (gb/drain-outcomes!)) "one outcome drained")
+      (is (= 1 (outcomes/drain-outcomes!)) "one outcome drained")
       (let [turns (edn/read-string
                    (slurp (str home "/state/sessions/telegram--1001-topic-196.edn")))]
         (is (= 1 (count turns)))
@@ -51,7 +52,7 @@
         (fs/create-dirs (str home "/goals/build-x-2"))
         (spit (str home "/goals/build-x-2/outcome.edn")
               (pr-str {:name "build-x-2" :chat-id -1001 :thread-id nil :text "⛔ HALT: integrity"}))
-        (is (= 1 (gb/drain-outcomes!)))
+        (is (= 1 (outcomes/drain-outcomes!)))
         (let [turns (edn/read-string
                      (slurp (str home "/state/sessions/telegram--1001.edn")))]
           (is (str/includes? (str (:assistant/final (first turns))) "HALT")))))))
@@ -63,7 +64,7 @@
     (fn [home]
       (fs/create-dirs (str home "/goals/bad"))
       (spit (str home "/goals/bad/outcome.edn") "{:not :readable :edn]]]")
-      (is (zero? (gb/drain-outcomes!)) "poison outcome skipped, zero drained")
+      (is (zero? (outcomes/drain-outcomes!)) "poison outcome skipped, zero drained")
       (is (fs/exists? (str home "/goals/bad/outcome.edn")) "poison kept for inspection"))))
 
 (deftest recover-announces-fulfilled-and-clears

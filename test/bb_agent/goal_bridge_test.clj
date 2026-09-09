@@ -4,6 +4,8 @@
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.goal-bridge :as bridge]
+            [bb-agent.goal.progress :as progress]
+            [bb-agent.goal.registry :as registry]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -14,8 +16,8 @@
 (defn with-tmp-goals [f]
   (let [tmp (str (fs/create-temp-dir {:prefix "goal-bridge-test"}))]
     (binding [*tmp* tmp]
-      (with-redefs [bridge/goals-root (constantly tmp)
-                    bridge/active-file (constantly (str tmp "/active.edn"))]
+      (with-redefs [registry/goals-root (constantly tmp)
+                    registry/active-file (constantly (str tmp "/active.edn"))]
         (f)))))
 
 (use-fixtures :each with-tmp-goals)
@@ -36,19 +38,19 @@
 
 (deftest registry-test
   (testing "no registry file → empty"
-    (is (= {} (bridge/read-runs)))
-    (is (nil? (bridge/active-run-for 7 9))))
+    (is (= {} (registry/read-runs)))
+    (is (nil? (registry/active-run-for 7 9))))
   (testing "live pid → the topic's run (legacy single-run shape re-keyed)"
     (let [pid (live-pid)]
-      (spit (bridge/active-file) (pr-str {:pid pid :name "live" :chat-id 7 :thread-id 9}))
-      (is (= "live" (:name (bridge/active-run-for 7 9))))
-      (is (nil? (bridge/active-run-for 7 10)) "a different topic sees nothing")
+      (spit (registry/active-file) (pr-str {:pid pid :name "live" :chat-id 7 :thread-id 9}))
+      (is (= "live" (:name (registry/active-run-for 7 9))))
+      (is (nil? (registry/active-run-for 7 10)) "a different topic sees nothing")
       (p/shell {:continue true} "kill" (str pid))))
   (testing "dead pid → nil and the entry is cleared"
-    (spit (bridge/active-file)
+    (spit (registry/active-file)
           (pr-str {[7 9] {:pid 99999999 :name "stale" :chat-id 7 :thread-id 9}}))
-    (is (nil? (bridge/active-run-for 7 9)))
-    (is (not (.exists (io/file (bridge/active-file)))))))
+    (is (nil? (registry/active-run-for 7 9)))
+    (is (not (.exists (io/file (registry/active-file)))))))
 
 (deftest parallel-topics-test
   "The registry is keyed by [chat-id thread-id] so topics run goals in
@@ -57,24 +59,24 @@
   (testing "two live topics coexist in the registry"
     (let [pid-a (live-pid)
           pid-b (live-pid)]
-      (bridge/register-run! 1 196 {:pid pid-a :name "goal-a" :chat-id 1 :thread-id 196})
-      (bridge/register-run! 1 200 {:pid pid-b :name "goal-b" :chat-id 1 :thread-id 200})
-      (is (= "goal-a" (:name (bridge/active-run-for 1 196))))
-      (is (= "goal-b" (:name (bridge/active-run-for 1 200))))
+      (registry/register-run! 1 196 {:pid pid-a :name "goal-a" :chat-id 1 :thread-id 196})
+      (registry/register-run! 1 200 {:pid pid-b :name "goal-b" :chat-id 1 :thread-id 200})
+      (is (= "goal-a" (:name (registry/active-run-for 1 196))))
+      (is (= "goal-b" (:name (registry/active-run-for 1 200))))
       (testing "a finishing run unregisters by name, leaving the other topic alone"
-        (bridge/unregister-run! "goal-a")
-        (is (nil? (bridge/active-run-for 1 196)))
-        (is (= "goal-b" (:name (bridge/active-run-for 1 200)))))
+        (registry/unregister-run! "goal-a")
+        (is (nil? (registry/active-run-for 1 196)))
+        (is (= "goal-b" (:name (registry/active-run-for 1 200)))))
       (p/shell {:continue true} "kill" (str pid-b))
-      (is (nil? (bridge/active-run-for 1 200)) "dead pid self-clears")
-      (is (not (.exists (io/file (bridge/active-file))))
+      (is (nil? (registry/active-run-for 1 200)) "dead pid self-clears")
+      (is (not (.exists (io/file (registry/active-file))))
           "last entry cleared → registry file removed")))
   (testing "dead entries stay visible to the pure read — recovery owns them"
-    (spit (bridge/active-file)
+    (spit (registry/active-file)
           (pr-str {[1 5] {:pid 99999999 :name "dead" :chat-id 1 :thread-id 5}}))
-    (is (= 1 (count (bridge/read-runs))))
-    (bridge/active-run-for 1 5)
-    (is (not (.exists (io/file (bridge/active-file)))))))
+    (is (= 1 (count (registry/read-runs))))
+    (registry/active-run-for 1 5)
+    (is (not (.exists (io/file (registry/active-file)))))))
 
 (deftest scaffold-test
   (let [ws (bridge/scaffold! "scaffolded")]
@@ -114,22 +116,22 @@
 
 (deftest run-status-test
   (testing "missing log → :authored"
-    (is (= :authored (bridge/run-status "never-was"))))
+    (is (= :authored (progress/run-status "never-was"))))
   (let [ws (str *tmp* "/st")]
     (fs/create-dirs ws)
     (spit (str ws "/run.log") "act 1 ok\nGOAL FULFILLED {:x 0}")
-    (is (= :fulfilled (bridge/run-status "st")))
+    (is (= :fulfilled (progress/run-status "st")))
     (spit (str ws "/run.log") "HALT: integrity {:check :format}")
-    (is (= :halted (bridge/run-status "st")))
+    (is (= :halted (progress/run-status "st")))
     (spit (str ws "/run.log") "act 1 ok")
-    (is (= :running (bridge/run-status "st")))))
+    (is (= :running (progress/run-status "st")))))
 
 (deftest list-goals-test
   (testing "formats one line per workspace with status"
     (fs/create-dirs (str *tmp* "/alpha"))
     (spit (str *tmp* "/alpha/run.log") "GOAL FULFILLED {}")
     (fs/create-dirs (str *tmp* "/beta"))
-    (let [lines (bridge/list-goals)]
+    (let [lines (progress/list-goals)]
       (is (some #(str/includes? % "alpha — fulfilled") lines))
       (is (some #(str/includes? % "beta — authored") lines)))))
 
@@ -142,13 +144,13 @@
     (is (nil? (bridge/handle-request! "/goals" 1 2 nil))))
   (testing "busy topic → refusal naming it; another topic is not blocked"
     (let [pid (live-pid)]
-      (bridge/register-run! 1 2 {:pid pid :name "busy-goal" :chat-id 1 :thread-id 2})
+      (registry/register-run! 1 2 {:pid pid :name "busy-goal" :chat-id 1 :thread-id 2})
       (let [refusal (bridge/handle-request! "/goal build x" 1 2 nil)]
         (is (str/includes? refusal "busy-goal"))
         (is (str/includes? refusal "one goal per topic")))
-      (is (nil? (bridge/active-run-for 3 4)) "a different topic is free to launch")
+      (is (nil? (registry/active-run-for 3 4)) "a different topic is free to launch")
       (p/shell {:continue true} "kill" (str pid))
-      (bridge/unregister-run! "busy-goal"))) ; explicit cleanup: later tests in this deftest assert an empty registry
+      (registry/unregister-run! "busy-goal"))) ; explicit cleanup: later tests in this deftest assert an empty registry
   (testing "blank spec → usage (a trimmed blank IS bare /goal)"
     (is (str/includes? (bridge/handle-request! "/goal    " 1 2 nil) "Usage:"))
     (is (str/includes? (bridge/handle-request! (str "/goal " (apply str (repeat 500 "x"))) 1 2 nil)
@@ -156,43 +158,43 @@
   (testing "authoring failure envelope: a turn that writes an invalid config
             surfaces the validator's verdict, never launches"
     (with-redefs [core/run-turn! (fn [_cfg _prompt]
-                                   (let [d (str (bridge/goals-root) "/author-fail")]
+                                   (let [d (str (registry/goals-root) "/author-fail")]
                                      (fs/create-dirs d)
                                      (spit (str d "/project.edn")
                                            "{:name \"bad\" :workdir \".\"}")))]
       (let [reply (bridge/handle-request! "/goal build something nice" 7 9 nil)]
         (is (str/includes? reply "🚫 Goal authoring failed"))
-        (is (not (.exists (io/file (bridge/active-file)))))))))
+        (is (not (.exists (io/file (registry/active-file)))))))))
 
 (deftest progress-line-test
   (testing "act lines show progress movement and no-progress flag"
     (is (= "▸ it 1 act 6→4 · 14:47:00"
-           (bridge/progress-line {:event :act :iteration 1 :progress-before 6
+           (#'progress/progress-line {:event :act :iteration 1 :progress-before 6
                                   :progress-after 4 :progressed? true
                                   :ts "2026-09-06T14:47:00.814992Z"})))
-    (is (str/includes? (bridge/progress-line {:event :act :iteration 0 :progress-before 6
+    (is (str/includes? (#'progress/progress-line {:event :act :iteration 0 :progress-before 6
                                               :progress-after 6 :progressed? false
                                               :ts "2026-09-06T14:47:00Z"})
                        "(no progress)")))
   (testing "halt lines carry reason + world; done carries the satisfied world"
-    (is (str/includes? (bridge/progress-line {:event :halt :iteration 2 :reason :integrity
+    (is (str/includes? (#'progress/progress-line {:event :halt :iteration 2 :reason :integrity
                                               :world {:defects 4}})
                        "halt:integrity"))
-    (is (str/includes? (bridge/progress-line {:event :done :world {:ok "pass"}})
+    (is (str/includes? (#'progress/progress-line {:event :done :world {:ok "pass"}})
                        "fulfilled")))
   (testing "malformed ts degrades, never throws"
-    (is (str/includes? (bridge/progress-line {:event :act :iteration 3 :ts nil})
+    (is (str/includes? (#'progress/progress-line {:event :act :iteration 3 :ts nil})
                        "??:??:??"))))
 
 (deftest progress-text-test
   (testing "header carries the name + event count"
-    (let [t (bridge/progress-text "demo" [{:event :done :world {:x 1}}])]
+    (let [t (progress/progress-text "demo" [{:event :done :world {:x 1}}])]
       (is (str/starts-with? t "🎯 goal `demo` — running · 1 events"))
       (is (str/includes? t "fulfilled"))))
   (testing "caps to the last 10 events with an explicit showing note"
     (let [evs (mapv #(hash-map :event :act :iteration % :ts "2026-09-06T10:00:00Z")
                     (range 14))
-          t (bridge/progress-text "big" evs)]
+          t (progress/progress-text "big" evs)]
       (is (str/includes? t "14 events")
           "header shows the full count")
       (is (str/includes? t "showing last 10"))
@@ -206,11 +208,11 @@
       (spit (str ws "/logs/iter-000.edn") "{:event :act :iteration 0}")
       (spit (str ws "/logs/iter-001.edn") "{:event :done :iteration 1 :world {}}")
       (spit (str ws "/logs/junk.edn") "not-edn{{{")
-      (let [evs (bridge/ledger-events ws)]
+      (let [evs (progress/ledger-events ws)]
         (is (= 2 (count evs)))
         (is (= :act (:event (first evs))))
         (is (= :done (:event (second evs))))))
-    (is (nil? (bridge/ledger-events (str *tmp* "/no-such-ws"))))))
+    (is (nil? (progress/ledger-events (str *tmp* "/no-such-ws"))))))
 
 (deftest build-intent-test
   (testing "first-word production verbs route; everything else doesn't"
