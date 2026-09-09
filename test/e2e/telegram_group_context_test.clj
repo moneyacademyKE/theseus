@@ -3,7 +3,7 @@
    must not, and non-responded group messages still land in the buffer."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [bb-agent.telegram-group-context :as gctx]
             [cheshire.core :as json]
             [clojure.edn :as edn]

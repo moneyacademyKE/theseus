@@ -16,7 +16,7 @@
             [bb-agent.skill-research :as skill-research]
             [bb-agent.skill-research-github :as skill-research-github]
             [bb-agent.bot-commands :as bot-commands]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [bb-agent.ui :as ui]
             [bb-agent.usage :as usage]
             [clojure.edn :as edn]

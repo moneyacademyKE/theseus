@@ -1,7 +1,7 @@
 (ns e2e.telegram-media-test
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [bb-agent.telegram-media :as media]
             [bb-agent.telegram-notes :as notes]
             [cheshire.core :as json]

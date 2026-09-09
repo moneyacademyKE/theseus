@@ -4,7 +4,7 @@
    Photo turns must also carry the image into the provider (vision path)."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]

@@ -1,7 +1,7 @@
 (ns e2e.telegram-voice-test
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [bb-agent.telegram-voice :as voice]
             [cheshire.core :as json]
             [clojure.edn :as edn]

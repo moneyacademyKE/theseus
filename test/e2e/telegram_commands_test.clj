@@ -5,7 +5,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.session :as session]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [bb-agent.usage :as usage]
             [cheshire.core :as json]
             [clojure.edn :as edn]

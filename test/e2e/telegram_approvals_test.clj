@@ -2,7 +2,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.approval :as approval]
             [bb-agent.config :as config]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-guard :as guard]

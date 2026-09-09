@@ -19,11 +19,16 @@
     {:exit exit :out out :err err}))
 
 (deftest telegram-service-chain-loads
-  ;; `bb telegram poll` (com.theseus.telegram) boots cli -> telegram ->
-  ;; goal_bridge -> goal.* — the chain that crash-looped.
-  (let [{:keys [exit out err]} (load-chain "bb-agent.telegram")]
-    (testing "fresh process analyzes telegram/goal-bridge chain"
+  ;; `bb telegram poll` boots cli -> telegram-lifecycle -> telegram-intake
+  ;; -> goal_bridge -> goal.* — the chain that crash-looped (bk-1fe8), now
+  ;; split across the lifecycle/intake namespaces (bk-bf8b).
+  (let [{:keys [exit out err]} (load-chain "bb-agent.telegram-lifecycle")]
+    (testing "fresh process analyzes telegram lifecycle/intake chain"
       (is (zero? exit) (str "boot chain failed: " err))
+      (is (str/includes? out ":load-ok"))))
+  (let [{:keys [exit out err]} (load-chain "bb-agent.telegram-intake")]
+    (testing "fresh process analyzes intake chain"
+      (is (zero? exit) (str "intake chain failed: " err))
       (is (str/includes? out ":load-ok")))))
 
 (deftest goal-runner-chain-loads

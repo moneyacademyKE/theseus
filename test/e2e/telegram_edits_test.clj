@@ -6,7 +6,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.provider :as provider]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [cheshire.core :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]

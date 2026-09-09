@@ -4,7 +4,7 @@
    not be invisible."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]

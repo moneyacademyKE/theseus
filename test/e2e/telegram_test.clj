@@ -1,7 +1,7 @@
 (ns e2e.telegram-test
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
-            [bb-agent.telegram :as telegram]
+            [bb-agent.telegram-lifecycle :as telegram]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]

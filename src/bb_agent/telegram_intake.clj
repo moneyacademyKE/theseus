@@ -1,24 +1,25 @@
-(ns bb-agent.telegram
-  (:require [babashka.fs :as fs]
-            [babashka.http-client :as http]
-            [bb-agent.approval :as approval]
+(ns bb-agent.telegram-intake
+  "Update consumption: everything that turns a Telegram update into
+   actions — commands, media/albums, edits, reactions, approval replies,
+   and the LLM turn spine. Extracted from telegram.clj (bk-bf8b, LOC
+   ceiling); no behavior change. Lifecycle (polling) lives in
+   bb-agent.telegram-lifecycle and calls the four public entry points."
+  (:require [bb-agent.approval :as approval]
             [bb-agent.autonomy :as autonomy]
             [bb-agent.bot-commands :as bot-commands]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
-            [bb-agent.doctor :as doctor]
             [bb-agent.goal-bridge :as goal-bridge]
-            [bb-agent.goal.outcomes :as goal-outcomes]
             [bb-agent.goal.progress :as goal-progress]
-            [bb-agent.log-cap :as log-cap]
-            [bb-agent.outbox :as outbox]
+            [bb-agent.session :as session]
+            [bb-agent.skill :as skill]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-extract :as extract]
             [bb-agent.telegram-flow :as flow]
-            [bb-agent.telegram-group :as group]
             [bb-agent.telegram-group-context :as gctx]
+            [bb-agent.telegram-group :as group]
             [bb-agent.telegram-guard :as guard]
             [bb-agent.telegram-media :as media]
             [bb-agent.telegram-notes :as notes]
@@ -26,77 +27,8 @@
             [bb-agent.telegram-rich :as tr]
             [bb-agent.telegram-state :as state]
             [bb-agent.telegram-voice :as voice]
-            [bb-agent.session :as session]
-            [bb-agent.skill :as skill]
             [bb-agent.usage :as usage]
-            [cheshire.core :as json]
             [clojure.string :as str]))
-
-(defn telegram-config []
-  (:telegram (config/load-config)))
-
-(defn- api-url [{:keys [base-url token]} method]
-  (str (str/replace (or base-url "https://api.telegram.org") #"/+$" "")
-       "/bot" token "/" method))
-
-(defn- api-get [cfg method opts]
-  ;; Bounded calls: an un-timed http/get hangs forever on a dead connection
-  ;; and the poll-loop wedges silently (observed 2026-09-06 under launchd).
-  (let [response (http/get (api-url cfg method)
-                           (assoc opts :throw false
-                                  :timeout (or (:timeout-ms cfg) 15000)))]
-    (json/parse-string (:body response) keyword)))
-
-(defn- api-get! [cfg method opts]
-  ;; api-get that THROWS on non-ok bodies — for callers that must not
-  ;; mistake an API failure for "no updates".
-  (let [body (api-get cfg method opts)]
-    (if (and (map? body) (true? (:ok body)))
-      body
-      (throw (ex-info (str "telegram api error: " (:error_code body)
-                           " " (:description body))
-                      {:method method :body body})))))
-
-(def ^:private last-poll-error (atom nil))
-
-(defn- report-poll-error!
-  "Print an API failure once per distinct error (and a recovery line when it
-  clears). Failures here previously vanished into an empty updates list —
-  the bot sat deaf with a healthy-looking process for 18h (2026-09-05/06)."
-  [body]
-  (let [desc (str "status " (:error_code body) ": " (:description body))]
-    (when (not= desc @last-poll-error)
-      (reset! last-poll-error desc)
-      (println (str "telegram api error: " desc))
-      (flush))))
-
-(defn- clear-poll-error! []
-  (when (some? @last-poll-error)
-    (reset! last-poll-error nil)
-    (println "telegram api recovered")
-    (flush)))
-
-(defn- get-bot [cfg]
-  (:result (api-get! cfg "getMe" {:headers {"accept" "application/json"}})))
-
-(defn- get-updates [cfg]
-  (let [body (api-get cfg "getUpdates"
-                      (cond-> {:headers {"accept" "application/json"}}
-                        (state/load-offset) (assoc :query-params {:offset (state/load-offset)})
-                        (:reactions-context cfg true)
-                        (assoc-in [:query-params :allowed_updates]
-                                  (json/generate-string
-                                   ["message" "edited_message" "channel_post"
-                                    "edited_channel_post" "callback_query"
-                                    "message_reaction"]))))]
-    (if (and (map? body) (true? (:ok body)))
-      (do (clear-poll-error!)
-          {:updates (or (:result body) []) :conflict? false})
-      (do (report-poll-error! body)
-          {:updates []
-           :conflict? (boolean
-                       (str/includes? (str/lower-case (str (:description body)))
-                                      "conflict"))}))))
 
 (defn- attachment-context
   [telegram-cfg saved]
@@ -118,7 +50,7 @@
            body
            "\n[Attachment content end]"))))
 
-(defn- handle-reaction!
+(defn handle-reaction!
   "Record a bounded reaction note (👍 on message #N) as session context —
    a reaction is signal, never a turn."
   [cfg reaction]
@@ -239,6 +171,7 @@
                 (str native "\n🧩 Skills (" (count skills) ") — /<name> <input> runs one:\n"
                      (str/join "\n" lines))
                 (str native "\nNo skills found.")))))
+
 (defn- notify-turn-failure!
   "A dead turn must never be silent: swap the ack reaction to a failure
    signal and send one bounded error reply. The notice itself failing
@@ -309,7 +242,7 @@
         (flow/settle! turn-flow telegram-cfg chat-id false)
         (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id edited) e)))))
 
-(defn- handle-edited!
+(defn handle-edited!
   "Route an edit: a message with a recorded prior reply re-runs its turn
    and updates that reply in place; anything else stays a bounded context
    note for a future turn."
@@ -364,7 +297,7 @@
                       :thread-id thread-id))
       delivered)))
 
-(defn- process-message!
+(defn process-message!
   [cfg bot message]
   (let [chat-id (get-in message [:chat :id])
         thread-id (group/topic-id message)
@@ -461,7 +394,7 @@
         (notify-turn-failure! telegram-cfg chat-id thread-id (:message_id message) e)))))
 
 
-(defn- process-album!
+(defn process-album!
   "Run one turn for a media-group batch. The captioned member activates the
    turn; every member persists, including captionless ones."
   [cfg bot batch]
@@ -501,196 +434,3 @@
         (flow/settle! turn-flow telegram-cfg (get-in primary [:chat :id]) false)
         (notify-turn-failure! telegram-cfg (get-in primary [:chat :id])
                               (group/topic-id primary) (:message_id primary) e)))))
-
-
-(defn- mark-done!
-  "Per-unit durability ledger, written AFTER the unit dispatches (audit H1).
-   seen is the dedupe set, offset is the getUpdates confirmation. Turn
-   handlers own their errors (notify-turn-failure!), so done here means the
-   handler ran — a crash before this line costs a redelivered update,
-   never a silently lost one."
-  [seen processed updates]
-  (when (seq updates)
-    (let [last-id (-> updates last :update_id)]
-      (doseq [u updates]
-        (swap! seen conj (:update_id u))
-        (swap! processed inc))
-      (state/save-seen! @seen)
-      (state/save-offset! (inc last-id)))))
-
-(defn- drain-outbox!
-  "Re-attempt every persisted-but-unconfirmed outbound message through the
-   same result-aware delivery ladder as a live send. Runs at boot and every
-   poll cycle: a kill between enqueue and confirmed send replays from disk
-   instead of vanishing (the 2026-09-08 409 casualty)."
-  [telegram-cfg]
-  (outbox/drain!
-   telegram-cfg
-   (fn [record]
-     (delivery/post-api telegram-cfg (:method record)
-                        {:headers {"content-type" "application/json"}
-                         :body (json/generate-string (:params record))}
-                        (:routing record)
-                        delivery/default-runtime))))
-
-(defn poll-once! []
-  (let [cfg (config/load-config)
-        telegram-cfg (:telegram cfg)
-        _ (let [problems (config/validate-telegram telegram-cfg)]
-            (when (seq problems)
-              (throw (ex-info "Telegram config invalid" {:errors problems}))))
-        cfg (assoc cfg :telegram telegram-cfg)
-        bot (get-bot telegram-cfg)
-        {:keys [updates conflict?]} (get-updates telegram-cfg)
-        seen (atom (state/load-seen))
-        processed (atom 0)]
-    ;; Ledger writes happen per-unit AFTER dispatch (audit H1) — never as a
-    ;; pre-pass. Advancing the offset before the turns run meant a crash
-    ;; mid-dispatch silently lost every unprocessed update.
-    (let [fresh (remove #(contains? @seen (:update_id %)) updates)]
-      ;; Dispatch in update order: reactions and edits land as notes for the
-      ;; NEXT turn, not one that already ran. Consecutive message runs still
-      ;; batch as albums.
-      (doseq [chunk (partition-by #(let [k (media/update-kind %)]
-                                     (if (= :message k) :messages k))
-                                  fresh)]
-        (if (= :message (media/update-kind (first chunk)))
-          (doseq [batch (media/batches chunk)]
-            ;; Record every observed group message so future turns have
-            ;; conversational context — independent of whether we respond.
-            (when (:group-context telegram-cfg true)
-              (doseq [u (:updates batch)]
-                (let [m (:message u)
-                      cid (get-in m [:chat :id])]
-                  (when (and cid (neg? (long cid)))
-                    (gctx/record! cid {:message-id (:message_id m)
-                                       :from (or (get-in m [:from :first_name])
-                                                 (get-in m [:from :username]))
-                                       :text (or (:text m) (:caption m))}
-                                  :size (or (:group-context-size telegram-cfg) 30)
-                                  :thread-id (group/topic-id m))))))
-            (if (:album? batch)
-              (process-album! cfg bot batch)
-              (process-message! cfg bot (:message (first (:updates batch)))))
-            (mark-done! seen processed (:updates batch)))
-          (doseq [u chunk]
-            (case (media/update-kind u)
-              :edited (handle-edited! cfg bot (media/edited-message u))
-              :reaction (handle-reaction! cfg (:message_reaction u))
-              (when (:callback_query u)
-                (approval-ui/handle-callback! cfg u)))
-            (mark-done! seen processed [u])))))
-    ;; 2026-09-08: watcher/recovery verdicts land in goals/<name>/outcome.edn
-    ;; — drain them into session turns every cycle so finished work becomes
-    ;; memory instead of a message that evaporates. A drain failure must
-    ;; never kill polling.
-    (try (goal-outcomes/drain-outcomes!) (catch Exception _ nil))
-    ;; 2026-09-08 durable outbox: any send that died mid-flight (process
-    ;; kill, provider blackout) is retried from disk every cycle. Same rule
-    ;; as above — a drain failure must never kill polling.
-    (try (drain-outbox! telegram-cfg) (catch Exception _ nil))
-    {:updates @processed :conflict? conflict?}))
-
-(defn- install-shutdown-hook!
-  "SIGTERM (launchd kickstart, system stop) used to amputate the poller
-   mid-cycle: in-flight sends died and the getUpdates request stayed held,
-   so the replacement process ate a 409 Conflict and one delivery was lost
-   (2026-09-08). The hook flips :running? off, then gives an in-flight cycle
-   up to `grace-ms` to finish before the VM halts. A sleeping poller exits
-   immediately; a working one gets bounded grace and no more.
-
-   No final drain here: the outbox drains every cycle during life and again
-   on the next boot, so a hook-side drain would duplicate responsibility for
-   zero additional guarantee."
-  [lifecycle grace-ms]
-  (.addShutdownHook
-   (Runtime/getRuntime)
-   (Thread.
-    (fn []
-      (swap! lifecycle assoc :running? false)
-      (let [deadline (+ (System/currentTimeMillis) grace-ms)]
-        (while (and (:in-cycle? @lifecycle)
-                    (< (System/currentTimeMillis) deadline))
-          (Thread/sleep 50)))
-      (println (str "poller: graceful shutdown (in-flight-cycle="
-                    (boolean (:in-cycle? @lifecycle)) ") @ "
-                    (java.time.Instant/now)))
-      (flush))))
-  lifecycle)
-
-(defn run-poll-cycles!
-  "The poll-loop skeleton with its body injected, so the lifecycle is
-   testable without the Bot API. Runs `body-fn` until :running? flips false
-   (the shutdown hook does that on SIGTERM); :in-cycle? is true exactly
-   while a body run is in flight so the hook waits for the current cycle
-   instead of cutting it. Sleeps interval-ms between cycles, 5x after a
-   getUpdates conflict. Body errors print one line and cost one interval —
-   polling must survive a bad cycle. Returns the completed cycle count."
-  [lifecycle interval-ms body-fn]
-  (loop [cycles 0]
-    (if-not (:running? @lifecycle)
-      cycles
-      (let [backoff? (try
-                       (swap! lifecycle assoc :in-cycle? true)
-                       (boolean (:conflict? (body-fn)))
-                       (catch Exception e
-                         (println (str "telegram poll error ["
-                                       (.getName (.getClass e)) "] "
-                                       (.getMessage e)
-                                       (when-let [d (ex-data e)]
-                                         (str " data " (pr-str d)))
-                                       " @ " (java.time.Instant/now)))
-                         (flush)
-                         false))]
-        (swap! lifecycle assoc :in-cycle? false)
-        (Thread/sleep (long (if backoff? (* 5 interval-ms) interval-ms)))
-        (recur (inc cycles))))))
-
-(defn poll-loop!
-  "Continuous polling with a sleep between cycles. Stop with ctrl-c.
-   A getUpdates conflict (another active client) backs off 5x for one
-   cycle instead of hammering the API. Registers the Telegram command
-   menu at boot — failure prints one line and never blocks polling."
-  [& {:keys [interval-ms] :or {interval-ms 2000}}]
-  (let [boot-cfg (config/load-config)]
-    ;; bk-e6ff: cap the launchd log BEFORE boot output lands — in-place
-    ;; truncation, never a rename (the fd stays on the inode).
-    (log-cap/cap-log!
-     (str (fs/path (config/home) "state" "telegram-poll.log"))
-     (get-in boot-cfg [:telegram :log-max-bytes] log-cap/default-max-bytes)
-     (get-in boot-cfg [:telegram :log-keep-bytes] log-cap/default-keep-bytes))
-    (bot-commands/register-safely!)
-    ;; bk-1825: doctor-lite at boot. Print every check; on errors, shout —
-    ;; log line + owner DM via the durable outbox. Never throws: a health
-    ;; check bug must not block polling.
-    (try
-      (let [checks (doctor/run-checks)]
-        (doseq [c checks]
-          (println (str "boot health " (doctor/format-check c))))
-        (when-let [summary (doctor/degraded-summary checks)]
-          (println summary)
-          (flush)
-          (when-let [chat-id (get-in boot-cfg [:notify :chat-id])]
-            (try (delivery/send-message! (:telegram boot-cfg) chat-id summary)
-                 (catch Exception e
-                   (println (str "boot degraded announce failed: " (.getMessage e))))))))
-      (catch Exception e
-        (println (str "boot health check failed (non-fatal): " (.getMessage e)))))
-    (flush))
-  ;; 2026-09-08 restart auto-resume: a poller/daemon restart used to orphan
-  ;; every active goal silently. Recover: announce verdicts that landed
-  ;; while we were down, re-launch runs that died mid-flight (detached —
-  ;; never author on the boot path).
-  (try
-    (let [telegram-cfg (:telegram (config/load-config))]
-      (doseq [{:keys [chat-id thread-id text]} (goal-bridge/recover-interrupted!)]
-        (try (delivery/send-message! telegram-cfg chat-id text {:thread-id thread-id})
-             (catch Exception e
-               (println (str "recovery announce failed: " (.getMessage e)))))))
-    (catch Exception e
-      (println (str "goal recovery at boot failed: " (.getMessage e)))))
-  (flush)
-  (let [lifecycle (install-shutdown-hook!
-                   (atom {:running? true :in-cycle? false}) 10000)]
-    (run-poll-cycles! lifecycle interval-ms
-                      (fn [] (poll-once!)))))
