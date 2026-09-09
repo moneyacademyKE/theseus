@@ -116,6 +116,33 @@
              {:status :error :check check-k
               :message (str name " is not valid EDN: " (ex-message e))})))))
 
+(defn check-telegram-config
+  "Boot-time telegram-section validation (bk-1825): the poller's lifeblood
+   is the bot token, and validate-telegram already knows what 'usable'
+   means — surface its problems as doctor checks instead of discovering
+   them as a silent dead poller."
+  [cfg]
+  (let [problems (config/validate-telegram (:telegram cfg))]
+    (if (seq problems)
+      {:status :error
+       :check :telegram-config
+       :message (str/join "; " (map :problem problems))
+       :problems problems}
+      {:status :ok :check :telegram-config :message "Telegram config usable"})))
+
+(defn degraded-summary
+  "Pure: nil when no check errored, else a loud one-paragraph boot summary
+   naming every error check. The poller prints this and DMs it to the
+   owner — silent limping is the production enemy (bk-1825)."
+  [checks]
+  (let [errors (filter #(= :error (:status %)) checks)]
+    (when (seq errors)
+      (str "🚨 EILEEN BOOT DEGRADED — "
+           (count errors) " health check(s) failed: "
+           (str/join " | " (map #(str (name (:check %)) ": " (:message %))
+                                errors))
+           ". Poller keeps running; fix and kickstart."))))
+
 (defn run-checks []
   (let [result (try {:cfg (config/load-config)}
                     (catch Exception e {:error (ex-message e)}))]
@@ -125,6 +152,7 @@
       (let [cfg (:cfg result)]
         [(check-config-file)
          (check-config-parses nil)
+         (check-telegram-config cfg)
          (check-home-dir)
          (check-home-writable)
          (check-provider-reachable cfg)

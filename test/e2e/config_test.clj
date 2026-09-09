@@ -11,12 +11,16 @@
                   :extra-env {"OPENCRABS_HOME" (str home)}}
          "bb" args))
 
-(deftest doctor-reports-ok-for-default-config
+(deftest doctor-reports-degraded-for-default-config
+  ;; 2026-09-09 (bk-1825): theseus is telegram-first — no config file means
+  ;; no bot token, and doctor now says so with exit 1 instead of blessing
+  ;; an install that cannot serve its only product surface.
   (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doctor-ok-"})]
     (try
       (let [result (shell! home "config" "doctor")]
-        (is (= 0 (:exit result)) (:err result))
+        (is (= 1 (:exit result)) (:err result))
         (is (str/includes? (:out result) "[WARN] :config-file"))
+        (is (str/includes? (:out result) "[ERROR] :telegram-config"))
         (is (str/includes? (:out result) "[OK] :provider-config"))
         (is (str/includes? (:out result) ":fake")))
       (finally
@@ -44,7 +48,8 @@
       (spit (str config-file)
             (pr-str {:provider :fake
                      :model "fake-deterministic"
-                     :session/id "default"}))
+                     :session/id "default"
+                     :telegram {:token "123:test-token"}}))
       (shell! home "model" "set" "default" "fake" "switched-model")
       (let [result (shell! home "config" "doctor")]
         (is (= 0 (:exit result)))
@@ -61,6 +66,7 @@
             (pr-str {:provider :openai-compatible
                      :model "gpt-4.1-mini"
                      :session/id "default"
+                     :telegram {:token "123:test-token"}
                      :providers {:openai-compatible
                                  {:base-url "http://localhost:8080/v1"
                                   :api-key "test-key"}}}))

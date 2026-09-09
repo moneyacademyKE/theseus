@@ -15,6 +15,7 @@
   {:provider :openai-compatible
    :model "gpt-4.1-mini"
    :session/id "default"
+   :telegram {:token "123:test-token"}
    :providers {:openai-compatible
                {:base-url "http://localhost:8080/v1"
                 :api-key "test-key"}}})
@@ -118,10 +119,11 @@
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
                      :model "fake-deterministic"
-                     :session/id "default"}))
+                     :session/id "default"
+                     :telegram {:token "123:test-token"}}))
       (let [result (shell! home "doctor")]
         (is (= 0 (:exit result)) (:out result))
-        (doseq [check-id [:config-file :config-parse :home-dir :home-writable
+        (doseq [check-id [:config-file :config-parse :telegram-config :home-dir :home-writable
                           :provider-config :session-model-drift :memory-store
                           :semantic-store :usage-store :provider-reachable]]
           (is (str/includes? (:out result) (str "[OK] " check-id))))
