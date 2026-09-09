@@ -112,7 +112,23 @@
                              :stall-after 3 :max-rollbacks 2}))
       (is (nil? (bridge/validate! (str ws "/config.edn"))))))
   (testing "missing file → error string"
-    (is (string? (bridge/validate! (str *tmp* "/nope/config.edn"))))))
+    (is (string? (bridge/validate! (str *tmp* "/nope/config.edn")))))
+  (testing ":skills-used metadata passes schema validation (bk-d8a0)"
+    (let [ws (str *tmp* "/skills-used")]
+      (write-cfg ws (pr-str {:name "skills-used" :workdir ws :lock "./l.lock"
+                             :log-dir "./logs"
+                             :observers {:ok {:sh "echo pass" :parse :string}}
+                             :goal {:op := :ref :ok :value "pass"}
+                             :progress :ok
+                             :act {:sh "./act.sh {{attempt}}"}
+                             :stall-after 3 :max-rollbacks 2
+                             :skills-used ["verification-witness"]}))
+      (is (nil? (bridge/validate! (str ws "/config.edn")))))))
+
+(deftest author-prompt-carries-skill-contract
+  (testing "author prompt pins read-before-claim for skills (bk-d8a0)"
+    (is (str/includes? @#'bridge/author-prompt "SKILL CONTRACT"))
+    (is (str/includes? @#'bridge/author-prompt ":skills-used"))))
 
 (deftest run-status-test
   (testing "missing log → :authored"

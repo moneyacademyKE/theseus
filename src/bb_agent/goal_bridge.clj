@@ -63,6 +63,11 @@ METHODOLOGY (the default goal methodology, owner-stamped): read
 and follow it — Babashka for anything scripted (Python is floored by the
 constitution; never invoke it), YAGNI, prefer one-liners that honestly carry
 the intent, verify claims from disk rather than reporting intent.
+SKILL CONTRACT: your context carries a skills index. If the plan uses a
+skill, you MUST read_file its SKILL.md BEFORE writing project.edn, then
+name every skill you actually read in project.edn as :skills-used [\"name\"].
+A skill mentioned but never read is decoration — claim only what you read;
+read only what the project needs (dogfood bk-d8a0).
 Before writing anything, READ these reference configs for the exact schema:
   %s
   %s
