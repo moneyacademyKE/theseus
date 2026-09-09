@@ -1,11 +1,14 @@
 (ns bb-agent.telegram
-  (:require [babashka.http-client :as http]
+  (:require [babashka.fs :as fs]
+            [babashka.http-client :as http]
             [bb-agent.approval :as approval]
             [bb-agent.autonomy :as autonomy]
             [bb-agent.bot-commands :as bot-commands]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
+            [bb-agent.doctor :as doctor]
             [bb-agent.goal-bridge :as goal-bridge]
+            [bb-agent.log-cap :as log-cap]
             [bb-agent.outbox :as outbox]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-attachment :as attachment]
@@ -647,7 +650,31 @@
    cycle instead of hammering the API. Registers the Telegram command
    menu at boot — failure prints one line and never blocks polling."
   [& {:keys [interval-ms] :or {interval-ms 2000}}]
-  (bot-commands/register-safely!)
+  (let [boot-cfg (config/load-config)]
+    ;; bk-e6ff: cap the launchd log BEFORE boot output lands — in-place
+    ;; truncation, never a rename (the fd stays on the inode).
+    (log-cap/cap-log!
+     (str (fs/path (config/home) "state" "telegram-poll.log"))
+     (get-in boot-cfg [:telegram :log-max-bytes] log-cap/default-max-bytes)
+     (get-in boot-cfg [:telegram :log-keep-bytes] log-cap/default-keep-bytes))
+    (bot-commands/register-safely!)
+    ;; bk-1825: doctor-lite at boot. Print every check; on errors, shout —
+    ;; log line + owner DM via the durable outbox. Never throws: a health
+    ;; check bug must not block polling.
+    (try
+      (let [checks (doctor/run-checks)]
+        (doseq [c checks]
+          (println (str "boot health " (doctor/format-check c))))
+        (when-let [summary (doctor/degraded-summary checks)]
+          (println summary)
+          (flush)
+          (when-let [chat-id (get-in boot-cfg [:notify :chat-id])]
+            (try (delivery/send-message! (:telegram boot-cfg) chat-id summary)
+                 (catch Exception e
+                   (println (str "boot degraded announce failed: " (.getMessage e))))))))
+      (catch Exception e
+        (println (str "boot health check failed (non-fatal): " (.getMessage e)))))
+    (flush))
   ;; 2026-09-08 restart auto-resume: a poller/daemon restart used to orphan
   ;; every active goal silently. Recover: announce verdicts that landed
   ;; while we were down, re-launch runs that died mid-flight (detached —
