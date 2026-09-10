@@ -19,6 +19,27 @@
 (def ^:private min-provider-turns 2)
 (def flag-rate 0.3)
 
+(defn excluded-providers
+  "Providers kept out of RSI signal entirely — test doubles like :fake,
+   whose failures are e2e fixtures rather than a fact about the world. A
+   noisy provider is a proposal generator that never ships anything real:
+   the ledger holds 6 synthetic :fake failures, already 27% against a 30%
+   flag. Exclusion is config, not a hardcode, so :rsi/exclude-providers
+   can silence any future stand-in. Event counts stay honest — only the
+   per-provider table and the signals derived from it are filtered."
+  []
+  (set (or (:rsi/exclude-providers (config/load-config)) #{:fake})))
+
+(defn provider-signal
+  "The per-provider aggregate that RSI is allowed to reason about. One
+   filter, one place: digest builds its table from this, so analyze,
+   nearest-signals, and every opportunity derived downstream inherit the
+   same exclusion with no second implementation to drift out of sync."
+  [providers]
+  (let [excluded (excluded-providers)]
+    (reduce-kv (fn [acc p s] (if (excluded p) acc (assoc acc p s)))
+               {} providers)))
+
 (defn verified-rescue?
   "A rescue requires a failure behind it. :fallback/served on its own is
    what try-chain used to stamp on a first-step success — the chain's
@@ -45,7 +66,8 @@
                                    :ok (count (filter :ok xs))
                                    :fail (count (remove :ok xs))
                                    :fallback-hits (count (filter #(= p (:fallback/served %)) rescues))}]))
-                        (into {}))]
+                        (into {})
+                        provider-signal)]
      {:events (count events)
       :unverified-fallback-tags (- (count (filter :fallback/served events))
                                    (count rescues))

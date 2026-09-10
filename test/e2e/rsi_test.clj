@@ -11,8 +11,11 @@
     (fs/create-dirs (fs/path dir "state"))
     dir))
 
+;; Signal tests use a neutral provider name: :fake is RSI's default
+;; excluded test double, so a fixture written against it would be testing
+;; a provider the analyzer is configured to ignore.
 (def ^:private base-event
-  {:session-id "s1" :provider :fake :model "fake-model"
+  {:session-id "s1" :provider :test-provider :model "fake-model"
    :prompt "p" :final "f"})
 
 (deftest event-carries-ok-and-roundtrips
@@ -22,7 +25,7 @@
             loaded (usage/load-events)]
         (is (true? (:ok (last loaded))))
         (is (true? (:ok (first loaded))))
-        (is (= :fake (:provider (first loaded))))))))
+        (is (= :test-provider (:provider (first loaded))))))))
 
 (deftest digest-aggregates-per-provider
   (let [home (temp-home!)]
@@ -31,14 +34,51 @@
       (usage/append-event! (usage/event (assoc base-event :ok false)))
       (usage/append-event! (usage/event (assoc base-event :ok true
                                                :provider :anthropic
-                                               :fallback-served :fake
+                                               :fallback-served :test-provider
                                                :fallback-tried [{:fallback/provider :anthropic
                                                                  :fallback/kind :infra
                                                                  :fallback/reason "status 503"}])))
       (let [d (rsi/digest)
-            fake (get (:providers d) :fake)]
+            stub (get (:providers d) :test-provider)]
         (is (= 3 (:events d)))
-        (is (= {:turns 2 :ok 1 :fail 1 :fallback-hits 1} fake))))))
+        (is (= {:turns 2 :ok 1 :fail 1 :fallback-hits 1} stub))))))
+
+(deftest digest-excludes-configured-noise-providers
+  "A test double's failures are fixtures, not a fact about the world. Left
+   in the signal, :fake's 6 synthetic failures already read 27% against a
+   30% flag — one more e2e run and RSI proposes fixing a provider that
+   doesn't exist. Event counts stay honest; only the signal is filtered."
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (dotimes [_ 3]
+        (usage/append-event! (usage/event (assoc base-event :provider :fake :ok false))))
+      (usage/append-event! (usage/event (assoc base-event :ok true)))
+      (let [d (rsi/digest)]
+        (is (= 4 (:events d)) "excluded events are still counted")
+        (is (not (contains? (:providers d) :fake)) ":fake is out of the signal")
+        (is (contains? (:providers d) :test-provider))))))
+
+(deftest digest-exclusion-is-config-driven
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)
+                  bb-agent.config/load-config (constantly {:rsi/exclude-providers #{:test-provider}})]
+      (usage/append-event! (usage/event (assoc base-event :ok true)))
+      (usage/append-event! (usage/event (assoc base-event :provider :fake :ok true)))
+      (let [d (rsi/digest)]
+        (is (= 2 (:events d)))
+        (is (not (contains? (:providers d) :test-provider))
+            "config replaces the default set, it doesn't add to it")
+        (is (contains? (:providers d) :fake))))))
+
+(deftest nearest-signals-omit-excluded-providers
+  "A quiet cycle reports its near-misses. A test double must not be one
+   of them — that's the noise the exclusion exists to remove."
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (usage/append-event! (usage/event (assoc base-event :provider :fake :ok false)))
+      (usage/append-event! (usage/event (assoc base-event :ok true)))
+      (let [r (rsi/cycle! {:min-events 2})]
+        (is (not (some #(= :fake (:provider %)) (:nearest-signals r))))))))
 
 (deftest write-digest-creates-readable-file
   (let [home (temp-home!)]
@@ -47,7 +87,7 @@
       (let [path (rsi/write-digest!)
             text (slurp (str path))]
         (is (fs/regular-file? path))
-        (is (str/includes? text ":fake"))
+        (is (str/includes? text ":test-provider"))
         (is (str/includes? text "events"))))))
 
 (deftest analyze-blocked-under-minimum
@@ -67,12 +107,24 @@
             kind (set (map :kind opportunities))]
         (is (contains? kind :provider-failures))))))
 
+(deftest analyze-never-flags-an-excluded-provider
+  "The whole point: a failing test double must not generate a proposal,
+   no matter how loud its failure rate is."
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (doseq [ok [false false false false]]
+        (usage/append-event! (usage/event (assoc base-event :provider :fake :ok ok))))
+      (doseq [ok [true true]]
+        (usage/append-event! (usage/event (assoc base-event :ok ok))))
+      (let [{:keys [opportunities]} (rsi/analyze {:min-events 2})]
+        (is (empty? opportunities) "100% failure on a test double is not news")))))
+
 (deftest analyze-flags-fallback-pressure
   (let [home (temp-home!)]
     (with-redefs [bb-agent.config/home (constantly home)]
       (doseq [_ [1 2]]
         (usage/append-event! (usage/event (assoc base-event :provider :anthropic
-                                                  :ok true :fallback-served :fake
+                                                  :ok true :fallback-served :test-provider
                                                   :fallback-tried [{:fallback/provider :anthropic
                                                                     :fallback/kind :infra
                                                                     :fallback/reason "status 503"}]))))
@@ -104,7 +156,7 @@
                            :env {"OPENCRABS_HOME" home}}
                           "bb rsi digest")]
       (is (zero? (:exit result)))
-      (is (str/includes? (:out result) ":fake")))))
+      (is (str/includes? (:out result) ":test-provider")))))
 
 (deftest cycle-writes-digest-and-proposals
   (let [home (temp-home!)]
@@ -170,10 +222,10 @@
   real rate was 1-in-195."
   (let [home (temp-home!)]
     (with-redefs [bb-agent.config/home (constantly home)]
-      (usage/append-event! (usage/event (assoc base-event :fallback-served :fake)))
-      (usage/append-event! (usage/event (verified-rescue base-event :fake "rescuer-y")))
+      (usage/append-event! (usage/event (assoc base-event :fallback-served :test-provider)))
+      (usage/append-event! (usage/event (verified-rescue base-event :test-provider "rescuer-y")))
       (let [d (rsi/digest)]
-        (is (= 1 (:fallback-hits (get (:providers d) :fake)))
+        (is (= 1 (:fallback-hits (get (:providers d) :test-provider)))
             "only the event with a real failure behind it counts")))))
 
 (deftest analyze-ignores-phantom-fallback-pressure
@@ -181,7 +233,7 @@
     (with-redefs [bb-agent.config/home (constantly home)]
       (dotimes [_ 60]
         (usage/append-event! (usage/event (assoc base-event :ok true
-                                                  :fallback-served :fake))))
+                                                  :fallback-served :test-provider))))
       (let [{:keys [opportunities]} (rsi/analyze {:min-events 2})]
         (is (not (contains? (set (map :kind opportunities)) :fallback-pressure))
             "60 unverified tags are not 60 rescues")))))
@@ -194,7 +246,7 @@
   (let [home (temp-home!)]
     (with-redefs [bb-agent.config/home (constantly home)]
       (dotimes [_ 2]
-        (usage/append-event! (usage/event (verified-rescue base-event :fake "rescuer-y"))))
+        (usage/append-event! (usage/event (verified-rescue base-event :test-provider "rescuer-y"))))
       (usage/append-event! (usage/event (assoc base-event :ok true)))
       (let [op (->> (rsi/analyze {:min-events 2})
                     :opportunities
