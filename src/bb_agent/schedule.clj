@@ -130,7 +130,15 @@
    (if-let [schedule (find-schedule schedule-id)]
      (let [turn (core/run-turn! (merge cfg
                                        (select-keys schedule [:cwd :provider :model])
-                                       {:session/id schedule-id})
+                                       {:session/id schedule-id
+                                        ;; Scheduled turns are non-interactive: no human
+                                        ;; can answer an approval prompt inside a cron lane
+                                        ;; (the request just expires and the run fails, as
+                                        ;; ai-stock-brief-hourly did hourly). The owner
+                                        ;; pre-consented by installing the schedule, and
+                                        ;; the constitution still vetoes first — policy
+                                        ;; :deny short-circuits before this gate.
+                                        :approval/ask (constantly :approved)})
                                 (:schedule/prompt schedule))
            log-entry {:schedule/id schedule-id
                       :status :ok

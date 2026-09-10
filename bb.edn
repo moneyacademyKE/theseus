@@ -39,6 +39,7 @@
                                [bb-agent.skill-economy-test]
                                [bb-agent.release-test]
                                [bb-agent.digest-test]
+                               [bb-agent.schedule-test]
                                [bb-agent.goal.author-progress-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
@@ -52,6 +53,7 @@
                                              'bb-agent.skill-economy-test
                                              'bb-agent.release-test
                                              'bb-agent.digest-test
+                                             'bb-agent.schedule-test
                                              'bb-agent.boot-health-test
                                              'bb-agent.goal.author-progress-test)]
                                  (when (pos? (+ fail error))
@@ -59,7 +61,10 @@
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
              :requires ([bb-agent.cli :as cli])
              :task (apply cli/-main "memory" *command-line-args*)}
-     rsi {:doc "RSI commands. Usage: bb rsi digest | bb rsi analyze | bb rsi propose"
+     brief {:doc "Hourly AI-stock brief as Sly (topic 239). Usage: bb brief [--dry-run]"
+            :requires ([bb-agent.brief :as brief])
+            :task (apply brief/-main *command-line-args*)}
+     rsi {:doc "RSI commands. Usage: bb rsi digest | bb rsi analyze | bb rsi propose | bb rsi cycle [--dry-run]"
           :requires ([bb-agent.cli :as cli])
           :task (apply cli/-main "rsi" *command-line-args*)}
      skill {:doc "Skill commands. Usage: bb skill list | bb skill run <name> [input...]"
