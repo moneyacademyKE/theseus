@@ -31,7 +31,10 @@
       (usage/append-event! (usage/event (assoc base-event :ok false)))
       (usage/append-event! (usage/event (assoc base-event :ok true
                                                :provider :anthropic
-                                               :fallback-served :fake)))
+                                               :fallback-served :fake
+                                               :fallback-tried [{:fallback/provider :anthropic
+                                                                 :fallback/kind :infra
+                                                                 :fallback/reason "status 503"}])))
       (let [d (rsi/digest)
             fake (get (:providers d) :fake)]
         (is (= 3 (:events d)))
@@ -69,7 +72,10 @@
     (with-redefs [bb-agent.config/home (constantly home)]
       (doseq [_ [1 2]]
         (usage/append-event! (usage/event (assoc base-event :provider :anthropic
-                                                  :ok true :fallback-served :fake))))
+                                                  :ok true :fallback-served :fake
+                                                  :fallback-tried [{:fallback/provider :anthropic
+                                                                    :fallback/kind :infra
+                                                                    :fallback/reason "status 503"}]))))
       (usage/append-event! (usage/event (assoc base-event :ok true)))
       (let [{:keys [opportunities]} (rsi/analyze {:min-events 2})
             kind (set (map :kind opportunities))]
@@ -99,3 +105,101 @@
                           "bb rsi digest")]
       (is (zero? (:exit result)))
       (is (str/includes? (:out result) ":fake")))))
+
+(deftest cycle-writes-digest-and-proposals
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (doseq [ok [true false false true true]]
+        (usage/append-event! (usage/event (assoc base-event :ok ok))))
+      (let [first-run (rsi/cycle! {:min-events 2})
+            second-run (rsi/cycle! {:min-events 2})]
+        (is (= 1 (:opportunities first-run)))
+        (is (= 1 (:added first-run)))
+        (is (fs/regular-file? (fs/path home "state" "rsi" "digest.md")))
+        (is (str/includes? (slurp (str (fs/path home "brain" "improvements.md")))
+                           "provider-failures"))
+        (is (zero? (:added second-run)))
+        (is (= 1 (:skipped second-run)))))))
+
+(deftest cycle-quiet-carries-nearest-signals
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (dotimes [_ 3]
+        (usage/append-event! (usage/event (assoc base-event :ok true))))
+      (let [r (rsi/cycle! {:min-events 2})]
+        (is (zero? (:opportunities r)))
+        (is (seq (:nearest-signals r)))
+        (is (zero? (:fallback-rate (first (:nearest-signals r)))))))))
+
+(deftest cycle-dry-run-writes-no-proposals
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (doseq [ok [true false false true true]]
+        (usage/append-event! (usage/event (assoc base-event :ok ok))))
+      (let [r (rsi/cycle! {:min-events 2 :propose? false})]
+        (is (pos? (:opportunities r)))
+        (is (zero? (:added r)))
+        (is (not (fs/regular-file? (fs/path home "brain" "improvements.md"))))))))
+
+(deftest cli-e2e-cycle-dry-run-subprocess
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (dotimes [_ 50]
+        (usage/append-event! (usage/event (assoc base-event :ok true)))))
+    (let [result (p/shell {:out :string
+                           :err :string
+                           :continue true
+                           :env {"OPENCRABS_HOME" home}}
+                          "bb rsi cycle --dry-run")]
+      (is (zero? (:exit result)))
+      (is (str/includes? (:out result) "dry-run"))
+      (is (not (fs/regular-file? (fs/path home "brain" "improvements.md")))))))
+
+(defn- verified-rescue [base served model]
+  (assoc base :ok true
+         :fallback-served served
+         :fallback-tried [{:fallback/provider :primary
+                           :fallback/kind :infra
+                           :fallback/reason "Provider request failed with status 503"}]
+         :fallback-model model))
+
+(deftest digest-counts-only-verified-rescues
+  "A :fallback/served tag with no :fallback/tried ledger behind it is a
+  first-try success wearing a costume, not a rescue. The live ledger had
+  63 of them; counting them reported 31% fallback pressure where the
+  real rate was 1-in-195."
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (usage/append-event! (usage/event (assoc base-event :fallback-served :fake)))
+      (usage/append-event! (usage/event (verified-rescue base-event :fake "rescuer-y")))
+      (let [d (rsi/digest)]
+        (is (= 1 (:fallback-hits (get (:providers d) :fake)))
+            "only the event with a real failure behind it counts")))))
+
+(deftest analyze-ignores-phantom-fallback-pressure
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (dotimes [_ 60]
+        (usage/append-event! (usage/event (assoc base-event :ok true
+                                                  :fallback-served :fake))))
+      (let [{:keys [opportunities]} (rsi/analyze {:min-events 2})]
+        (is (not (contains? (set (map :kind opportunities)) :fallback-pressure))
+            "60 unverified tags are not 60 rescues")))))
+
+(deftest analyze-fallback-pressure-names-the-serving-model
+  "The live chain is model-level — same provider on every step — so a
+  provider-granular signal can't say what to promote. 'Promote
+  :openai-compatible' is a no-op when :openai-compatible is already the
+  primary."
+  (let [home (temp-home!)]
+    (with-redefs [bb-agent.config/home (constantly home)]
+      (dotimes [_ 2]
+        (usage/append-event! (usage/event (verified-rescue base-event :fake "rescuer-y"))))
+      (usage/append-event! (usage/event (assoc base-event :ok true)))
+      (let [op (->> (rsi/analyze {:min-events 2})
+                    :opportunities
+                    (filter #(= :fallback-pressure (:kind %)))
+                    first)]
+        (is (= "rescuer-y" (:model op)) "the opportunity names what actually answered")
+        (is (str/includes? (:suggestion op) "rescuer-y")
+            "the suggestion is actionable: it names a model to promote")))))

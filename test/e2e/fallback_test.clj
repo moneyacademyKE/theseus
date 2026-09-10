@@ -57,3 +57,34 @@
               "the failed primary lands in the tried-ledger"))
         (finally
           (fs/delete-tree home))))))
+
+(deftest first-try-success-is-not-a-rescue
+  "A chain that answers on step 0 rescued nobody. Stamping
+  :fallback/served-by on a first-try success turned every healthy
+  turn into a phantom 'rescue' — 63 of 64 in the live ledger."
+  (let [calls (atom [])
+        call (fn [step]
+               (swap! calls conj (:provider step))
+               {:role :assistant :content "ok"})
+        result (fallback/try-chain [{:provider :a :model "a-model"}
+                                    {:provider :b :model "b-model"}]
+                                   call)]
+    (is (= [:a] @calls) "answered on the first step")
+    (is (not (contains? result :fallback/served-by))
+        "no rescue happened, so nothing is stamped as the rescuer")
+    (is (empty? (:fallback/tried result)) "nothing was tried and failed")))
+
+(deftest rescue-names-the-serving-model
+  "Provider alone can't attribute a rescue: the live chain is
+  model-level (same provider, different model on each step). The
+  ledger must name the model that actually answered."
+  (let [call (fn [step]
+               (if (= :broken (:provider step))
+                 (throw (ex-info "Provider request failed with status 503" {}))
+                 {:role :assistant :content "ok"}))
+        result (fallback/try-chain [{:provider :broken :model "primary-x"}
+                                    {:provider :backup :model "rescuer-y"}]
+                                   call)]
+    (is (= :backup (:fallback/served-by result)))
+    (is (= "rescuer-y" (:fallback/model result))
+        "the serving model is recorded, not the configured one")))

@@ -299,9 +299,11 @@
       (let [analysis (rsi/analyze)]
         (if (:blocked analysis)
           (println (:blocked analysis))
-          (doseq [op (:opportunities analysis)]
-            (println (str "- [" (name (:kind op)) "] " (:detail op)))
-            (println (str "  " (:suggestion op))))))
+          (do (doseq [op (:opportunities analysis)]
+                (println (str "- [" (name (:kind op)) "] " (:detail op)))
+                (println (str "  " (:suggestion op))))
+              (when (empty? (:opportunities analysis))
+                (println "no opportunities crossed a threshold — nearest signals: `bb rsi cycle`")))))
 
       "propose"
       (let [result (rsi/propose!)]
@@ -309,7 +311,26 @@
           (println (:blocked result))
           (println (str "added " (:added result) " proposal(s), skipped " (:skipped result)))))
 
-      (usage! "Usage: bb rsi digest | bb rsi analyze | bb rsi propose" 2))))
+      "cycle"
+      (let [dry-run (boolean (some #{"--dry-run"} rest-args))
+            result (rsi/cycle! {:propose? (not dry-run)})]
+        (if (:blocked result)
+          (println (str "rsi cycle: " (:blocked result)
+                        " | digest -> " (:digest-path result)))
+          (do (println (str "rsi cycle: " (:events result) " events"
+                            " | digest -> " (:digest-path result)
+                            " | " (:opportunities result) " opportunity(ies)"
+                            (if dry-run
+                              " | dry-run — no proposals written"
+                              (str " | " (:added result) " added, " (:skipped result) " skipped"))))
+              (doseq [{:keys [provider fail-rate fallback-rate]}
+                      (take 2 (:nearest-signals result))]
+                (println (format "  nearest: %s — fail %.0f%%, fallback %.0f%% (flags at %.0f%%)"
+                                 provider (* 100.0 fail-rate) (* 100.0 fallback-rate)
+                                 (* 100.0 rsi/flag-rate)))))))
+
+      (usage! "Usage: bb rsi digest | bb rsi analyze | bb rsi propose | bb rsi cycle [--dry-run]" 2))))
+
 
 (defn -main [& args]
   (let [[command & rest-args] (if (= 1 (count args))

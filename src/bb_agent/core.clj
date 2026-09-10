@@ -253,6 +253,7 @@
                                        :usage usage
                                        :fallback-tried (not-empty (:fallback/tried turn))
                                        :fallback-served (:fallback/served-by turn)
+                                       :fallback-model (:fallback/model turn)
                                        :ok (:turn/ok completed true)}))
     completed))
 
@@ -418,7 +419,8 @@
                         (assoc :fallback/tried (:fallback/tried response))
                         (:fallback/served-by response)
                         (assoc :provider (:fallback/served-by response)
-                               :fallback/served-by (:fallback/served-by response)))
+                               :fallback/served-by (:fallback/served-by response)
+                               :fallback/model (:fallback/model response)))
                 seen-calls* (reduce (fn [m req]
                                       (update m [(:tool/name req) (canonical-args (:tool/args req))]
                                               (fnil inc 0)))

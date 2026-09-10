@@ -6,15 +6,28 @@
   (error-classifier) and recorded, so the annotation says WHY each
   step was left. `call` arrives as an argument, so the chain itself
   is a pure function and retries/breakers stay the caller's
-  composition."
+  composition.
+
+  A rescue is a rescue only if something failed. Answering on the
+  first step stamps nothing: the chain's head IS the primary, so
+  stamping it made every healthy turn look like the fallback saved
+  it — a phantom that downstream analytics (bb-agent.rsi) read as
+  31% fallback pressure when the real rate was one turn in 195.
+  When a rescue is real, both :fallback/served-by and
+  :fallback/model are recorded: chains are often model-level (same
+  provider, cheaper model on the tail), and the provider alone
+  cannot say what answered."
   (:require [bb-agent.error-classifier :as ec]))
 
 (defn try-chain
   "Walk `steps` (each a map with at least :provider), calling
-  `(call step)` until one succeeds. Returns the success value —
-  tagged with :fallback/tried when it's a map — or throws an
-  ex-info whose ex-data carries the full :fallback/tried ledger
-  of {:fallback/provider :fallback/kind :fallback/reason} entries."
+  `(call step)` until one succeeds. Returns the success value; when
+  at least one step failed first, a map value is tagged with the
+  :fallback/tried ledger of {:fallback/provider :fallback/kind
+  :fallback/reason} entries plus :fallback/served-by and
+  :fallback/model naming what answered. A first-step success is
+  returned untouched. Exhausting the chain throws an ex-info whose
+  ex-data carries the full tried ledger."
   ([steps call] (try-chain steps call []))
   ([steps call tried]
    (loop [steps steps tried tried]
@@ -28,9 +41,12 @@
                             :kind (:kind (ec/classify (ex-message e)))}))]
          (if (:ok? result)
            (let [value (:value result)]
-             (cond-> value
-               (map? value) (assoc :fallback/tried tried
-                                   :fallback/served-by (:provider step))))
+             (if (and (map? value) (seq tried))
+               (assoc value
+                      :fallback/tried tried
+                      :fallback/served-by (:provider step)
+                      :fallback/model (:model step))
+               value))
            (recur (next steps)
                   (conj tried {:fallback/provider (:provider step)
                                :fallback/kind (:kind result)

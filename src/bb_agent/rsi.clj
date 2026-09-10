@@ -17,36 +17,54 @@
 
 (def ^:private default-min-events 50)
 (def ^:private min-provider-turns 2)
-(def ^:private flag-rate 0.3)
+(def flag-rate 0.3)
+
+(defn verified-rescue?
+  "A rescue requires a failure behind it. :fallback/served on its own is
+   what try-chain used to stamp on a first-step success — the chain's
+   head IS the primary, so every healthy turn looked rescued. The live
+   ledger held 63 such phantoms against 1 real failover, and the
+   pressure signal built on them read 31% instead of 0.5%. Requiring
+   :fallback/tried keeps old entries honest without rewriting them."
+  [event]
+  (boolean (and (:fallback/served event) (seq (:fallback/tried event)))))
 
 (defn digest
   "Per-provider aggregate over the usage ledger. :fallback-hits counts
-   events where this provider was the safety net (:fallback/served)."
-  []
-  (let [events (usage/load-events)
-        providers (->> events
-                       (group-by :provider)
-                       (map (fn [[p xs]]
-                              [p {:turns (count xs)
-                                  :ok (count (filter :ok xs))
-                                  :fail (count (remove :ok xs))
-                                  :fallback-hits (count (filter #(= p (:fallback/served %)) events))}]))
-                       (into {}))]
-    {:events (count events)
-     :providers providers}))
+   verified rescues only (see verified-rescue?). :unverified-fallback-tags
+   reports the legacy tags that were excluded, so the discarded noise is
+   visible rather than silently dropped."
+  ([]
+   (digest (usage/load-events)))
+  ([events]
+   (let [rescues (filter verified-rescue? events)
+         providers (->> events
+                        (group-by :provider)
+                        (map (fn [[p xs]]
+                               [p {:turns (count xs)
+                                   :ok (count (filter :ok xs))
+                                   :fail (count (remove :ok xs))
+                                   :fallback-hits (count (filter #(= p (:fallback/served %)) rescues))}]))
+                        (into {}))]
+     {:events (count events)
+      :unverified-fallback-tags (- (count (filter :fallback/served events))
+                                   (count rescues))
+      :providers providers})))
 
 (defn digest-dir []
   (fs/path (config/home) "state" "rsi"))
 
 (defn write-digest!
   "Write the digest as readable markdown; returns the path."
-  []
-  (let [{:keys [events providers]} (digest)
+  ([] (write-digest! (digest)))
+  ([{:keys [events providers unverified-fallback-tags]}]
+  (let [unverified (or unverified-fallback-tags 0)
         path (fs/path (digest-dir) "digest.md")]
     (fs/create-dirs (fs/parent path))
     (spit (str path)
           (str "# RSI digest — " (java.time.Instant/now) "\n\n"
                "events: " events "\n\n"
+               "unverified fallback tags excluded: " unverified "\n\n"
                "| provider | turns | ok | fail | fallback-hits |\n"
                "|---|---|---|---|---|\n"
                (str/join "\n"
@@ -55,7 +73,7 @@
                                         p (:turns s) (:ok s) (:fail s) (:fallback-hits s)))
                               (sort-by key providers)))
                "\n"))
-    path))
+    path)))
 
 (defn- provider-failure-opportunity [[p s]]
   (when (and (>= (:turns s) min-provider-turns)
@@ -68,16 +86,27 @@
                      (* 100.0 (/ (double (:fail s)) (:turns s))))
      :suggestion (format "provider-failures: %s fails often — check its breaker threshold and its position in :provider/fallbacks" p)}))
 
-(defn- fallback-pressure-opportunity [events]
+(defn- fallback-pressure-opportunity
+  "Grouped by provider AND model. The live chain is model-level — every
+   step is :openai-compatible with a different model on the tail — so a
+   provider-granular signal produced 'consider promoting
+   :openai-compatible' while :openai-compatible was already the primary.
+   A recommendation has to name something that can actually move."
+  [events]
   (let [total (count events)
-        hits (->> events (keep :fallback/served) frequencies)]
+        hits (->> events
+                  (filter verified-rescue?)
+                  (map (juxt :fallback/served :fallback/model))
+                  frequencies)]
     (->> hits
-         (keep (fn [[p n]]
+         (keep (fn [[[p model] n]]
                  (when (>= (/ (double n) total) flag-rate)
-                   {:kind :fallback-pressure
-                    :provider p
-                    :detail (format "%s served %s/%s turns as the fallback" p n total)
-                    :suggestion (format "fallback-pressure: %s keeps rescuing turns — consider promoting it or fixing the primary" p)})))
+                   (let [who (if model (str p "/" model) (str p))]
+                     {:kind :fallback-pressure
+                      :provider p
+                      :model model
+                      :detail (format "%s served %s/%s turns as the fallback" who n total)
+                      :suggestion (format "fallback-pressure: %s keeps rescuing turns — consider promoting it to primary or fixing the model it replaces" who)}))))
          (seq))))
 
 (defn analyze
@@ -86,14 +115,14 @@
    {:opportunities [...]}."
   ([]
    (analyze {}))
-  ([{:keys [min-events]}]
+  ([{:keys [min-events events]}]
    (let [min-events* (or min-events default-min-events)
-         events (usage/load-events)
+         events (or events (usage/load-events))
          n (count events)]
      (if (< n min-events*)
        {:blocked (format "blocked: need %s more usage events (have %s of %s)"
                          (- min-events* n) n min-events*)}
-       (let [opportunities (->> (map provider-failure-opportunity (:providers (digest)))
+       (let [opportunities (->> (map provider-failure-opportunity (:providers (digest events)))
                                 (remove nil?)
                                 (concat (fallback-pressure-opportunity events))
                                 (vec))]
@@ -136,3 +165,41 @@
                  :append (fs/regular-file? path)))
          {:added (count fresh)
           :skipped skipped})))))
+
+(defn nearest-signals
+  "The strongest below-threshold signals, so a quiet cycle can show its
+   work instead of going mute. Sorted by the max rate per provider."
+  ([] (nearest-signals (digest)))
+  ([{:keys [events providers]}]
+    (->> (for [[p s] providers
+               :let [fail-rate (if (pos? (:turns s))
+                                 (/ (double (:fail s)) (:turns s)) 0.0)
+                     fallback-rate (if (pos? events)
+                                     (/ (double (:fallback-hits s)) events) 0.0)]]
+           {:provider p :fail-rate fail-rate :fallback-rate fallback-rate})
+         (sort-by (fn [s] (max (:fail-rate s) (:fallback-rate s))) >))))
+
+(defn cycle!
+  "One full RSI pass — digest, analyze, propose — data in, ledger out.
+   A quiet cycle is a result, not a failure: when nothing crosses a
+   threshold the summary carries :nearest-signals instead of silence."
+  [{:keys [min-events propose?] :or {propose? true}}]
+  (let [events (usage/load-events)
+        summary (digest events)
+        digest-path (str (write-digest! summary))
+        analysis (analyze {:min-events min-events :events events})]
+    (if (:blocked analysis)
+      {:digest-path digest-path :blocked (:blocked analysis)}
+      (let [{:keys [added skipped]}
+            (if propose?
+              (propose! {:min-events min-events :events events})
+              {:added 0 :skipped 0})
+            ops (:opportunities analysis)]
+        (cond-> {:digest-path digest-path
+                 :events (:events summary)
+                 :opportunities (count ops)
+                 :added added :skipped skipped}
+          (pos? (:unverified-fallback-tags summary))
+          (assoc :unverified-fallback-tags (:unverified-fallback-tags summary))
+          (zero? (count ops))
+          (assoc :nearest-signals (nearest-signals summary)))))))
