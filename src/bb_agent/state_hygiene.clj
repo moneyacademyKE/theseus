@@ -11,6 +11,14 @@
    durable data (sessions, outbox, ledgers), durable config state
    (offsets, seen-set, memory), and live runtime artifacts (log, pids)."
   #{"sessions" "session-metadata" "session-archive" "cursor-archive"
+    ;; The scheduler shipped durable state (schedules.edn registry, its run
+    ;; log, the launchd tick log) and ai-brief without touching the contract
+    ;; test — a gate nobody updated reddens on the first honest run.
+    "schedules.edn" "schedule-runs.edn" "schedule-tick.log" "ai-brief"
+    ;; Per-session model selections, written by `bb model set` (model.clj).
+    ;; Durable by design — a goal-authoring session pinned to a model must
+    ;; survive a restart.
+    "session-models"
     "group-context" "telegram-replies" "outbox" "rsi" "goal-queue.edn"
     "digest.edn"
     "memory.edn" "session-summaries.edn" "usage.edn" "usage-index.db"
