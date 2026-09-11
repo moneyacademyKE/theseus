@@ -32,6 +32,12 @@
     :status :denied
     :executed? false
     :approval/required? (:approval/required? request)
+    ;; :status :denied alone cannot carry the difference that matters to the
+    ;; caller: an approval denial has a human pending, a policy denial has a
+    ;; law and nobody to ask. The turn loop branches on this (see
+    ;; core/awaiting-human?) — without it, both looked like "wait for a
+    ;; reply" and a constitution veto ended turns that could have recovered.
+    :denial/source source
     :error/message
     (case source
       :policy (str "Tool " name " denied by the tool constitution (brain/rules.clj). "

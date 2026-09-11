@@ -34,8 +34,12 @@
                    :status :denied
                    :executed? false
                    :approval/required? true
+                   :denial/source :approval
                    :error/message "Tool shell requires explicit approval and no approver is present in this turn. Recourse: ask the user to approve, or report this step as skipped — do not silently retry."}]
-                 (:tool/results turn)))))
+                 (:tool/results turn))
+              ":denial/source is how core/awaiting-human? tells an approval
+               gate (a human is pending — end the turn) from a constitution
+               veto (nobody to ask — recover)")))
       (finally
         (fs/delete-tree home)))))
 

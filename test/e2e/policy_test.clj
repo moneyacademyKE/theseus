@@ -167,9 +167,20 @@
       (write-rules! home rules-deny-shell)
       (let [result (run-agent home "try approved shell touch e2e-denied-marker")]
         (is (= 0 (:exit result)) (:err result))
-        (is (and (str/includes? (:out result) "🚫 shell")
-                 (str/includes? (:out result) "needs your approval"))
-            "user-facing denial is a clean sentence, never raw EDN")
+        ;; The floor is the assertion that matters: the call did not run.
+        ;; "needs your approval" was asserted here until 2026-09-11 — for a
+        ;; CONSTITUTION denial nothing is awaiting approval, so the message
+        ;; was a lie the human could not act on, and in a detached lane it
+        ;; ended the turn with no recovery possible.
+        (is (str/includes? (:out result) "constitution")
+            "the denial that reaches the model names the law that fired")
+        (is (not (str/includes? (:out result) "needs your approval"))
+            "a policy denial asks nobody — it must not claim otherwise")
+        ;; No clean-sentence assertion here any more: a policy denial ends
+        ;; the round, not the turn, so the reply is whatever the model
+        ;; composes from the denial (the fake provider echoes its tool
+        ;; result). The old assertion passed only because the turn DIED at
+        ;; the first veto — it was pinning the dead end.
         (is (not (fs/exists? (fs/path home "e2e-denied-marker")))))
       (finally
         (fs/delete-tree home)))))

@@ -334,7 +334,7 @@ Do NOT run the goal. Write files only.")
               (str ws "/references/usage-stats.config.edn")]
         idle (or (:goal/authoring-idle-timeout-ms acfg) default-authoring-idle-ms)
         budget (or (:goal/authoring-timeout-ms acfg) default-authoring-timeout-ms)
-        record! (fn [result err]
+        record! (fn [result err problems]
                   (try (spit (str ws "/authoring.edn")
                              ;; acfg has been through model/effective-config,
                              ;; so :model IS the model that serves — not the
@@ -347,7 +347,8 @@ Do NOT run the goal. Write files only.")
                                               :finished (str (java.time.Instant/now))}
                                        err (assoc :error (str (ex-message err)
                                                               (when-let [d (ex-data err)]
-                                                                (str " " (pr-str d))))))))
+                                                                (str " " (pr-str d)))))
+                                       problems (assoc :problems problems))))
                        (catch Exception _)))
         result (try (watch-authoring!
                      (future (author-attempts! name ws spec acfg refs))
@@ -356,13 +357,19 @@ Do NOT run the goal. Write files only.")
                  (catch Exception e
                    ;; A death that is not a stall is still a death. Rethrow:
                    ;; the caller owns the user-facing envelope.
-                   (record! :error e)
+                   (record! :error e nil)
                    (throw e)))]
-    (record! (case result
-               ::stalled :stalled
-               ::timed-out :timed-out
-               :authored)
-             nil)
+    ;; :result describes what HAPPENED, not what was hoped for. The old
+    ;; `case` had no arm for a validator verdict, so its default recorded
+    ;; :authored for a run that wrote no project.edn — the instrument V1c
+    ;; exists to provide contradicted the filesystem it sits next to.
+    (record! (cond
+               (= ::stalled result) :stalled
+               (= ::timed-out result) :timed-out
+               (nil? result) :authored
+               :else :invalid)
+             nil
+             (when (string? result) result))
     (cond
       (= ::stalled result)
       (str "authoring stalled: no progress for " (quot idle 60000)

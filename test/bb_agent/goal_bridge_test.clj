@@ -291,7 +291,12 @@
           (is (= "main-model" (:model rec)))
           (is (= 2 (:rounds rec)) "initial turn + repair turn, one tool call each")
           (is (number? (:duration-ms rec)))
-          (is (= :authored (:result rec)))
+          (is (= :invalid (:result rec))
+              "a validator verdict is a FAILURE, not an authoring — the old
+               `case` default recorded :authored for a run that wrote no
+               project.edn, contradicting the filesystem it measures")
+          (is (str/includes? (str (:problems rec)) "Config not found")
+              "the validator's verdict is recorded verbatim")
           (is (string? (:finished rec))))))))
 
 (deftest goal-cancel-and-status-test

@@ -316,3 +316,52 @@
              (is (= :denied (:status result)) "constitution denies before the mode applies")
              (is (str/includes? (:error/message result) "constitution")
                  "the denial names its source"))))))))
+
+
+(deftest policy-denied-round-returns-to-the-model
+  (testing "a constitution denial is recoverable — it feeds back as a tool
+            result instead of ending the turn. 2026-09-11: goal authoring
+            burned 56 rounds / 24 min and wrote no project.edn because one
+            floor-denied `cat config.edn` ended the turn with 'needs your
+            approval'. Detached lanes have no human to reply, so the dead
+            end was silent — and the denial's own text says 'recover
+            instead of stopping', which the short-circuit made impossible."
+    (with-temp-home
+     (fn []
+       (let [rounds (atom 0)]
+         (with-redefs [provider/complete
+                       (fn [_provider _request]
+                         (if (= 1 (swap! rounds inc))
+                           {:content nil
+                            :tool/requests [{:tool/name "shell"
+                                             :tool/args {:cmd "cat config.edn"}}]}
+                           {:content "recovered without the denied call"}))
+                       tool/handle-tool-request
+                       (fn [req _cfg] (tool/deny-result req :policy))]
+           (let [turn (core/run-turn! {:provider :fake :model "m" :react-ack false}
+                                      "read the config")]
+             (is (= "recovered without the denied call" (:assistant/final turn))
+                 "the model saw the denial and answered — no dead end")
+             (is (= 2 @rounds) "the loop continued past the denied round")
+             (is (not (str/includes? (:assistant/final turn) "needs your approval"))
+                 "nothing was ever awaiting a human, so nothing says so"))))))))
+
+(deftest approval-denied-round-still-ends-the-turn
+  (testing "the human-facing short-circuit survives: when every call is
+            genuinely awaiting approval, burning more rounds is waste"
+    (with-temp-home
+     (fn []
+       (let [rounds (atom 0)]
+         (with-redefs [provider/complete
+                       (fn [_provider _request]
+                         (swap! rounds inc)
+                         {:content nil
+                          :tool/requests [{:tool/name "shell"
+                                           :tool/args {:cmd (str "echo " @rounds)}}]})
+                       tool/handle-tool-request
+                       (fn [req _cfg] (tool/deny-result req))]
+           (let [turn (core/run-turn! {:provider :fake :model "m" :react-ack false}
+                                      "do the thing")]
+             (is (str/includes? (:assistant/final turn) "needs your approval")
+                 "the ask is reported to the human")
+             (is (= 1 @rounds) "no further rounds burned while a human decides"))))))))

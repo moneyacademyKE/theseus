@@ -140,6 +140,26 @@
                           #(complete-retrying cfg (:provider %)
                                               (request-for base-request %))))))
 
+(defn- awaiting-human?
+  "True when every result in the round is a denial a HUMAN can lift — the
+   approval gate, with a request genuinely pending. A constitution veto is
+   not one: nothing is waiting, and the denial's own text says 'recover
+   instead of stopping'. Ending the turn there is a dead end the model
+   cannot see around, and in a detached lane (goal authoring, a cron
+   schedule) there is nobody to reply at all.
+
+   2026-09-11: goal authoring ran 56 rounds / 24 min, was denied one
+   `cat config.edn` by deny-secrets, and the turn ended with 'needs your
+   approval' — a message no one could act on. The workspace recorded
+   :result :authored and no project.edn existed. The short-circuit's real
+   meaning is 'a human is needed', so it now asks that question instead of
+   'was anything denied'."
+  [results]
+  (and (seq results)
+       (every? #(and (= :denied (:status %))
+                     (= :approval (:denial/source %)))
+               results)))
+
 (defn- tool-results-summary
   "The user-facing line when every tool call was denied: a clean sentence,
    never raw EDN. The provider wire keeps its own format; this text is the
@@ -431,7 +451,7 @@
                                               (fnil inc 0)))
                                     seen-calls (or tool-requests []))]
             (if (seq tool-requests)
-              (if (every? #(= :denied (:status %)) tool-results)
+              (if (awaiting-human? tool-results)
                 (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
                 (let [rounds-next (dec rounds-left)
                       extend? (and (neg? rounds-next)
