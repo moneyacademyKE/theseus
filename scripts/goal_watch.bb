@@ -7,6 +7,7 @@
 ;; editMessageText in place); the final edit carries the runner's verdict.
 
 (require '[babashka.process :as p]
+         '[bb-agent.config :as config]
          '[cheshire.core :as json]
          '[clojure.edn :as edn]
          '[clojure.java.io :as io]
@@ -23,6 +24,18 @@
 
 (def args* (when args-file*
              (try (edn/read-string (slurp args-file*)) (catch Exception _ nil))))
+
+;; The dispatching process's home rides the args file — this child does NOT
+;; trust the ambient env (same contract as goal_launch.bb / goal_resume.bb).
+;; The local `home` below already preferred :home, but it only feeds the token
+;; and base-url reads: everything that goes through config/home —
+;; registry/goals-root, outcomes/queue-outcome!, gb/launch-next-queued!, the
+;; topic-scoped registry drop — resolved from OPENCRABS_HOME instead. An e2e
+;; run against a fake Bot API server therefore queued `ship-it` into the REAL
+;; goals/ and appended a turn to a REAL session file (2026-09-11). The
+;; registry writes are worse than litter: they mutate the live run table.
+(when-let [h (:home args*)]
+  (alter-var-root #'config/home (constantly (fn [] h))))
 
 (defn home []
   "The dispatching process's home rides the args file (:home) — this child

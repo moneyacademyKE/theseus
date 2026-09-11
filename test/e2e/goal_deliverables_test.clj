@@ -47,6 +47,12 @@
                      "bb" "scripts/goal_watch.bb" (str ws "/watch-args.edn"))]
       (try
         (let [docs (filter #(str/includes? (:uri %) "sendDocument") @calls)]
+          (is (fs/exists? (str home "/goals/ship-it/outcome.edn"))
+              "the verdict queued into the DISPATCHED home, not the ambient one:
+               config/home must ride the args file (goal_launch.bb and
+               goal_resume.bb already pin it; goal_watch.bb did not, so an e2e
+               run against a fake Bot API server wrote ship-it into the real
+               goals/ and appended a turn to a real session file)")
           (is (= 1 (count docs))
               (str "exactly one document ships — got calls: "
                    (pr-str (mapv :uri @calls))))
