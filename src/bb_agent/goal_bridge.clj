@@ -19,7 +19,8 @@
             [bb-agent.goal.outcomes :as outcomes]
             [bb-agent.goal.predicates :as predicates]
             [bb-agent.goal.progress :as progress]
-            [bb-agent.goal.registry :as registry]))
+            [bb-agent.goal.registry :as registry]
+            [bb-agent.model :as model]))
 
 (def max-spec-chars 400)
 (def watcher-max-polls 480) ; 480 * 5s = 40 min ceiling for the watcher
@@ -129,6 +130,15 @@ Then write exactly two files:
 The project to build: %s
 Do NOT run the goal. Write files only.")
 
+(def ^:private default-authoring-idle-ms
+  "No-progress clock for the authoring phase — the real stall detector.
+   A healthy authoring round emits a tool call every minute or two; a
+   wedged provider call emits nothing and pins 0% CPU. 2026-09-08's 60-min
+   parked resume was zero progress for an hour; that invariant — silence,
+   not duration — is what a stall is. Override via
+   :goal/authoring-idle-timeout-ms."
+  480000)
+
 (def ^:private default-authoring-request-timeout-ms
   "Per-request provider budget for AUTHORING turns. The 60s chat default is
    sized for a one-line reply; an authoring turn carries brain + skills index
@@ -141,14 +151,22 @@ Do NOT run the goal. Write files only.")
   180000)
 
 (defn- authoring-providers
-  "`providers` with at least `ms` of request budget on EVERY step — a
-   fallback that times out for the reason the primary already paid for is
-   not a second opinion. A longer configured timeout is kept: authoring
-   needs at least the budget, never exactly it."
-  [providers ms]
+  "`providers` with a per-step request budget of `(max configured ms)`,
+   clamped to `ceiling-ms`. Both halves earn their place:
+   - raise: a fallback that times out for the reason the primary already
+     paid for is not a second opinion.
+   - clamp: a budget that cannot complete inside the idle clock never
+     reports anything — the detector fires first and the run dies as an
+     unexplained stall. 2026-09-11: 3 attempts x 180s = 540s of provider
+     silence against a 480s idle clock turned a slow provider into
+     `:result :stalled` 17 rounds in, with no cause on disk. The clamp
+     makes that unrepresentable: worst-case silence is bounded by
+     construction, not by hoping the provider is quick."
+  [providers ms ceiling-ms]
   (reduce-kv (fn [m k v]
                (assoc m k (if (map? v)
-                            (update v :timeout-ms #(max (or % 0) ms))
+                            (update v :timeout-ms
+                                    #(min (max (or % 0) ms) ceiling-ms))
                             v)))
              {} providers))
 
@@ -166,20 +184,41 @@ Do NOT run the goal. Write files only.")
    The approver is constant-approved: authoring turns are non-interactive,
    so :ask would deny with no human to ask (B3) — the user pre-consented
    by launching the goal, and the constitution still vetoes first (policy
-   :deny short-circuits before the approval gate)."
+   :deny short-circuits before the approval gate).
+
+   Retries are OFF here (:max-attempts 1) and the fallback chain is the
+   second opinion instead. Retrying the same provider three times at the
+   authoring budget is the same opinion asked twice — and it multiplies
+   worst-case silence, which is exactly what the idle clock measures.
+   One attempt per step keeps silence at steps x budget, inside the clamp.
+
+   model/effective-config is applied LAST, exactly where run-turn! applies
+   it, so this config and the turn that uses it agree on the model. The
+   per-session pin (`bb model set`, or :goal/author-model) merges over the
+   config model; recording the pre-merge label writes down a model that
+   never served, and V1b model comparisons would compare labels."
   [name ws]
-  (let [base (config/load-config)]
-    (cond-> (-> base
-                (assoc :session/id (str "goal-author-" name) :cwd ws)
-                (assoc :max-tool-rounds (max (or (:max-tool-rounds base) 8)
-                                             (or (:goal/max-authoring-rounds base) 48)))
-                (assoc :approval/ask (constantly :approved)))
-      (:goal/author-model base) (assoc :model (:goal/author-model base))
-      (seq (:providers base))
-      (assoc :providers
-             (authoring-providers (:providers base)
-                                  (or (:goal/authoring-request-timeout-ms base)
-                                      default-authoring-request-timeout-ms))))))
+  (let [base (config/load-config)
+        idle (or (:goal/authoring-idle-timeout-ms base) default-authoring-idle-ms)
+        attempts 1
+        steps (inc (count (:provider/fallbacks base)))
+        ;; 75% of the idle clock, split across every request the worst
+        ;; case can make: silence stays detectable as silence.
+        ceiling (quot (* (long idle) 3) (* 4 (long steps) (long attempts)))]
+    (-> (cond-> (-> base
+                    (assoc :session/id (str "goal-author-" name) :cwd ws)
+                    (assoc :max-tool-rounds (max (or (:max-tool-rounds base) 8)
+                                                 (or (:goal/max-authoring-rounds base) 48)))
+                    (assoc :approval/ask (constantly :approved))
+                    (update :retry merge {:max-attempts attempts}))
+          (:goal/author-model base) (assoc :model (:goal/author-model base))
+          (seq (:providers base))
+          (assoc :providers
+                 (authoring-providers (:providers base)
+                                      (or (:goal/authoring-request-timeout-ms base)
+                                          default-authoring-request-timeout-ms)
+                                      ceiling)))
+        (model/effective-config))))
 
 (defn validate!
   "Run the runner's own validator over the authored config. Returns nil when
@@ -220,15 +259,6 @@ Do NOT run the goal. Write files only.")
    (see default-authoring-idle-ms); this only fires when work is STILL
    moving past any sane total. Override via :goal/authoring-timeout-ms."
   2700000)
-
-(def ^:private default-authoring-idle-ms
-  "No-progress clock for the authoring phase — the real stall detector.
-   A healthy authoring round emits a tool call every minute or two; a
-   wedged provider call emits nothing and pins 0% CPU. 2026-09-08's 60-min
-   parked resume was zero progress for an hour; that invariant — silence,
-   not duration — is what a stall is. Override via
-   :goal/authoring-idle-timeout-ms."
-  480000)
 
 (defn ^:private author-attempts!
   "One authoring turn, then the validator judges; on failure, one repair
@@ -306,8 +336,10 @@ Do NOT run the goal. Write files only.")
         budget (or (:goal/authoring-timeout-ms acfg) default-authoring-timeout-ms)
         record! (fn [result err]
                   (try (spit (str ws "/authoring.edn")
-                             (pr-str (cond-> {:model (or (:goal/author-model acfg)
-                                                         (:model acfg))
+                             ;; acfg has been through model/effective-config,
+                             ;; so :model IS the model that serves — not the
+                             ;; pre-pin label.
+                             (pr-str (cond-> {:model (:model acfg)
                                               :rounds @rounds
                                               :duration-ms (- (System/currentTimeMillis)
                                                                started-ms)

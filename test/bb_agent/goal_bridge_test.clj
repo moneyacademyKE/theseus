@@ -6,6 +6,8 @@
             [bb-agent.goal-bridge :as bridge]
             [bb-agent.goal.progress :as progress]
             [bb-agent.goal.registry :as registry]
+            [bb-agent.model :as model]
+            [bb-agent.provider :as provider]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -432,14 +434,17 @@
              reason the primary already paid for is not a second opinion")
         (is (= "http://x" (get-in ps [:openai-compatible :base-url]))
             "the rest of the provider config is untouched"))))
-  (testing ":goal/authoring-request-timeout-ms overrides, and a longer
-            configured timeout is never lowered — authoring needs AT LEAST
-            the budget, not exactly it"
+  (testing ":goal/authoring-request-timeout-ms overrides, and the budget is
+            CLAMPED to what fits the idle clock. 'Never lowered' was the bug,
+            not the feature: a 600s request budget under a 480s idle clock
+            can never report anything — the detector fires first and the run
+            dies as an unexplained stall."
     (with-redefs [config/load-config
                   (constantly {:providers {:p {:timeout-ms 600000}}
                                :goal/authoring-request-timeout-ms 90000})]
-      (is (= 600000 (get-in (:providers (#'bridge/author-cfg "x" "/tmp/ws"))
-                            [:p :timeout-ms]))))
+      (is (= 360000 (get-in (:providers (#'bridge/author-cfg "x" "/tmp/ws"))
+                            [:p :timeout-ms]))
+          "one step, one attempt, 75% of the 480s idle clock"))
     (with-redefs [config/load-config
                   (constantly {:providers {:p {:timeout-ms 1000}}
                                :goal/authoring-request-timeout-ms 90000})]
@@ -477,3 +482,68 @@
               "the reason rides the record, not only the chat message")
           (is (str/includes? (str (:error rec)) "request timed out")
               "so does the ledger of what was tried"))))))
+
+(deftest authoring-retry-budget-fits-the-idle-clock-test
+  (testing "authoring takes ONE attempt per chain step: retrying the same
+            provider three times at the authoring budget is the same opinion
+            asked twice — and 3 x 180s of silence outlasts the 480s idle
+            clock, which is how 2026-09-11's run turned a provider timeout
+            into an unexplained :stalled verdict (17 rounds, no files)"
+    (with-redefs [config/load-config
+                  (constantly {:provider :openai-compatible :model "m"
+                               :providers {:openai-compatible {:timeout-ms 60000}
+                                           :other {}}
+                               :provider/fallbacks [{:provider :other :model "m2"}]})]
+      (let [cfg (#'bridge/author-cfg "x" "/tmp/ws")]
+        (is (= 1 (get-in cfg [:retry :max-attempts]))
+            "the chain is the second opinion, not the retry loop")
+        (let [idle    @#'bridge/default-authoring-idle-ms
+              steps   (inc (count (:provider/fallbacks cfg)))
+              attempts (get-in cfg [:retry :max-attempts])
+              timeout (get-in cfg [:providers :openai-compatible :timeout-ms])]
+          (is (<= (* steps attempts timeout) (quot (* idle 3) 4))
+              (str "worst-case provider silence " (* steps attempts timeout)
+                   "ms must fit inside the idle clock " idle "ms, or a slow"
+                   " provider reads as a wedge")))))))
+
+(deftest authoring-request-budget-is-clamped-to-what-fits-test
+  (testing "a configured 600s request budget is NOT preserved: under the
+            480s idle clock it can never complete — the idle detector fires
+            first and the run dies with no cause recorded. The budget is
+            clamped to what fits, and the clamp is the reason."
+    (with-redefs [config/load-config
+                  (constantly {:providers {:p {:timeout-ms 600000}}
+                               :goal/authoring-request-timeout-ms 90000})]
+      (is (= 360000 (get-in (:providers (#'bridge/author-cfg "x" "/tmp/ws"))
+                            [:p :timeout-ms]))
+          "one step, one attempt, 75% of the 480s idle clock"))
+    (with-redefs [config/load-config
+                  (constantly {:providers {:p {:timeout-ms 1000}}
+                               :provider/fallbacks [{:provider :q :model "m"}
+                                                    {:provider :r :model "m"}]
+                               :goal/authoring-request-timeout-ms 90000})]
+      (is (= 90000 (get-in (:providers (#'bridge/author-cfg "x" "/tmp/ws"))
+                           [:p :timeout-ms]))
+          "a shorter configured timeout is still raised to the budget when it fits"))))
+
+(deftest authoring-record-names-the-model-that-served-test
+  (testing "authoring.edn must name the EFFECTIVE model. run-turn! merges the
+            per-session pin (model/effective-config), so recording author-cfg's
+            model writes a label for a model that never served — the live stall
+            record said ali/qwen3.8-max while the pin file said
+            zai/glm-5.3-flash. V1b model comparisons would compare labels."
+    (with-redefs [config/load-config (constantly {:provider :fake :model "main-model"
+                                                  :goal/authoring-idle-timeout-ms 5000
+                                                  :goal/authoring-timeout-ms 30000})
+                  model/load-session-model (constantly {:session/id "goal-author-pin-goal"
+                                                        :provider :openai-compatible
+                                                        :model "zai/glm-5.3-flash"})
+                  core/run-turn! (fn [cfg _prompt]
+                                   (when-let [emit (:status/emit cfg)]
+                                     (emit {:status :tool/call :tool "read_file"})))]
+      (let [ws (str *tmp* "/ws-pin")]
+        (fs/create-dirs ws)
+        (#'bridge/author-with-validation! "pin-goal" ws "spec" nil)
+        (is (= "zai/glm-5.3-flash"
+               (:model (edn/read-string (slurp (str ws "/authoring.edn")))))
+            "the pinned model served, so the pinned model is recorded")))))
