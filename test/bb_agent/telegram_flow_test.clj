@@ -51,3 +51,17 @@
                    (catch Exception _ :threw))]
        (is (= :threw reply) "the error still propagates to the caller")
        (is (str/includes? (-> @sent last last) "❌ Failed") "failure settles the footer")))))
+
+(deftest render-flow-stays-under-telegram-limit
+  (let [entries (vec (for [i (range 300)]
+                       {:name (str "tool-" i) :context (str "/some/path/" i ".clj") :status :ok}))
+        running (flow/render-flow {:entries entries :started-ms (System/currentTimeMillis)})
+        settled (flow/render-flow {:entries entries :started-ms (System/currentTimeMillis)
+                                   :settled {:ok? true}})]
+    (is (<= (count running) 4096) "a 300-entry live render fits Telegram's limit")
+    (is (<= (count settled) 4096) "a 300-entry settled render fits Telegram's limit")
+    (is (str/includes? running "earlier calls") "the dropped middle is accounted for")
+    (is (str/includes? running "tool-299") "the newest entry survives truncation")
+    (is (str/includes? running "tool-0") "the origin entry survives truncation")
+    (is (str/includes? settled "✅ Finished (300 tool calls") "the settled footer survives truncation")
+    (is (str/includes? settled "300 tool calls") "the footer reports the TRUE count, not the visible one")))

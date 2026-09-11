@@ -22,6 +22,34 @@
 
 (def ^:private context-cap 64)
 
+(def ^:private render-cap 3900)
+;; Telegram kills message text past 4096 chars — and a flow message grows
+;; one line per tool call, so past ~35 entries every edit dies terminally
+;; exactly when the turn is long enough to need the visibility. Long turns
+;; shed history structurally: the first line (what the turn started with)
+;; and the most recent calls (what it is doing now) survive; a marker
+;; accounts for the dropped middle. The footer — the live status — is
+;; never truncated.
+
+(defn- truncate-lines
+  "Pure: rendered line strings → a single string under budget chars,
+   keeping the head line and the longest tail that fits, with a
+   '… N earlier calls' marker for the dropped middle."
+  [line-strs budget]
+  (let [head (first line-strs)
+        tail (vec (rest line-strs))
+        marker-for (fn [n] (str "… " n " earlier calls"))
+        render (fn [k]
+                 (str/join "\n"
+                           (concat [head]
+                                   (when (< k (count tail))
+                                     [(marker-for (- (count tail) k))])
+                                   (subvec tail (- (count tail) k)))))]
+    (loop [k (count tail)]
+      (if (or (zero? k) (<= (count (render k)) budget))
+        (render k)
+        (recur (dec k))))))
+
 (defn- esc [s]
   (-> (str s)
       (str/replace "&" "&amp;")
@@ -68,19 +96,24 @@
 (defn render-flow
   "Pure: flow state → final Telegram HTML. Lone tool line stays a plain
    one-liner; anything bigger wraps in the expandable blockquote with the
-   footer line (live ⚙️ Working… / settled ✅ Finished / ❌ Failed)."
+   footer line (live ⚙️ Working… / settled ✅ Finished / ❌ Failed).
+   Renders are structurally capped under Telegram's 4096-char limit —
+   the oldest middle entries collapse into a marker, the footer survives."
   [{:keys [entries started-ms settled] :as _state}]
-  (let [lines (str/join "\n" (map line-html entries))
+  (let [line-strs (map line-html entries)
         n (count entries)
         dur (humanize-duration (- (System/currentTimeMillis) (or started-ms 0)))]
     (if (<= n 1)
-      lines
+      (or (first line-strs) "")
       (let [footer (if settled
                      (if (:ok? settled)
                        (str "✅ Finished (" n " tool calls, " dur ")")
                        (str "❌ Failed (" n " tool calls, " dur ")"))
-                     (str "⚙️ Working • " n " tool " (if (= 1 n) "call" "calls") " • " dur))]
-        (str "<blockquote expandable>" lines "</blockquote>\n" footer)))))
+                     (str "⚙️ Working • " n " tool " (if (= 1 n) "call" "calls") " • " dur))
+            wrapper (count "<blockquote expandable></blockquote>\n")
+            budget (max 0 (- render-cap wrapper (count footer)))
+            body (truncate-lines line-strs budget)]
+        (str "<blockquote expandable>" body "</blockquote>\n" footer)))))
 
 (defn make-flow
   "Per-turn flow state: entries in order, the flow message id once sent,
