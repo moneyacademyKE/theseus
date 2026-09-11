@@ -247,6 +247,18 @@
         (is (= :deny (verdict "shell" {:cmd "cat ~/.ssh/server.key"})) "path-context .key still denied")
         (is (= :deny (verdict "shell" {:cmd "cat /etc/ssl/cert.pem"})) "path-context .pem still denied")
         (is (= :deny (verdict "shell" {:cmd "cat ~/.ssh/id_ed25519"})) "id_ed25519 floor")
+        ;; 2026-09-11: bare `secret` substring ate a commit whose heredoc
+        ;; MESSAGE discussed the fence itself ("secrets" in prose). Writing
+        ;; about secrets is not exfiltrating one — the word now needs path
+        ;; context (a slash) or a file extension.
+        (is (not= :deny (verdict "shell" {:cmd "git commit -m 'core: the secrets fence overmatched'"}))
+            "the word 'secrets' in prose is NOT a secrets hit (commit-message regression)")
+        (is (not= :deny (verdict "shell" {:cmd "echo the deny-secrets rule fired"}))
+            "naming the rule in prose is NOT a secrets hit")
+        (is (= :deny (verdict "shell" {:cmd "cat ~/.aws/secrets"})) "path-context secrets file still denied")
+        (is (= :deny (verdict "shell" {:cmd "cat secrets.txt"})) "bare secrets.<ext> file still denied")
+        (is (not= :deny (verdict "shell" {:cmd "cat production-secrets"}))
+            "bare extensionless name is the accepted residual risk (same class as bare server.key)")
         (is (= :deny (verdict "shell" {:cmd "sudo ls"})) "sudo floor")
         (is (= :deny (verdict "write_file" {:path "brain/rules.clj"})) "law protects itself")
         ;; regeneration rule as code: every durable deny precedes the first allow
