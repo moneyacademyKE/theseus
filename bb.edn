@@ -41,6 +41,7 @@
                                [bb-agent.digest-test]
                                [bb-agent.schedule-test]
                                [bb-agent.session-test]
+                               [bb-agent.telegram-lifecycle-test]
                                [bb-agent.goal.author-progress-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
@@ -56,6 +57,7 @@
                                              'bb-agent.digest-test
                                              'bb-agent.schedule-test
                                              'bb-agent.session-test
+                                             'bb-agent.telegram-lifecycle-test
                                              'bb-agent.boot-health-test
                                              'bb-agent.goal.author-progress-test)]
                                  (when (pos? (+ fail error))

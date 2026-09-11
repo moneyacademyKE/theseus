@@ -20,6 +20,7 @@
     ;; survive a restart.
     "session-models"
     "group-context" "telegram-replies" "outbox" "rsi" "goal-queue.edn"
+    "poller.pid"
     "digest.edn"
     "memory.edn" "session-summaries.edn" "usage.edn" "usage-index.db"
     "telegram-offset.edn" "telegram-seen.edn"

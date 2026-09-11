@@ -11,6 +11,7 @@
             [bb-agent.doctor :as doctor]
             [bb-agent.goal-bridge :as goal-bridge]
             [bb-agent.goal.outcomes :as goal-outcomes]
+            [bb-agent.goal.registry :as goal-registry]
             [bb-agent.log-cap :as log-cap]
             [bb-agent.outbox :as outbox]
             [bb-agent.telegram-approval-ui :as approval-ui]
@@ -209,6 +210,26 @@
       (flush))))
   lifecycle)
 
+(defn- instance-lock-path []
+  (str (fs/path (config/home) "state" "poller.pid")))
+
+(defn acquire-instance-lock!
+  "The poller is a singleton: two live pollers fight over getUpdates and
+   both lose — 409 wars, orphaned deliveries, the v1.0.0-cut orphan race.
+   bk-8ba2: the lock is a PID file (state/poller.pid). A live foreign PID
+   refuses the boot; a stale file (dead PID) is taken over. Returns true
+   when this process holds the lock after the call."
+  []
+  (let [path (instance-lock-path)
+        my-pid (.pid (java.lang.ProcessHandle/current))]
+    (if (and (fs/exists? path)
+             (let [pid (parse-long (str/trim (slurp path)))]
+               (and pid (not= pid my-pid) (goal-registry/pid-alive? pid))))
+      false
+      (do (fs/create-dirs (fs/parent path))
+          (spit path (str my-pid))
+          true))))
+
 (defn run-poll-cycles!
   "The poll-loop skeleton with its body injected, so the lifecycle is
    testable without the Bot API. Runs `body-fn` until :running? flips false
@@ -269,6 +290,14 @@
    cycle instead of hammering the API. Registers the Telegram command
    menu at boot — failure prints one line and never blocks polling."
   [& {:keys [interval-ms] :or {interval-ms 2000}}]
+  ;; bk-8ba2: singleton gate BEFORE any boot side effects — a second poller
+  ;; must fail fast, not discover the 409 war after registering commands.
+  (when-not (acquire-instance-lock!)
+    (binding [*out* *err*]
+      (println (str "telegram: another live poller holds "
+                    (instance-lock-path) " — refusing to start")))
+    (flush)
+    (System/exit 1))
   (let [boot-cfg (config/load-config)]
     ;; bk-e6ff: cap the launchd log BEFORE boot output lands — in-place
     ;; truncation, never a rename (the fd stays on the inode).
