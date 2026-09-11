@@ -407,4 +407,30 @@
                 (swap! lifecycle assoc :running? false))
          (throw (ex-info "bad cycle" {}))))
       (is (= 3 @calls))
-      (is (false? (:in-cycle? @lifecycle))))))
+      (is (false? (:in-cycle? @lifecycle)))))
+  (testing "consecutive failures throttle logging: 1st, every 30th, no spam between"
+    (let [lifecycle (atom {:running? true :in-cycle? false})
+          calls (atom 0)
+          out (with-out-str
+                (telegram/run-poll-cycles!
+                 lifecycle 1
+                 (fn [] (when (= 35 (swap! calls inc))
+                          (swap! lifecycle assoc :running? false))
+                   (throw (ex-info "outage" {})))))]
+      (is (str/includes? out "poll error #1 ") "the first failure is logged")
+      (is (str/includes? out "poll error #30 ") "every 30th failure is logged")
+      (is (not (str/includes? out "poll error #2 ")) "the failures between are silent")
+      (is (= 35 @calls) "every failing cycle still ran — backoff changes cadence, not liveness")))
+  (testing "a success after failures prints exactly one recovery line"
+    (let [lifecycle (atom {:running? true :in-cycle? false})
+          calls (atom 0)
+          out (with-out-str
+                (telegram/run-poll-cycles!
+                 lifecycle 1
+                 (fn [] (let [n (swap! calls inc)]
+                          (when (< n 3) (throw (ex-info "outage" {})))
+                          (when (= n 4) (swap! lifecycle assoc :running? false))
+                          {:conflict? false}))))]
+      (is (str/includes? out "recovered after 2 consecutive error(s)")
+          "the recovery line reports the failure streak")
+      (is (= 1 (count (re-seq #"recovered after" out))) "recovery prints once"))))

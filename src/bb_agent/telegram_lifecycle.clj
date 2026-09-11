@@ -214,28 +214,54 @@
    testable without the Bot API. Runs `body-fn` until :running? flips false
    (the shutdown hook does that on SIGTERM); :in-cycle? is true exactly
    while a body run is in flight so the hook waits for the current cycle
-   instead of cutting it. Sleeps interval-ms between cycles, 5x after a
-   getUpdates conflict. Body errors print one line and cost one interval —
-   polling must survive a bad cycle. Returns the completed cycle count."
+   instead of cutting it.
+
+   Failure posture (bk-9394): a throwing body backs off geometrically —
+   interval × 1, 2, 4, 8, capped at 16× — so an outage doesn't hot-loop
+   against a dead network (one 2026-09-10 outage produced 2,400+ identical
+   error lines). Logging is throttled: the 1st failure, every 30th, and one
+   recovery line when a cycle succeeds again. A getUpdates conflict keeps
+   its fixed 5× backoff. Returns the completed cycle count."
   [lifecycle interval-ms body-fn]
-  (loop [cycles 0]
+  (loop [cycles 0 failures 0]
     (if-not (:running? @lifecycle)
       cycles
-      (let [backoff? (try
-                       (swap! lifecycle assoc :in-cycle? true)
-                       (boolean (:conflict? (body-fn)))
-                       (catch Exception e
-                         (println (str "telegram poll error ["
-                                       (.getName (.getClass e)) "] "
-                                       (.getMessage e)
-                                       (when-let [d (ex-data e)]
-                                         (str " data " (pr-str d)))
-                                       " @ " (java.time.Instant/now)))
-                         (flush)
-                         false))]
+      (let [result (try
+                     (swap! lifecycle assoc :in-cycle? true)
+                     (body-fn)
+                     (catch Exception e
+                       (let [n (inc failures)]
+                         (when (or (= n 1) (zero? (mod n 30)))
+                           (println (str "telegram poll error #" n " ["
+                                         (.getName (.getClass e)) "] "
+                                         (.getMessage e)
+                                         (when-let [d (ex-data e)]
+                                           (str " data " (pr-str d)))
+                                         " @ " (java.time.Instant/now)))
+                           (flush)))
+                       ::failed))]
         (swap! lifecycle assoc :in-cycle? false)
-        (Thread/sleep (long (if backoff? (* 5 interval-ms) interval-ms)))
-        (recur (inc cycles))))))
+        (cond
+          (= ::failed result)
+          (do (Thread/sleep (long (* interval-ms
+                                     (bit-shift-left 1 (min failures 4)))))
+              (recur (inc cycles) (inc failures)))
+
+          (:conflict? result)
+          (do (when (pos? failures)
+                (println (str "telegram poll recovered after " failures
+                              " consecutive error(s) @ " (java.time.Instant/now)))
+                (flush))
+            (Thread/sleep (long (* 5 interval-ms)))
+            (recur (inc cycles) 0))
+
+          :else
+          (do (when (pos? failures)
+                (println (str "telegram poll recovered after " failures
+                              " consecutive error(s) @ " (java.time.Instant/now)))
+                (flush))
+            (Thread/sleep (long interval-ms))
+            (recur (inc cycles) 0)))))))
 
 (defn poll-loop!
   "Continuous polling with a sleep between cycles. Stop with ctrl-c.
