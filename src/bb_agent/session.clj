@@ -104,8 +104,33 @@
           (fs/set-posix-file-permissions path "rw-------")
           updated)))))
 
+(def ^:private tool-result-field-cap 8192)
+;; Tool stdout can run to hundreds of KB; a session file is re-parsed on
+;; every poll cycle, so unbounded results are a tax every future turn pays.
+;; Cap string fields inside :tool/results at persistence time — the marker
+;; keeps the truncation visible to the model instead of silently lying.
+;; In-flight results are untouched: the model still sees the full output
+;; for the turn that produced it.
+
+(defn- cap-tool-results
+  "Pure: turn → turn with over-long string fields in :tool/results entries
+   truncated to tool-result-field-cap with a visible marker."
+  [turn]
+  (update turn :tool/results
+          (fn [results]
+            (mapv (fn [r]
+                    (into {}
+                          (map (fn [[k v]]
+                                 (if (and (string? v) (> (count v) tool-result-field-cap))
+                                   [k (str (subs v 0 tool-result-field-cap)
+                                           "\n… [truncated " (- (count v) tool-result-field-cap)
+                                           " chars at persistence]")]
+                                   [k v])))
+                          r))
+                  (or results [])))))
+
 (defn append-turn! [session-id turn]
-  (atomic-mutate-session! session-id #(conj % turn)))
+  (atomic-mutate-session! session-id #(conj % (cap-tool-results turn))))
 
 (defn save-turns! [session-id turns]
   (atomic-mutate-session! session-id (constantly (vec turns))))
