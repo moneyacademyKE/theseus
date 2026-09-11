@@ -129,6 +129,29 @@ Then write exactly two files:
 The project to build: %s
 Do NOT run the goal. Write files only.")
 
+(def ^:private default-authoring-request-timeout-ms
+  "Per-request provider budget for AUTHORING turns. The 60s chat default is
+   sized for a one-line reply; an authoring turn carries brain + skills index
+   + tool schemas + the spec and asks for two whole files back. 2026-09-11
+   lost a 14-minute run to 'All providers in fallback chain failed /
+   request timed out' — both chain steps died on the same chat-sized wall.
+   Must stay well under default-authoring-idle-ms: the idle clock is the
+   outer bound on provider silence, this is only the inner one. Override
+   via :goal/authoring-request-timeout-ms."
+  180000)
+
+(defn- authoring-providers
+  "`providers` with at least `ms` of request budget on EVERY step — a
+   fallback that times out for the reason the primary already paid for is
+   not a second opinion. A longer configured timeout is kept: authoring
+   needs at least the budget, never exactly it."
+  [providers ms]
+  (reduce-kv (fn [m k v]
+               (assoc m k (if (map? v)
+                            (update v :timeout-ms #(max (or % 0) ms))
+                            v)))
+             {} providers))
+
 (defn- author-cfg
   "Config for an authoring turn. Authoring a real project costs far more
    rounds than chat (:max-tool-rounds 24 died mid-project live 2026-09-07),
@@ -136,6 +159,10 @@ Do NOT run the goal. Write files only.")
    :goal/author-model overrides the model for AUTHORING ONLY (V1b) — a
    fast non-reasoning author against a 44-minute reasoning one; turns keep
    the configured model. Absent key = same model everywhere.
+   Provider requests get their own budget too (see
+   default-authoring-request-timeout-ms): the chat-sized 60s wall killed a
+   14-minute authoring run on 2026-09-11, and it killed BOTH chain steps,
+   so the fallback could not rescue what the primary had already failed.
    The approver is constant-approved: authoring turns are non-interactive,
    so :ask would deny with no human to ask (B3) — the user pre-consented
    by launching the goal, and the constitution still vetoes first (policy
@@ -147,7 +174,12 @@ Do NOT run the goal. Write files only.")
                 (assoc :max-tool-rounds (max (or (:max-tool-rounds base) 8)
                                              (or (:goal/max-authoring-rounds base) 48)))
                 (assoc :approval/ask (constantly :approved)))
-      (:goal/author-model base) (assoc :model (:goal/author-model base)))))
+      (:goal/author-model base) (assoc :model (:goal/author-model base))
+      (seq (:providers base))
+      (assoc :providers
+             (authoring-providers (:providers base)
+                                  (or (:goal/authoring-request-timeout-ms base)
+                                      default-authoring-request-timeout-ms))))))
 
 (defn validate!
   "Run the runner's own validator over the authored config. Returns nil when
@@ -253,9 +285,11 @@ Do NOT run the goal. Write files only.")
    when no requester is listening (emit nil), because a hang must be
    detectable whether or not anyone is watching. Returns nil on success,
    else the stall/problems string.
-   Every run persists <ws>/authoring.edn — {:model :rounds :duration-ms
-   :result :finished} (V1c): the 44-minute silence must never be
-   unmeasured again, and model comparisons (V1b) read data, not vibes."
+   EVERY run persists <ws>/authoring.edn — {:model :rounds :duration-ms
+   :result :finished}, plus :error when the turn threw (V1c): the
+   44-minute silence must never be unmeasured again, and model
+   comparisons (V1b) read data, not vibes. A provider-chain failure used
+   to escape through the future and leave no record at all."
   [name ws spec emit]
   (let [started-ms (System/currentTimeMillis)
         rounds (atom 0)
@@ -270,19 +304,33 @@ Do NOT run the goal. Write files only.")
               (str ws "/references/usage-stats.config.edn")]
         idle (or (:goal/authoring-idle-timeout-ms acfg) default-authoring-idle-ms)
         budget (or (:goal/authoring-timeout-ms acfg) default-authoring-timeout-ms)
-        result (watch-authoring!
-                (future (author-attempts! name ws spec acfg refs))
-                last-progress
-                {:idle-ms idle :ceiling-ms budget :poll-ms 250})
-        record {:model (or (:goal/author-model acfg) (:model acfg))
-                :rounds @rounds
-                :duration-ms (- (System/currentTimeMillis) started-ms)
-                :result (case result
-                          ::stalled :stalled
-                          ::timed-out :timed-out
-                          :authored)
-                :finished (str (java.time.Instant/now))}]
-    (try (spit (str ws "/authoring.edn") (pr-str record)) (catch Exception _))
+        record! (fn [result err]
+                  (try (spit (str ws "/authoring.edn")
+                             (pr-str (cond-> {:model (or (:goal/author-model acfg)
+                                                         (:model acfg))
+                                              :rounds @rounds
+                                              :duration-ms (- (System/currentTimeMillis)
+                                                               started-ms)
+                                              :result result
+                                              :finished (str (java.time.Instant/now))}
+                                       err (assoc :error (str (ex-message err)
+                                                              (when-let [d (ex-data err)]
+                                                                (str " " (pr-str d))))))))
+                       (catch Exception _)))
+        result (try (watch-authoring!
+                     (future (author-attempts! name ws spec acfg refs))
+                     last-progress
+                     {:idle-ms idle :ceiling-ms budget :poll-ms 250})
+                 (catch Exception e
+                   ;; A death that is not a stall is still a death. Rethrow:
+                   ;; the caller owns the user-facing envelope.
+                   (record! :error e)
+                   (throw e)))]
+    (record! (case result
+               ::stalled :stalled
+               ::timed-out :timed-out
+               :authored)
+             nil)
     (cond
       (= ::stalled result)
       (str "authoring stalled: no progress for " (quot idle 60000)

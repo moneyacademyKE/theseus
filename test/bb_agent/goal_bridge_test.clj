@@ -414,3 +414,66 @@
               "5 emits over 400ms with a 300ms idle budget: progress kept it alive")
           (is (pos? (count @received))
               "the requester's emit channel still receives forwarded events"))))))
+
+(deftest authoring-request-budget-test
+  (testing "authoring turns get their own provider request budget — the
+            chat-sized 60s default amputated a 14-minute authoring run
+            (2026-09-11: both chain steps died on 'request timed out')"
+    (with-redefs [config/load-config
+                  (constantly {:provider :openai-compatible :model "m"
+                               :providers {:openai-compatible {:base-url "http://x" :api-key "k"
+                                                               :timeout-ms 60000}
+                                           :other {:base-url "http://y"}}})]
+      (let [ps (:providers (#'bridge/author-cfg "x" "/tmp/ws"))]
+        (is (= 180000 (get-in ps [:openai-compatible :timeout-ms]))
+            "the primary's budget is raised for authoring")
+        (is (= 180000 (get-in ps [:other :timeout-ms]))
+            "every chain step gets it — a fallback that times out for the
+             reason the primary already paid for is not a second opinion")
+        (is (= "http://x" (get-in ps [:openai-compatible :base-url]))
+            "the rest of the provider config is untouched"))))
+  (testing ":goal/authoring-request-timeout-ms overrides, and a longer
+            configured timeout is never lowered — authoring needs AT LEAST
+            the budget, not exactly it"
+    (with-redefs [config/load-config
+                  (constantly {:providers {:p {:timeout-ms 600000}}
+                               :goal/authoring-request-timeout-ms 90000})]
+      (is (= 600000 (get-in (:providers (#'bridge/author-cfg "x" "/tmp/ws"))
+                            [:p :timeout-ms]))))
+    (with-redefs [config/load-config
+                  (constantly {:providers {:p {:timeout-ms 1000}}
+                               :goal/authoring-request-timeout-ms 90000})]
+      (is (= 90000 (get-in (:providers (#'bridge/author-cfg "x" "/tmp/ws"))
+                           [:p :timeout-ms])))))
+  (testing "a config with no :providers invents none"
+    (with-redefs [config/load-config (constantly {:provider :fake :model "m"})]
+      (is (nil? (:providers (#'bridge/author-cfg "x" "/tmp/ws")))))))
+
+(deftest authoring-error-is-measured-test
+  (testing "a THROWING authoring turn still persists authoring.edn — a death
+            that is not a stall was unmeasured (2026-09-11: the provider chain
+            failure left the workspace with no record at all, contradicting
+            the instrumentation's own promise)"
+    (with-redefs [config/load-config (constantly {:provider :fake :model "main-model"
+                                                  :goal/authoring-idle-timeout-ms 5000
+                                                  :goal/authoring-timeout-ms 30000})
+                  core/run-turn! (fn [& _]
+                                   (throw (ex-info "All providers in fallback chain failed"
+                                                   {:fallback/tried [{:fallback/provider :openai-compatible
+                                                                      :fallback/kind :infra
+                                                                      :fallback/reason "request timed out"}]})))]
+      (let [ws (str *tmp* "/ws-error")
+            _ (fs/create-dirs ws)
+            caught (atom nil)
+            _ (try (#'bridge/author-with-validation! "err-goal" ws "spec" nil)
+                   (catch Exception e (reset! caught e)))]
+        (is (some? @caught) "the exception still propagates — callers own the envelope")
+        (is (fs/exists? (str ws "/authoring.edn")) "the run is recorded even though it died")
+        (let [rec (edn/read-string (slurp (str ws "/authoring.edn")))]
+          (is (= :error (:result rec)))
+          (is (= "main-model" (:model rec)))
+          (is (number? (:duration-ms rec)))
+          (is (str/includes? (str (:error rec)) "fallback chain failed")
+              "the reason rides the record, not only the chat message")
+          (is (str/includes? (str (:error rec)) "request timed out")
+              "so does the ledger of what was tried"))))))

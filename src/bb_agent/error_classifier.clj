@@ -18,7 +18,10 @@
   [[:auth ["401" "403" "invalid api key" "unauthorized"
            "authentication" "forbidden"]]
    [:rate-limit ["429" "402" "rate limit" "quota" "too many requests"]]
-   [:infra ["502" "503" "504" "timeout" "connection refused" "econnrefused"
+   ;; "timed out" beside "timeout": that is the wording the JVM and
+   ;; http-client actually emit, and missing it filed real provider
+   ;; timeouts as :unknown — unretryable, and invisible to rsi as infra.
+   [:infra ["502" "503" "504" "timeout" "timed out" "connection refused" "econnrefused"
             "stream failed" "provider returned error" "model is unavailable"]]
    [:logic ["400" "invalid model" "not a valid model" "not found"]]])
 

@@ -84,3 +84,13 @@
                               b)))]
         (is (= [true br'] (cb/check br' :gpt 1002))
             "auth failure did not count; breaker still closed")))))
+
+(deftest classifier-recognizes-spaced-timeout-wording
+  (testing "'timed out' is the same failure as 'timeout' — it is the wording
+            the JVM and http-client actually emit, and the pattern table
+            missed it: a real 2026-09-11 authoring run recorded two :unknown
+            failures for provider timeouts, so the retry layer never retried
+            them and the fallback ledger could not say they were infra"
+    (doseq [raw ["request timed out" "Operation timed out" "Read timed out"]]
+      (is (= :infra (:kind (ec/classify raw))) (str raw " → infra"))
+      (is (true? (ec/retryable? (ec/classify raw))) (str raw " → retryable")))))
