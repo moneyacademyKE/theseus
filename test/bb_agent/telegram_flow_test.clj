@@ -65,3 +65,31 @@
     (is (str/includes? running "tool-0") "the origin entry survives truncation")
     (is (str/includes? settled "✅ Finished (300 tool calls") "the settled footer survives truncation")
     (is (str/includes? settled "300 tool calls") "the footer reports the TRUE count, not the visible one")))
+
+(deftest render-flow-compresses-before-truncating
+  (let [entries (vec (concat (repeat 80 {:name "file-read" :context "/src/a.clj" :status :ok})
+                             (repeat 40 {:name "shell" :context "bb test" :status :ok})
+                             [{:name "file-write" :context "/src/x.clj" :status :failed}]
+                             (repeat 80 {:name "file-edit" :context "/src/b.clj" :status :ok})))
+        html (flow/render-flow {:entries entries :started-ms (System/currentTimeMillis)})]
+    (is (<= (count html) 4096) "201 entries compress under the limit")
+    (is (not (str/includes? html "earlier calls")) "compression fit — nothing is dropped")
+    (is (str/includes? html "file-read ×80") "the run collapses with its true count")
+    (is (str/includes? html "shell ×40"))
+    (is (str/includes? html "file-edit ×80"))
+    (is (str/includes? html "<b>❌ file-write</b> <code>/src/x.clj</code>")
+        "a failure inside the runs keeps its own line and context")
+    (is (< (.indexOf html "file-read ×80")
+           (.indexOf html "shell ×40")
+           (.indexOf html "file-write")
+           (.indexOf html "file-edit ×80"))
+        "the run sequence is preserved in order")
+    (is (str/includes? html "201 tool calls") "the footer counts calls, not lines")))
+
+(deftest render-flow-keeps-detail-when-it-fits
+  (let [entries [{:name "file-read" :context "/a.clj" :status :ok}
+                 {:name "file-read" :context "/b.clj" :status :ok}]
+        html (flow/render-flow {:entries entries :started-ms (System/currentTimeMillis)})]
+    (is (str/includes? html "/a.clj") "short turns keep every context")
+    (is (str/includes? html "/b.clj"))
+    (is (not (str/includes? html "×2")) "no compression without pressure")))

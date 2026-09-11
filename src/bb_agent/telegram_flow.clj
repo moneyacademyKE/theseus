@@ -9,6 +9,9 @@
    - two or more entries wrap in the expandable blockquote with a live
      footer (⚙️ Working • N tool calls • 45s); a lone line stays a plain
      one-liner;
+   - long turns compress rather than drop: consecutive completed calls to
+     the same tool collapse into one counted line (✅ read_file ×12) —
+     sequence and totals are preserved, only per-call contexts fold;
    - settle rewrites the footer to ✅ Finished / ❌ Failed with the
      wall-clock duration from turn start;
    - the model's final answer is never part of the flow — it stays the
@@ -24,31 +27,30 @@
 
 (def ^:private render-cap 3900)
 ;; Telegram kills message text past 4096 chars — and a flow message grows
-;; one line per tool call, so past ~35 entries every edit dies terminally
-;; exactly when the turn is long enough to need the visibility. Long turns
-;; shed history structurally: the first line (what the turn started with)
-;; and the most recent calls (what it is doing now) survive; a marker
-;; accounts for the dropped middle. The footer — the live status — is
-;; never truncated.
+;; one line per tool call, so long turns hit the wall exactly when
+;; visibility matters most. The render adapts instead of dropping
+;; information: full detail while it fits; past the budget, run-length
+;; compression folds consecutive completed calls to the same tool into one
+;; counted line (sequence and totals survive — only per-call contexts
+;; fold); the head+tail net with a true-count marker fires only when even
+;; the compressed form overflows. The footer — the live status — is never
+;; truncated.
 
-(defn- truncate-lines
-  "Pure: rendered line strings → a single string under budget chars,
-   keeping the head line and the longest tail that fits, with a
-   '… N earlier calls' marker for the dropped middle."
-  [line-strs budget]
-  (let [head (first line-strs)
-        tail (vec (rest line-strs))
-        marker-for (fn [n] (str "… " n " earlier calls"))
-        render (fn [k]
-                 (str/join "\n"
-                           (concat [head]
-                                   (when (< k (count tail))
-                                     [(marker-for (- (count tail) k))])
-                                   (subvec tail (- (count tail) k)))))]
-    (loop [k (count tail)]
-      (if (or (zero? k) (<= (count (render k)) budget))
-        (render k)
-        (recur (dec k))))))
+(defn- compress-entries
+  "Pure: entry maps → run-length groups. Consecutive :ok calls to the same
+   tool collapse into one {:count N} group; :running and :failed entries
+   always stay individual — the live call and every failure keep their
+   own line and context."
+  [entries]
+  (reduce (fn [groups e]
+            (let [top (peek groups)]
+              (if (and (= :ok (:status e))
+                       (= :ok (:status top))
+                       (= (:name e) (:name top)))
+                (update groups (dec (count groups)) update :count inc)
+                (conj groups (assoc e :count 1)))))
+          []
+          entries))
 
 (defn- esc [s]
   (-> (str s)
@@ -87,6 +89,33 @@
       (str "<b>" label "</b>")
       (str "<b>" label "</b> <code>" (esc context) "</code>"))))
 
+(defn- group-line-html
+  "One rendered line per group: a compressed run shows icon, name, and its
+   true count; a singleton renders exactly as an individual entry."
+  [{:keys [name context status count]}]
+  (if (> count 1)
+    (str "<b>" (status-icon status) " " (esc name) " ×" count "</b>")
+    (line-html {:name name :context context :status status})))
+
+(defn- fit-groups
+  "Pure: compressed groups → a single string under budget chars, keeping
+   the head line and the longest tail that fits. The marker accounts for
+   the dropped middle in true CALLS (group counts summed), never lines."
+  [groups budget]
+  (let [head (group-line-html (first groups))
+        tail (vec (rest groups))
+        marker-for (fn [dropped] (str "… " (reduce + (map :count dropped)) " earlier calls"))
+        render (fn [k]
+                 (str/join "\n"
+                           (concat [head]
+                                   (when (< k (count tail))
+                                     [(marker-for (subvec tail 0 (- (count tail) k)))])
+                                   (map group-line-html (subvec tail (- (count tail) k))))))]
+    (loop [k (count tail)]
+      (if (or (zero? k) (<= (count (render k)) budget))
+        (render k)
+        (recur (dec k))))))
+
 (defn- humanize-duration [ms]
   (let [secs (max 0 (quot ms 1000))]
     (if (< secs 60)
@@ -97,8 +126,9 @@
   "Pure: flow state → final Telegram HTML. Lone tool line stays a plain
    one-liner; anything bigger wraps in the expandable blockquote with the
    footer line (live ⚙️ Working… / settled ✅ Finished / ❌ Failed).
-   Renders are structurally capped under Telegram's 4096-char limit —
-   the oldest middle entries collapse into a marker, the footer survives."
+   Long renders adapt rather than drop: full detail while it fits, then
+   run-length compression, with head+tail truncation only as the final
+   net. The footer survives every tier."
   [{:keys [entries started-ms settled] :as _state}]
   (let [line-strs (map line-html entries)
         n (count entries)
@@ -112,7 +142,10 @@
                      (str "⚙️ Working • " n " tool " (if (= 1 n) "call" "calls") " • " dur))
             wrapper (count "<blockquote expandable></blockquote>\n")
             budget (max 0 (- render-cap wrapper (count footer)))
-            body (truncate-lines line-strs budget)]
+            full (str/join "\n" line-strs)
+            body (if (<= (count full) budget)
+                   full
+                   (fit-groups (compress-entries entries) budget))]
         (str "<blockquote expandable>" body "</blockquote>\n" footer)))))
 
 (defn make-flow
