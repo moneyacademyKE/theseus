@@ -112,7 +112,7 @@
       (with-redefs [bridge/scaffold! (fn [name]
                                        (let [d (str *tmp* "/" name)]
                                          (fs/create-dirs d) d))
-                    bridge/spawn-detached! (fn [_dir cmd] (reset! spawned cmd) "12345")]
+                    bridge/spawn-detached! (fn [_dir cmd _log] (reset! spawned cmd) "12345")]
         (let [reply (bridge/dispatch-spec! "build a small thing" -31 4721)
               _ (is (str/includes? reply "authoring started"))
               _ (is (str/includes? @spawned "goal_launch.bb")
@@ -129,7 +129,7 @@
   (testing "V5: a busy topic queues instead of refusing — authoring lock"
     (bridge/authoring-lock! -32 4722)
     (with-redefs [bridge/scaffold! (fn [name] (str *tmp* "/" name))
-                  bridge/spawn-detached! (fn [_ _] "0")]
+                  bridge/spawn-detached! (fn [_ _ _] "0")]
       (let [reply (bridge/dispatch-spec! "build another thing" -32 4722)]
         (is (str/includes? reply "queued"))
         (is (= 1 (count (bridge/read-queue))) "the queued goal is durable state"))
@@ -145,7 +145,7 @@
         (registry/register-run! -34 4724 {:pid pid :name "cap-filler"
                                           :chat-id -34 :thread-id 4724})
         (with-redefs [bridge/scaffold! (fn [name] (str *tmp* "/" name))
-                      bridge/spawn-detached! (fn [_ _] "0")]
+                      bridge/spawn-detached! (fn [_ _ _] "0")]
           (let [reply (bridge/dispatch-spec! "build the overflow" -35 4725)]
             (is (str/includes? reply "queued"))
             (is (= 1 (bridge/live-run-count)) "one live run")
@@ -165,7 +165,7 @@
       (with-redefs [bridge/scaffold! (fn [name]
                                        (let [d (str *tmp* "/" name)]
                                          (fs/create-dirs d) d))
-                    bridge/spawn-detached! (fn [_ cmd] (swap! spawned conj cmd) "0")]
+                    bridge/spawn-detached! (fn [_ cmd _log] (swap! spawned conj cmd) "0")]
         (is (= "first" (bridge/launch-next-queued!)) "oldest first")
         (is (= 1 (count @spawned)))
         (is (str/includes? (first @spawned) "first"))

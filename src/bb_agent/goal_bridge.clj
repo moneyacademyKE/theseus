@@ -377,10 +377,24 @@ Do NOT run the goal. Write files only.")
 
 (defn ^:private spawn-detached!
   "nohup + background + echo pid: the child survives the poller and reports
-   its pid for the registry and the watcher."
-  [dir cmd]
+   its pid for the registry and the watcher.
+
+   `log` is required, and the reason is a pipe, not a preference: p/shell
+   reads :out to EOF, and a backgrounded child that inherits the write end
+   keeps it open for its whole life — so an unredirected 'detached' spawn
+   blocks the caller until the child exits. Measured on the unfixed code:
+   `sleep 5` returned after 5012ms. 2026-09-11: resume-detached! blocked its
+   caller through a full authoring run — the poll-loop parking V1a exists to
+   prevent, reintroduced through a file descriptor. Two of four call sites
+   redirected by hand and two forgot; the redirect now lives here, so there
+   is nothing left to forget.
+
+   Appends: launch.log accumulates receipts across attempts, and truncating
+   it would erase the evidence of why an earlier attempt died. A caller that
+   owns a verdict-scraped log truncates it itself (see launch!)."
+  [dir cmd log]
   (let [res (p/shell {:dir dir :out :string :err :string :continue true}
-                     "bash" "-c" (str "nohup " cmd " & echo $!"))]
+                     "bash" "-c" (str "nohup " cmd " >> " log " 2>&1 & echo $!"))]
     (if (zero? (:exit res))
       (str/trim (:out res))
       (throw (ex-info (str "spawn failed: " (:err res)) {:exit (:exit res)})))))
@@ -438,7 +452,10 @@ Do NOT run the goal. Write files only.")
         ;; rollback genuinely reverts an act's outputs instead of no-opping
         _ (p/shell {:dir ws :out :string :err :string} "git" "add" "-A")
         _ (p/shell {:dir ws :out :string :err :string} "git" "commit" "-q" "-m" "baseline: authored project")
-         pid (spawn-detached! repo (str "bb goal " cfg-path " > " log-path " 2>&1"))
+        ;; run.log is scraped by substring for the verdict, so it starts
+        ;; empty per launch: an appended stale HALT would read as this run's.
+        _ (spit log-path "")
+        pid (spawn-detached! repo (str "bb goal " cfg-path) log-path)
         ;; the registry carries the routing needed to recover this run after
         ;; a poller/daemon restart — pid+name alone orphaned every run that
         ;; outlived its process (amnesia class, 2026-09-08). Keyed by
@@ -453,7 +470,8 @@ Do NOT run the goal. Write files only.")
          _ (spit (str ws "/watch-args.edn")
                  (pr-str {:name name :home (str (config/home))
                           :chat-id chat-id :thread-id thread-id :pid pid}))]
-    (spawn-detached! repo (str "bb scripts/goal_watch.bb " (str ws "/watch-args.edn")))
+    (spawn-detached! repo (str "bb scripts/goal_watch.bb " (str ws "/watch-args.edn"))
+                     (str ws "/watch.log"))
     pid))
 
 (defn launch-scaffolded!
@@ -521,8 +539,8 @@ Do NOT run the goal. Write files only.")
                    :chat-id chat-id :thread-id thread-id}))
     (spawn-detached! (str (fs/cwd))
                      (str "bb scripts/goal_launch.bb "
-                          (str ws "/launch-args.edn")
-                          " >> " (str ws "/launch.log") " 2>&1"))))
+                          (str ws "/launch-args.edn"))
+                     (str ws "/launch.log"))))
 
 (defn launch-next-queued!
   "Free slot + free topic? Launch the OLDEST queued goal by SPAWNING
@@ -625,7 +643,8 @@ Do NOT run the goal. Write files only.")
     (spit args-file (pr-str {:name name :home (str (config/home))
                              :chat-id chat-id :thread-id thread-id}))
     (spawn-detached! (str (fs/cwd))
-                     (str "bb scripts/goal_resume.bb " args-file))))
+                     (str "bb scripts/goal_resume.bb " args-file)
+                     (str ws "/resume.log"))))
 
 (defn recover-interrupted!
   "Poller-boot recovery for goals (amnesia class, 2026-09-08: a daemon

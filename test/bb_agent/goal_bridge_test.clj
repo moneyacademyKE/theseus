@@ -547,3 +547,28 @@
         (is (= "zai/glm-5.3-flash"
                (:model (edn/read-string (slurp (str ws "/authoring.edn")))))
             "the pinned model served, so the pinned model is recorded")))))
+
+(deftest spawn-detached-returns-while-the-child-lives-test
+  (testing "'detached' means the CALLER does not wait. p/shell reads :out to
+            EOF, and a backgrounded child that inherits the write end holds it
+            open for its whole life — so an unredirected spawn blocks until the
+            child exits. Measured on the unfixed code: `sleep 5` returned after
+            5012ms. 2026-09-11: resume-detached! blocked its caller through a
+            full authoring run — the poll-loop parking V1a exists to prevent,
+            reintroduced through a file descriptor. The redirect now lives in
+            spawn-detached! itself, so `log` is required and no call site can
+            forget it."
+    (let [log (str *tmp* "/child.log")
+          t0 (System/currentTimeMillis)
+          pid (#'bridge/spawn-detached! (str *tmp*) "sleep 10" log)
+          elapsed (- (System/currentTimeMillis) t0)]
+      (try
+        (is (re-matches #"\d+" (str pid)) (str "a pid came back, not an error: " (pr-str pid)))
+        (is (< elapsed 2000)
+            (str "returned in " elapsed "ms — the child's 10s did not ride along"))
+        (is (registry/pid-alive? (parse-long (str pid)))
+            "the child outlives the call, so it is genuinely detached")
+        (is (fs/exists? log)
+            "stdout is redirected, not inherited — that redirect is what closes the pipe")
+        (finally
+          (p/shell {:continue true :out :string :err :string} "kill" (str pid)))))))
