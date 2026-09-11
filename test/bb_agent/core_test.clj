@@ -272,3 +272,47 @@
   (let [[turn _] (drive-phantom-turn! ["write_file"])]
     (is (= "write_file" (:assistant/final turn))
         "past the threshold, the text is accepted as final — no infinite nudge loop")))
+
+(deftest approval-mode-auto-all-approves-without-approver
+  (testing ":approval/mode :auto-all replaces the default :ask — no human checkpoint"
+    (with-redefs [tool/execute-tool-request (fn [_] {:status :ok :executed? true})]
+      (is (= :ok (:status (tool/handle-tool-request
+                           {:tool/name "shell" :tool/args {:cmd "true"}}
+                           {:approval/mode :auto-all})))
+          "default-ask tool executes with no approver present"))))
+
+(deftest approval-mode-absent-preserves-baseline
+  (testing "no mode configured — the ask gate still denies when no approver answers"
+    (with-redefs [tool/execute-tool-request (fn [_] {:status :ok :executed? true})]
+      (is (= :denied (:status (tool/handle-tool-request
+                               {:tool/name "shell" :tool/args {:cmd "true"}}
+                               {})))
+          "baseline behavior unchanged: ask + silence = denied"))))
+
+(deftest approval-mode-auto-safe-still-denies-unsafe
+  (testing ":auto-safe approves only the safe set — shell stays denied"
+    (with-redefs [tool/execute-tool-request (fn [_] {:status :ok :executed? true})]
+      (is (= :denied (:status (tool/handle-tool-request
+                               {:tool/name "shell" :tool/args {:cmd "true"}}
+                               {:approval/mode :auto-safe})))
+          "shell is not in safe-auto-tools")
+      (is (= :ok (:status (tool/handle-tool-request
+                           {:tool/name "read_file" :tool/args {:path "x"}}
+                           {:approval/mode :auto-safe})))
+          "read_file is in the safe set"))))
+
+(deftest constitution-deny-survives-auto-all
+  (testing "brain/rules.clj :deny beats :approval/mode :auto-all — the floor holds"
+    (with-temp-home
+     (fn []
+       (let [brain (str (fs/path (config/home) "brain"))]
+         (fs/create-dirs brain)
+         (spit (str (fs/path brain "rules.clj"))
+               "{:rules [{:name \"no-shell\" :pred (fn [tool _args] (= tool \"shell\")) :decision :deny}]}")
+         (with-redefs [tool/execute-tool-request (fn [_] {:status :ok :executed? true})]
+           (let [result (tool/handle-tool-request
+                         {:tool/name "shell" :tool/args {:cmd "true"}}
+                         {:approval/mode :auto-all :policy {:enabled true}})]
+             (is (= :denied (:status result)) "constitution denies before the mode applies")
+             (is (str/includes? (:error/message result) "constitution")
+                 "the denial names its source"))))))))

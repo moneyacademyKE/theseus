@@ -64,11 +64,20 @@
                                                   [:chat-id :thread-id])
                                (:status/emit cfg) (assoc :goal/emit (:status/emit cfg)))))
          approver (:approval/ask cfg)
+         ;; :approval/mode in config replaces the DEFAULT :ask policy only —
+         ;; explicit per-request policies (:auto-safe/:never) and the
+         ;; constitution (policy/verdict, checked above) still win.
+         ;; :auto-all removes the human checkpoint entirely (owner directive
+         ;; 2026-09-12); the constitution floor is the surviving guardrail.
+         decision-request (if (and (= :ask (:approval/policy request))
+                                   (:approval/mode cfg))
+                            (assoc request :approval/policy (:approval/mode cfg))
+                            request)
          result (if-let [verdict (policy/verdict request cfg)]
                   (case verdict
                     :allow (execute-tool-request request)
                     :deny (deny-result request :policy))
-                  (case (approval-decision request)
+                  (case (approval-decision decision-request)
                     :approved (execute-tool-request request)
                     :ask (if (and approver (= :approved (approver request)))
                            (execute-tool-request request)
