@@ -5,6 +5,8 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
             [bb-agent.circuit-breaker :as cb]
+            [bb-agent.core]
+            [bb-agent.provider]
             [bb-agent.retry :as retry]
             [cheshire.core :as json]
             [clojure.test :refer [deftest is testing]]
@@ -146,3 +148,39 @@
         (finally
           (stop-server)
           (fs/delete-tree home))))))
+
+(deftest retries-are-not-silent
+  (testing "with-retries emits before each backoff sleep: a retrying provider
+            is ALIVE, and a caller whose liveness clock is fed by emits (goal
+            authoring's idle detector) must not read it as a wedge"
+    (let [seen (atom [])
+          [o _] (opts {:emit #(swap! seen conj %)})
+          calls (atom 0)
+          r (retry/with-retries o (fn [] (swap! calls inc)
+                                   (throw (ex-info "request timed out" {}))))]
+      (is (= :exhausted (:outcome r)))
+      (is (= 2 (count @seen)) "one emit per backoff, none after the last attempt")
+      (is (= [:retry/attempt :retry/attempt] (map :status @seen)))
+      (is (= [1 2] (map :attempt @seen)) "the attempt that just failed")
+      (is (= [:infra :infra] (map :kind @seen)) "'timed out' is infra, so it retried")))
+  (testing "a first-attempt success emits nothing — no phantom retry noise"
+    (let [seen (atom [])
+          [o _] (opts {:emit #(swap! seen conj %)})]
+      (is (= :ok (:value (retry/with-retries o (constantly :ok)))))
+      (is (empty? @seen)))))
+
+(deftest retry-emits-are-wired-from-turn-config
+  (testing "core/complete-retrying passes the turn's :status/emit into the
+            executor, so a retrying provider bumps the authoring idle clock
+            instead of sitting silent for attempts x request-budget"
+    (let [seen (atom [])]
+      (with-redefs [bb-agent.provider/complete
+                    (fn [_p _r] (throw (ex-info "request timed out" {})))]
+        (is (thrown? Exception
+                     (#'bb-agent.core/complete-retrying
+                      {:status/emit #(swap! seen conj %)
+                       :retry {:max-attempts 2 :base-ms 1 :max-ms 2 :jitter 0
+                               :sleep (constantly nil) :clock (constantly 0)}}
+                      :openai-compatible {})))
+        (is (= [:retry/attempt] (map :status @seen))
+            "the turn's emit channel heard the retry")))))

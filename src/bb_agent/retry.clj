@@ -11,7 +11,15 @@
 
   Failure policy: classify, then retry only what the classifier calls
   retryable (rate limits, infra). Auth/logic errors fail fast and do
-  not count toward tripping the breaker; only retryable failures do."
+  not count toward tripping the breaker; only retryable failures do.
+
+  Liveness: `:emit` announces each retry before its backoff sleep. A
+  retrying provider is ALIVE, and a caller that judges liveness by
+  silence (goal authoring's idle clock) must not read backoff as a
+  wedge — 2026-09-11 lost a 10-minute authoring run to exactly that
+  misreading. The guard lives here, not at the call site: never-throws
+  is this module's contract, and a broken status surface must not
+  break it."
   (:require [bb-agent.circuit-breaker :as cb]
             [bb-agent.error-classifier :as ec]))
 
@@ -26,6 +34,7 @@
    :jitter 0.5
    :breaker nil
    :breaker-key :provider
+   :emit nil
    :clock (fn [] (System/currentTimeMillis))
    :sleep (fn [ms] (Thread/sleep (long ms)))
    :rand rand})
@@ -41,6 +50,19 @@
                  (long max-ms))
         factor (+ 1 (* (double jitter) (- (* 2 (double (rand))) 1)))]
     (long (min (long max-ms) (Math/round (* raw factor))))))
+
+(defn- announce-retry!
+  "One `:retry/attempt` event before the backoff sleep: which attempt just
+  failed, how it was classified, and what it said. Swallows emitter
+  faults — see the ns docstring."
+  [opts attempt result]
+  (when-let [emit (:emit opts)]
+    (try
+      (emit {:status :retry/attempt
+             :attempt attempt
+             :kind (:kind result)
+             :reason (ex-message (:error result))})
+      (catch Exception _))))
 
 (defn with-retries
   "Execute `(thunk)` with capped attempts and exponential backoff.
@@ -87,5 +109,6 @@
                      :kind (:kind result)
                      :attempts attempt
                      :breaker br''}
-                    (do ((:sleep opts) (backoff-ms opts attempt))
+                    (do (announce-retry! opts attempt result)
+                        ((:sleep opts) (backoff-ms opts attempt))
                         (recur (inc attempt) br'')))))))))))))

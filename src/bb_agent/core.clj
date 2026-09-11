@@ -90,12 +90,17 @@
 
 (defn- complete-retrying
   "Wrap provider/complete with retry/backoff + the shared breaker.
-  config.edn may override retry knobs via a `:retry` map."
+  config.edn may override retry knobs via a `:retry` map. The turn's
+  :status/emit is threaded in as the retry announcer: backoff is
+  liveness, not silence, and a caller that judges liveness by silence
+  (goal authoring's idle clock) must see the difference. The emit
+  guard lives in retry/with-retries, which owns never-throws."
   [cfg provider request]
-  (let [opts (-> (retry/defaults)
-                 (merge (:retry cfg))
-                 (assoc :breaker @provider-breaker
-                        :breaker-key provider))
+  (let [opts (cond-> (-> (retry/defaults)
+                         (merge (:retry cfg))
+                         (assoc :breaker @provider-breaker
+                                :breaker-key provider))
+               (:status/emit cfg) (assoc :emit (:status/emit cfg)))
         result (retry/with-retries opts #(provider/complete provider request))]
     (when (:breaker result) (reset! provider-breaker (:breaker result)))
     (case (:outcome result)
