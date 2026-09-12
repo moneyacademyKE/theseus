@@ -2,7 +2,7 @@
 
 Theseus is a standalone Babashka agent app extracted from the OpenCrabs Babashka rewrite work.
 
-It provides a local, hackable agentic shell with provider calls, explicit tool approvals, session metadata, usage tracking, scheduler/daemon workflows, a Telegram polling adapter, and a small rich rendering layer.
+It provides a local, hackable agentic shell with provider calls, configurable tool approvals (constitution floor always enforced), goal-driven autonomous work with durable workspaces, session metadata, usage tracking, scheduler/daemon workflows, a Telegram polling adapter with a durable outbox, and a small rich rendering layer.
 
 ## Requirements
 
@@ -18,13 +18,16 @@ bb memory add "Project codename is Theseus"
 bb memory search "codename"
 bb session current
 bb usage report
+bb stats
 ```
 
 ## Commands
 
 - `bb agent [--ask] <prompt>` runs one agent turn.
+- `bb goal <config.edn> [--max-iters N] [--once]` runs a goal workspace directly; `bb goal status|pause|resume|stop <config.edn>` controls it. (The usual entry point is chat: `/goal <spec>` in a topic — see below.)
 - `bb skill list` lists validated `skills/<name>/SKILL.md` workflows.
 - `bb skill run <name> [input...]` runs a skill through the existing agent loop.
+- `bb skill-economy` renders a claims-vs-reads ledger over goal workspaces and names prune candidates.
 - `bb memory add <text>` stores memory.
 - `bb memory search <query>` searches memory.
 - `bb model set <session-id> <provider> <model>` stores session model selection.
@@ -32,30 +35,39 @@ bb usage report
 - `bb session list` lists session metadata.
 - `bb session current` prints current session metadata.
 - `bb session set-cwd <session-id> <cwd>` updates session working directory.
-- `bb schedule add/list/remove/run ...` manages scheduled prompts.
+- `bb schedule add/list/remove/run ...` manages scheduled prompts; scheduled turns run under a constant approver (the cron lane has no human).
 - `bb daemon start [--once] [--max-runs n] [--interval-ms n]` runs schedules.
-- `bb telegram poll-once` polls Telegram updates once. Replies use bounded 429 retry and HTML-to-plain fallback; authorized inbound files persist inertly under `channel_attachments/telegram/`.
+- `bb telegram poll` runs the long-polling service (one instance at a time — `state/poller.pid` lock). `bb telegram poll-once` polls once. Replies use bounded 429 retry and HTML-to-plain fallback; authorized inbound files persist inertly under `channel_attachments/telegram/`. Every outbound message persists in the outbox before the send attempt.
+- `bb stats` prints the ops summary: usage events/tokens, outbox depth + dead letters, goal verdict counts.
+- `bb doctor` runs health checks (config, provider reachability, writability).
+- `bb release vX.Y.Z [--dry-run]` cuts a release: promotes `## Unreleased` in the changelog, bumps `version.clj`, commits and tags. Pushing stays a separate explicit act.
 - `bb usage report` summarizes persisted usage events.
 - `bb config doctor` validates configuration.
 - `bb ui status` prints local status.
+
+## Telegram goals from chat
+
+In a forum group, `/goal <spec>` in a topic launches a goal owned by that topic: an ack lands immediately, a progress message edits in place while the author works (consecutive tool runs compress into `tool ×N` lines under Telegram's length limit), and the verdict + declared deliverables arrive in the topic when the run settles. A second `/goal` in a busy topic queues (durable FIFO, `:goal/max-concurrent` cap) instead of being refused. `/goal status [name]` and `/goal cancel` work from chat.
 
 ## State
 
 Theseus stores state under `OPENCRABS_HOME` when set, otherwise `~/.opencrabs-bb`.
 
-Important files:
+Durable state lives in `state/` (a hygiene gate pins an allowlist; scratch is exiled to `scratch/`):
 
 - `config.edn`
+- `state/sessions/*.edn` (tool-result fields capped at 8KB at persistence)
+- `state/session-metadata/*.edn`, `state/session-models/`, `state/session-summaries.edn`
+- `state/usage.edn`, `state/usage-index.db`
+- `state/outbox/` (unsent intents; drained every poll cycle, dead-letters after 5 attempts)
+- `state/telegram-offset.edn`, `state/telegram-seen.edn`, `state/telegram-replies/`
+- `state/poller.pid` (instance lock — a live foreign pid refuses the boot)
+- `state/goal-queue.edn` (durable FIFO, created when goals queue)
+- `state/schedules.edn`, `state/schedule-runs.edn`
+- `state/digest.edn`, `state/memory.edn`
+- `goals/` (registry `active.edn` + one workspace per goal: spec, config, ledgers, run.log, verdicts)
 - `skills/<name>/SKILL.md` (YAML frontmatter plus inert workflow prompt body)
-- `state/sessions/*.edn`
-- `state/session-metadata/*.edn`
-- `state/approvals.edn`
-- `state/usage.edn`
-- `state/telegram-offset.edn`
-- `state/telegram-seen.edn`
 - `channel_attachments/telegram/<chat-id>/[topic-<thread-id>/]` (authorized inbound files, inert bytes)
-- `state/schedules.edn`
-- `state/schedule-runs.edn`
 
 ## Configuration
 
@@ -87,15 +99,30 @@ Anthropic-compatible example:
               :api-key "..."}}}
 ```
 
+Approvals and goals:
+
+```edn
+{:approval/mode :auto-all        ; substitute for the default :ask — no human checkpoint.
+                                 ; The constitution (brain/rules.clj) still vetoes first.
+ :max-tool-rounds 200            ; chat-turn tool budget
+ :goal {:max-authoring-rounds 200
+        :authoring-timeout-ms 480000   ; idle fuse on tool-call emits
+        :authoring-ceiling-ms 2700000  ; hard ceiling even with progress
+        :max-concurrent 2
+        :author-model "..."}}          ; optional: pin authoring to a specific model
+```
+
 ## Verification
 
 ```sh
-bb test:e2e:all
+bb test:bb-agent   # core unit suites
+bb test:goal       # goal-runner unit tests
+bb test:e2e:all    # full composite (includes boot-load pins, state hygiene, fake-server telegram flows)
 ```
 
 ## Documentation
 
-See `docs/babashka-rewrite/` for the product spec, roadmap, tasklist, and ADR.
+See `docs/babashka-rewrite/` for the product spec, roadmap, tasklist, and ADR. Audits and release records live in `docs/audits/` and `docs/roadmaps/`; `docs/INDEX.md` is the lineage record.
 
 ## Releases & rollback
 
@@ -106,11 +133,11 @@ release; `git tag` lists them.
 Roll back to a known-good release (local service, no push required):
 
 ```sh
-git checkout v0.9.0
+git checkout v1.0.0
 launchctl kickstart -k gui/$(id -u)/com.theseus.telegram
 tail -f ~/theseus/state/telegram-poll.log   # watch the boot health lines
 ```
 
-Durable state (`state/`) is forward-compatible: sessions, the outbox, the
-poll offset, and goal workspaces survive any checkout, so a rollback costs
-nothing that already happened.
+Durable state (`state/`, `goals/`) is forward-compatible: sessions, the
+outbox, the poll offset, and goal workspaces survive any checkout, so a
+rollback costs nothing that already happened.

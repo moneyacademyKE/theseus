@@ -20,3 +20,8 @@
 - 20. V5 execution record — RTK filters + RSI v1 (2026-08-30) — Both ports shipped; five defects self-caught
 - 21. v0.7.0 release + jar defect — 2026-08-30 — Release shipped; broken jar caught only by cold-run smoke
 - Telegram delivery integrity — bounded Retry-After, HTML-to-plain fallback, and authorized inert attachments (`TELEGRAM_DELIVERY_INTEGRITY_PARITY.md`)
+- Product-readiness audit + R1–R5 roadmap (2026-09-09) — durable outbox, graceful shutdown, boot health, log cap, stats, state hygiene gate; v0.9.0 (`docs/audits/product-readiness-audit-2026-09-09.md`)
+- Dogfood v0.9.0 (2026-09-09) — real goal over Telegram topic; authoring-stall watchdog recalibrated (progress-based fuse) (`docs/dogfood-v0.9.0-report.md`)
+- v1.0.0 release (2026-09-09) — V1–V7: detached authoring + live progress, deliverables out, /goal control, skill economy, durable queue, daily digest, `bb release` (`docs/roadmaps/v1.0-enhancement-roadmap.md`)
+- Post-v1.0 hardening (2026-09-10/11) — approval modes, veto-vs-approval distinction, flow compression, session cap, poll backoff, instance lock; v1.1.0 (`docs/audits/fix-all-round2-2026-09-09.md`)
+- Axiom seam map (2026-09-10) — blend was a fold-in: `bb-agent.goal.*` IS axiom renamed; external repo frozen (`docs/axiom-seam-map.md`)
