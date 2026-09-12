@@ -402,6 +402,19 @@
   (testing "a realized future returns its value untouched"
     (is (= :ok (#'bridge/watch-authoring! (future :ok) (atom (System/nanoTime))
                                           {:idle-ms 1000 :ceiling-ms 5000 :poll-ms 25}))))
+  (testing "nil ceiling disables the backstop: steady progress finishes however long it takes"
+    ;; Work keeps emitting every 25ms and finishes at ~300ms — well past
+    ;; where a 100ms ceiling would have fired. With ceiling nil, only the
+    ;; idle fuse may decide, and progress keeps it from ever tripping.
+    (let [prog (atom (System/nanoTime))
+          fut (future (dotimes [_ 12]
+                        (Thread/sleep 25)
+                        (reset! prog (System/nanoTime)))
+                      :done)
+          r (#'bridge/watch-authoring! fut prog
+                                       {:idle-ms 2000 :ceiling-ms nil :poll-ms 25})]
+      (is (= :done r)
+          "no ceiling: the future's value passes through past where one would have fired"))))
 
 (deftest authoring-progress-emit-test
   (testing "emit activity bumps the idle clock AND forwards to the requester"

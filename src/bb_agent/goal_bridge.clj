@@ -257,7 +257,9 @@ Do NOT run the goal. Write files only.")
    authors honestly for 10-20+ min, and the old 10-min total budget
    amputated live work mid-round every time. Primary clock is progress
    (see default-authoring-idle-ms); this only fires when work is STILL
-   moving past any sane total. Override via :goal/authoring-timeout-ms."
+   moving past any sane total. Override via :goal/authoring-timeout-ms;
+   set it to 0 or nil to disable the ceiling entirely (the idle fuse
+   then decides alone — owner config 2026-09-12)."
   2700000)
 
 (defn ^:private author-attempts!
@@ -293,17 +295,22 @@ Do NOT run the goal. Write files only.")
   "Await an authoring future under a two-clock budget:
    - idle: no progress bump for idle-ms → ::stalled (the real hang detector)
    - ceiling: total wall-clock exceeds ceiling-ms → ::timed-out (backstop)
-   last-progress is an atom of System/nanoTime, bumped by the emit wrapper
-   around every authoring tool call. A completed future returns its value
-   untouched. The losing future is abandoned, not killed — bounded waste,
-   never a hang (same contract as policy.clj's pred eval)."
+   ceiling-ms nil means NO ceiling — the idle fuse alone decides. The fuse
+   is the honest detector: an author emitting progress is, by definition,
+   not stalled, however long it takes (owner directive 2026-09-12: remove
+   the time ceiling on author reasoning). last-progress is an atom of
+   System/nanoTime, bumped by the emit wrapper around every authoring tool
+   call. A completed future returns its value untouched. The losing future
+   is abandoned, not killed — bounded waste, never a hang (same contract
+   as policy.clj's pred eval)."
   [fut last-progress {:keys [idle-ms ceiling-ms poll-ms]}]
-  (let [deadline (+ (System/nanoTime) (* (long ceiling-ms) 1000000))
+  (let [deadline (when ceiling-ms
+                   (+ (System/nanoTime) (* (long ceiling-ms) 1000000)))
         idle-nanos (* (long idle-ms) 1000000)]
     (loop []
       (cond
         (realized? fut) @fut
-        (> (System/nanoTime) deadline) ::timed-out
+        (and deadline (> (System/nanoTime) deadline)) ::timed-out
         (> (- (System/nanoTime) @last-progress) idle-nanos) ::stalled
         :else (do (Thread/sleep (long (or poll-ms 250)))
                   (recur))))))
@@ -333,7 +340,13 @@ Do NOT run the goal. Write files only.")
         refs [(str ws "/references/normalize.config.edn")
               (str ws "/references/usage-stats.config.edn")]
         idle (or (:goal/authoring-idle-timeout-ms acfg) default-authoring-idle-ms)
-        budget (or (:goal/authoring-timeout-ms acfg) default-authoring-timeout-ms)
+        ;; The ceiling is optional: absent → safe default; explicitly
+        ;; non-positive (0/nil) → no ceiling, the idle fuse alone decides.
+        ;; `or` cannot tell "unset" from "set to nil", hence contains?.
+        budget (if (contains? acfg :goal/authoring-timeout-ms)
+                 (let [v (:goal/authoring-timeout-ms acfg)]
+                   (when (and (number? v) (pos? v)) (long v)))
+                 default-authoring-timeout-ms)
         record! (fn [result err problems]
                   (try (spit (str ws "/authoring.edn")
                              ;; acfg has been through model/effective-config,
