@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`:approval/mode` config flag** (`3c8c86b`): `:auto-all` substitutes for the default `:ask` policy — shell and writes execute with no human checkpoint. The constitution (`brain/rules.clj`) vetoes *before* the mode applies, so rm/sudo/secrets/force-push stay denied for everyone. Absent key = previous behavior, one-line revert.
+- **Flow progress compression** (`d44d4f0`): consecutive same-tool runs in the live progress message collapse into `tool ×N` run lines — a 200-round turn renders as a couple dozen lines instead of dying on Telegram's 4096-char limit. Failures and the in-flight call always keep their full line; structural truncation survives only as the final backstop for pathological distinct-tool turns.
+- **Poller instance lock** (`7cc17cc`): `state/poller.pid` — a live foreign pid refuses the boot before any side effect; a stale pid is taken over. Double-poller 409 `getUpdates` wars are now structurally impossible, not manually cleaned.
+- **Scheduled turns run under the constant approver** (`3c39914`): the cron lane has no human, so schedules ride the same approval contract as goal authoring instead of dying hourly on "needs your approval". First-ever schedule test suite.
+- **Retry announces before backoff** (`081c540`): a retrying provider tells you it's alive instead of reading as a wedge.
+
+### Fixed
+
+- **A constitution veto is not an approval request** (`a311630`): the turn loop now asks "is a human actually pending?" (denial source `:approval`) instead of "was anything denied" — a veto reports truthfully as a veto instead of a ghost checkpoint nobody could act on. Same commit: `authoring.edn` no longer records `:result :authored` when the validator rejected — the receipt agrees with the filesystem.
+- **Session bloat cap** (`23ddb9d`): tool-result string fields cap at 8KB *at persistence* with a visible truncation marker; the model still sees full output in-flight. The RSI-topic 1.4MB/day regrowth is over.
+- **Poll failure backoff** (`3138b06`): consecutive failures back off geometrically (2s→32s cap) and log sparsely — 1st, every 30th, one recovery line. A dead network costs ~4 lines/hour instead of the observed 2,400-line storm.
+- **Secrets fence narrowed** (`46ca7b0` pins): `deny-secrets` requires path context (a slash or file extension) — prose about secrets passes, `~/.aws/secrets` still dies. The fence no longer eats commit messages discussing the fence.
+- **Goal authoring budget coherence** (`e5f3aae`, `05d9862`): the request budget is clamped to what the idle clock can see; authoring errors land on a measured path.
+- **Detached spawns own their redirects** (`181f396`): "detached" children no longer die with a closed stdout pipe mid-run.
+- **Watcher pins `config/home` from the args file** (`3eaab51`), like the launcher and resume scripts — no ambient-env reads in children.
+
+### Changed
+
+- RSI signal counts only verified rescues; fallback model threaded (`c7db50b`, `57a06d5`).
+- Scheduler state and per-session models join the `state/` allowlist (`c5a52f8`).
+- README and docs/INDEX updated to the v1.1.0 state of the app.
+
 ## v1.0.0 - 2026-09-09
 
 ### Added
