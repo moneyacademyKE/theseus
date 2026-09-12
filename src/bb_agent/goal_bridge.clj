@@ -439,6 +439,32 @@ Do NOT run the goal. Write files only.")
                    ". Move the project out of ~/Desktop, ~/Documents or "
                    "~/Downloads — background daemons cannot be granted access."))))))))
 
+(defn- watcher-pid-file [ws] (io/file (str ws) "watcher.pid"))
+
+(defn- watcher-alive?
+  "True when a recorded watcher pid for this workspace is still running.
+   The pid is data on disk, not a pgrep guess — spawn-watcher! records it."
+  [ws]
+  (when (.exists (watcher-pid-file ws))
+    (boolean (when-let [pid (try (parse-long (str/trim (slurp (watcher-pid-file ws))))
+                                 (catch Exception _ nil))]
+               (registry/pid-alive? pid)))))
+
+(defn- spawn-watcher!
+  "Spawn goal_watch.bb for ws, routed to chat-id/thread-id, and record its
+   pid in watcher.pid so /goal watch can refuse a duplicate instead of
+   double-posting progress messages into a topic (the spam budget is one)."
+  [ws name chat-id thread-id runner-pid]
+  (fs/create-dirs ws)
+  (spit (str ws "/watch-args.edn")
+        (pr-str {:name name :home (str (config/home))
+                 :chat-id chat-id :thread-id thread-id :pid runner-pid}))
+  (let [wpid (spawn-detached! (str (fs/cwd))
+                              (str "bb scripts/goal_watch.bb " (str ws "/watch-args.edn"))
+                              (str ws "/watch.log"))]
+    (spit (watcher-pid-file ws) (str wpid))
+    wpid))
+
 (defn launch!
   "Promote project.edn to config.edn with the bridge-injected :notify block
    (the authored file deliberately carries no secrets — the fence forbids
@@ -473,12 +499,8 @@ Do NOT run the goal. Write files only.")
         ;; and the script read the PID as the thread.
         _ (registry/register-run! chat-id thread-id
                          {:pid (parse-long pid) :name name
-                          :chat-id chat-id :thread-id thread-id})
-         _ (spit (str ws "/watch-args.edn")
-                 (pr-str {:name name :home (str (config/home))
-                          :chat-id chat-id :thread-id thread-id :pid pid}))]
-    (spawn-detached! repo (str "bb scripts/goal_watch.bb " (str ws "/watch-args.edn"))
-                     (str ws "/watch.log"))
+                          :chat-id chat-id :thread-id thread-id})]
+    (spawn-watcher! ws name chat-id thread-id pid)
     pid))
 
 (defn launch-scaffolded!
@@ -734,6 +756,29 @@ Do NOT run the goal. Write files only.")
         (str "`" slug "` — " (name (progress/run-status (str slug)))
              (when live " (runner alive)"))))))
 
+(defn watch!
+  "Attach a live progress watcher to a running goal (idea #5): the same
+   edited-in-place progress message launch! spawns, attachable after the
+   fact — for shell-launched runs, pre-V1a survivors, or a topic that lost
+   its watcher to a restart. Refuses a duplicate when the recorded watcher
+   is still alive; one progress message per workspace is the spam budget."
+  [slug chat-id thread-id]
+  (let [entry (some (fn [[_ {:keys [name] :as r}]] (when (= name slug) r))
+                    (registry/read-runs))]
+    (cond
+      (nil? entry)
+      (str "No running goal `" slug "` — /goals lists all.")
+
+      (not (registry/pid-alive? (:pid entry)))
+      (str "`" slug "` is registered but its runner is dead — /goal resume " slug " to revive it.")
+
+      :else
+      (let [ws (str (registry/goals-root) "/" slug)]
+        (if (watcher-alive? ws)
+          (str "👀 `" slug "` already has a live watcher — its progress message is in the topic.")
+          (do (spawn-watcher! ws slug chat-id thread-id (str (:pid entry)))
+              (str "👀 Watching `" slug "` — live progress lands in this topic.")))))))
+
 (defn handle-request!
   "The /goal seam for the chat dispatch. Non-goal text → nil. Bare /goal →
    usage. Launch/resume detach immediately (V1a) — authoring never runs on
@@ -742,7 +787,7 @@ Do NOT run the goal. Write files only.")
   (let [trimmed (when text (str/trim text))]
     (when (and trimmed (or (str/starts-with? trimmed "/goal ") (= "/goal" trimmed)))
       (if (= "/goal" trimmed)
-        "Usage: /goal <what to build> — I author the goal project, run it supervised, and the outcome lands here.\n/goal cancel — stop this topic's running goal.\n/goal status <name> — one goal's status.\n/goal resume <name> — re-author a kept workspace."
+        "Usage: /goal <what to build> — I author the goal project, run it supervised, and the outcome lands here.\n/goal cancel — stop this topic's running goal.\n/goal status <name> — one goal's status.\n/goal watch <name> — attach live progress to a running goal.\n/goal resume <name> — re-author a kept workspace."
         (let [spec (str/trim (subs trimmed 5))]
           (cond
             (= spec "cancel") (cancel! chat-id thread-id)
@@ -751,6 +796,11 @@ Do NOT run the goal. Write files only.")
               (status-of active)
               "No goal is running in this topic — /goals lists all.")
             (str/starts-with? spec "status ") (status-of (str/trim (subs spec 7)))
+            (= spec "watch")
+            (if-let [active (:name (registry/active-run-for chat-id thread-id))]
+              (watch! active chat-id thread-id)
+              "No goal is running in this topic — /goal watch <name> for any running goal.")
+            (str/starts-with? spec "watch ") (watch! (str/trim (subs spec 6)) chat-id thread-id)
             (or (= spec "resume") (str/starts-with? spec "resume "))
             (let [slug (str/trim (subs spec 6))]
               (if (authoring-busy? chat-id thread-id)

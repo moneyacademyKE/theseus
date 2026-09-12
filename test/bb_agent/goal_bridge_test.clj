@@ -577,3 +577,44 @@
             "stdout is redirected, not inherited — that redirect is what closes the pipe")
         (finally
           (p/shell {:continue true :out :string :err :string} "kill" (str pid)))))))
+
+(deftest watch-attaches-to-running-goal
+  (testing "watch! spawns a watcher, records its pid, and refuses duplicates"
+    (let [spawned (atom [])]
+      (with-redefs [bridge/spawn-detached!
+                    (fn [_dir cmd log]
+                      (swap! spawned conj {:cmd cmd :log log})
+                      "424242")]
+        (registry/register-run! 100 200 {:pid 999999 :name "demo-goal"
+                                         :chat-id 100 :thread-id 200})
+        (with-redefs [registry/pid-alive? (fn [pid] (= 999999 pid))]
+          (let [reply (bridge/watch! "demo-goal" 100 200)]
+            (is (re-find #"👀 Watching `demo-goal`" reply))
+            (is (= 1 (count @spawned)) "exactly one watcher spawned")
+            (is (re-find #"goal_watch\.bb" (:cmd (first @spawned))))
+            (let [pid-file (io/file *tmp* "demo-goal" "watcher.pid")]
+              (is (.exists pid-file) "watcher pid is data on disk")
+              (is (= "424242" (str/trim (slurp pid-file)))))
+            (let [args (read-string (slurp (str *tmp* "/demo-goal/watch-args.edn")))]
+              (is (= 100 (:chat-id args)))
+              (is (= 200 (:thread-id args)))
+              (is (= "999999" (str (:pid args))) "runner pid rides the args, not the watcher's")))))))
+
+  (testing "watch! refuses when the recorded watcher is still alive"
+    (registry/register-run! 100 200 {:pid 999999 :name "demo2"
+                                     :chat-id 100 :thread-id 200})
+    (fs/create-dirs (str *tmp* "/demo2"))
+    (spit (str *tmp* "/demo2/watcher.pid") "777")
+    (with-redefs [registry/pid-alive? (fn [pid] (contains? #{999999 777} pid))]
+      (is (re-find #"already has a live watcher"
+                   (bridge/watch! "demo2" 100 200))))))
+
+(deftest watch-rejects-unknown-and-dead
+  (testing "unknown slug names it"
+    (is (re-find #"No running goal `nope`" (bridge/watch! "nope" 100 200))))
+  (testing "dead runner gets resume advice, not a watcher"
+    (registry/register-run! 100 200 {:pid 888888 :name "dead-goal"
+                                     :chat-id 100 :thread-id 200})
+    (with-redefs [registry/pid-alive? (constantly false)]
+      (is (re-find #"runner is dead — /goal resume dead-goal"
+                   (bridge/watch! "dead-goal" 100 200))))))
