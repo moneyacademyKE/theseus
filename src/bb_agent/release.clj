@@ -75,7 +75,7 @@
                   (bump-version-file! version)
                   (git! false ["add" "CHANGELOG.md" "src/bb_agent/version.clj"])
                   (git! false ["commit" "-q" "-m" (str "release " version)])
-                  (git! false ["tag" version])
+                  (git! false ["tag" "-a" version "-m" (str "release " version)])
                   (println (str "🏷  " version " cut — changelog dated, version bumped, tag created."))
                   (println "Push when ready: git push origin main --follow-tags"))
               (do (println "🚫 CHANGELOG.md has no ## Unreleased section — write the notes first.")
