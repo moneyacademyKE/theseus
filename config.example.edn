@@ -1,0 +1,56 @@
+;;; config.example.edn — copy to your Theseus home as config.edn, fill the
+;;; placeholders, then run `bb doctor`. Every value here is what the running
+;;; system actually reads; anything you omit falls back to a safe default
+;;; (fake provider, no telegram). Home dir = $OPENCRABS_HOME or ~/.opencrabs-bb.
+
+{;;; ── Provider: which model answers turns ────────────────────────────────────
+ ;:provider :fake is the zero-config default. Point :provider at a key in
+ ;:providers to use a real model. openai-compatible + anthropic-compatible
+ ;require :base-url and :api-key; doctor (:provider-config) verifies both.
+ :provider :fake
+ :model "fake-deterministic"
+
+ ;; Example real provider (uncomment and fill):
+ ;; :provider :openai-compatible
+ ;; :model "ali/qwen3.8-max"
+ ;; :providers {:openai-compatible {:base-url "https://api.inferhub.dev/v1"
+ ;;                                 :api-key   "sk-REPLACE-ME"
+ ;;                                 :timeout-ms 300000}}
+ ;; ;; Fallback chain when the primary errors — first responder wins:
+ ;; :provider/fallbacks [{:provider "openai-compatible" :model "zai/glm-5.3-flash"}]
+ ;; ;; Photos flow to the turn as :user/images; this model describes them:
+ ;; :vision-model "zai/glm-4.6v"
+
+ ;;; ── Turn budget ────────────────────────────────────────────────────────────
+ :max-tool-rounds 200          ; chat turns; authoring has its own below
+ :nudge-interval 25
+
+ ;;; ── Telegram: the product surface ─────────────────────────────────────────
+ ;;; doctor (:telegram-config) requires this map with a non-blank :token.
+ ;;; Token: BotFather → /newbot → copy token. IDs: @userinfobot / getUpdates.
+ :telegram {:token "BOTFATHER-TOKEN-HERE"
+            ;; Numeric chat/user ids allowed to talk to the bot:
+            ;; :allowed-chat-ids  [YOUR-CHAT-ID]
+            ;; :allowed-user-ids  [YOUR-USER-ID]
+            ;; :respond-to :mention     ; or :all
+            ;; :vision true             ; describe photos via :vision-model
+            ;; :stt-bin "/path/to/whisper_wrap.sh"  ; voice notes → text
+            ;; ;; A forum group, open to its members:
+            ;; :groups {YOUR-GROUP-ID {:allowed-user-ids [YOUR-USER-ID]
+            ;;                         :open true
+            ;;                         :respond-to :all}}
+            }
+
+ ;;; ── Owner notifications (boot health, digests) ────────────────────────────
+ ;; :notify {:chat-id YOUR-DM-CHAT-ID}
+
+ ;;; ── Goals (opt-in autonomous work) ─────────────────────────────────────────
+ ;; :goal {:author-model "zai/glm-5.3-flash"  ; cheaper authoring lane
+ ;;        :authoring-timeout-ms 0            ; 0 = no hard ceiling; idle fuse still applies
+ ;;        :max-concurrent 2}                 ; FIFO queue beyond this
+ ;; :goal/max-authoring-rounds 200
+
+ ;;; ── Approvals: :ask (default) gates tools on a human; :auto-all auto-approves.
+ ;;; The constitution (brain/rules.clj) vetoes dangerous ops regardless of mode.
+ ;; :approval/mode :auto-all
+ }

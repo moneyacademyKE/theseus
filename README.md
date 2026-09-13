@@ -11,15 +11,43 @@ It provides a local, hackable agentic shell with provider calls, configurable to
 
 ## Quick Start
 
+Zero-config first turn (fake provider answers `pong`):
+
 ```sh
 bb agent "say pong"
-bb agent --ask "try denied shell git status --short"
+```
+
+Check your setup — doctor is step 2, not a footnote. On a fresh home it tells you exactly what's missing (telegram config, home dir) and what's fine:
+
+```sh
+bb doctor
+```
+
+Then the local shell:
+
+```sh
 bb memory add "Project codename is Theseus"
 bb memory search "codename"
 bb session current
-bb usage report
 bb stats
 ```
+
+## Telegram setup
+
+The product surface. Doctor's `:telegram-config` check requires a `:telegram` map with a non-blank `:token` — everything else is optional.
+
+1. **Get a token** — open [@BotFather](https://t.me/BotFather), send `/newbot`, follow the prompts, copy the token.
+2. **Copy the template** — `config.example.edn` is annotated with every key the system reads:
+
+   ```sh
+   cp config.example.edn "$OPENCRABS_HOME/config.edn"   # or ~/.opencrabs-bb/config.edn
+   ```
+
+3. **Fill it** — replace `BOTFATHER-TOKEN-HERE` with the token. To restrict who talks to the bot, set `:allowed-chat-ids` / `:allowed-user-ids` (find your ids via [@userinfobot](https://t.me/userinfobot)). To use a real model, point `:provider` at a `:providers` entry and fill its `:api-key`.
+4. **Verify** — `bb doctor` should show no errors (`:telegram-config` OK, `:provider-config` OK if you set a real provider).
+5. **Run** — `bb telegram poll` (one instance at a time; `state/poller.pid` is the lock). Boot prints `theseus vX.Y.Z booting` plus a per-check health summary; any error is also DMed to `:notify {:chat-id …}` if set.
+
+To use goals in a forum group: add the bot to the group, then `/goal <spec>` in a topic. The group entry in `:telegram {:groups {…}}` controls which ids are honored there.
 
 ## Commands
 
