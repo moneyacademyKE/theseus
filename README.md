@@ -1,6 +1,6 @@
 # Theseus
 
-Theseus is a standalone Babashka agent app extracted from the OpenCrabs Babashka rewrite work.
+Theseus is a powerful AI agent harness built on Babashka.
 
 It provides a local, hackable agentic shell with provider calls, configurable tool approvals (constitution floor always enforced), goal-driven autonomous work with durable workspaces, session metadata, usage tracking, scheduler/daemon workflows, a Telegram polling adapter with a durable outbox, and a small rich rendering layer.
 
