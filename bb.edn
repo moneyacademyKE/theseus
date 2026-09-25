@@ -466,6 +466,14 @@
                              (t/run-tests 'e2e.rsi-test)]
                           (when (pos? (+ fail error))
                             (System/exit 1)))}
+   test:e2e:rsi-learn {:doc "Run RSI learn (GitHub self-learning scout) e2e tests."
+                 :extra-paths ["test"]
+                 :requires ([clojure.test :as t]
+                            [e2e.rsi-learn-test])
+                 :task (let [{:keys [fail error]}
+                             (t/run-tests 'e2e.rsi-learn-test)]
+                          (when (pos? (+ fail error))
+                            (System/exit 1)))}
    test:e2e:tool-advertisement {:doc "Run tool advertisement e2e tests."
                     :extra-paths ["test"]
                     :requires ([clojure.test :as t]

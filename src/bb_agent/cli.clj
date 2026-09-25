@@ -9,6 +9,7 @@
             [bb-agent.model :as model]
             [bb-agent.rich :as rich]
             [bb-agent.rsi :as rsi]
+            [bb-agent.rsi-learn :as rsi-learn]
             [bb-agent.schedule :as schedule]
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
@@ -188,10 +189,18 @@
     (case subcommand
       "add"
       (let [[schedule-id & prompt-parts] rest-args
+            ;; a trailing bare cron expression attaches the 5-field gate;
+            ;; quoted prompts can't collide because cron has no spaces
+            [cron-expr prompt-parts] (let [last-part (last prompt-parts)
+                                           parts (butlast prompt-parts)]
+                                       (if (and (seq prompt-parts)
+                                                (re-matches #"[\d*\-/]+ [\d*\-/]+ [\d*\-/]+ [\d*\-/]+ [\d*\-/]+" (str last-part)))
+                                         [(str last-part) (vec parts)]
+                                         [nil (vec prompt-parts)]))
             prompt (str/join " " prompt-parts)]
         (if (or (str/blank? schedule-id) (str/blank? prompt))
-          (usage! "Usage: bb schedule add <id> <prompt>" 2)
-          (println (pr-str (schedule/add-schedule! schedule-id prompt)))))
+          (usage! "Usage: bb schedule add <id> <prompt> [cron]" 2)
+          (println (pr-str (schedule/add-schedule! schedule-id prompt cron-expr)))))
 
       "list"
       (print-schedules (schedule/load-schedules))
@@ -329,7 +338,28 @@
                                  provider (* 100.0 fail-rate) (* 100.0 fallback-rate)
                                  (* 100.0 rsi/flag-rate)))))))
 
-      (usage! "Usage: bb rsi digest | bb rsi analyze | bb rsi propose | bb rsi cycle [--dry-run]" 2))))
+      "learn"
+      (let [[sub & args] rest-args]
+        (case sub
+          "fetch"
+          (let [dry-run (boolean (some #{"--dry-run"} args))
+                {:keys [digest-path new already-seen]}
+                (rsi-learn/fetch! {:dry-run? dry-run})]
+            (println (str "rsi learn fetch: " new " new repo(s)"
+                          " (" already-seen " already seen)"
+                          (if dry-run " | dry-run — seen ledger untouched" "")
+                          " | digest -> " digest-path)))
+
+          "propose"
+          (let [[path] args]
+            (if (str/blank? path)
+              (usage! "Usage: bb rsi learn propose <recommendations.md>" 2)
+              (let [{:keys [added skipped]} (rsi-learn/propose! path)]
+                (println (str "rsi learn propose: " added " added, " skipped " skipped")))))
+
+          (usage! "Usage: bb rsi learn fetch [--dry-run] | bb rsi learn propose <recommendations.md>" 2)))
+
+      (usage! "Usage: bb rsi digest | bb rsi analyze | bb rsi propose | bb rsi cycle | bb rsi learn fetch|propose [--dry-run]" 2))))
 
 
 (defn -main [& args]

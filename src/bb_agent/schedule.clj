@@ -34,7 +34,11 @@
    (let [cfg (config/load-config)
          entry (cond-> {:schedule/id schedule-id
                         :schedule/prompt prompt
-                        :cwd (:cwd cfg)
+                        ;; config carries no :cwd; an entry registered without
+                        ;; one would inherit the daemon's ambient directory —
+                        ;; the exact drift launchd WorkingDirectory exists to
+                        ;; prevent. Pin registration-time cwd instead.
+                        :cwd (or (:cwd cfg) (System/getProperty "user.dir"))
                         :provider (:provider cfg)
                         :model (:model cfg)}
                  (seq cron-expr) (assoc :schedule/cron cron-expr))
