@@ -62,6 +62,17 @@
 
 (defn next-ticker [{:keys [queue]}] (first queue))
 
+(defn recycle-oldest
+  "Queue exhausted: rotate the oldest-covered ticker back into play and drop
+   it from covered so advance-state can re-file it with a fresh date. Nil when
+   nothing has ever been covered — a genuinely empty universe stays an error."
+  [{:keys [covered] :as state}]
+  (let [[t _] (first covered)]
+    (when t
+      {:ticker t
+       :state (update state :covered
+                      #(into [] (remove (fn [[x _]] (= x t))) %))})))
+
 (defn advance-state
   "Move ticker from queue to covered with today's date."
   [state ticker today]
@@ -131,8 +142,41 @@
 
 ;; ---------- impure: generate + deliver ----------
 
-(defn- build-prompt [template ticker quote headlines today]
+(defn latest-brief-file
+  "Newest dated brief filename for ticker from a list of filenames, or nil
+  if the ticker was never covered."
+  [files ticker]
+  (->> files
+       (keep #(re-find (re-pattern (str "^\\d{4}-\\d{2}-\\d{2}-" ticker "\\.md$")) %))
+       (sort)
+       (last)))
+
+(defn- prior-coverage-block
+  "Reruns must earn their slot: the previous brief is injected verbatim and
+   the writer is ordered to add only new material, never restate the old take."
+  [ticker {:keys [date text] :as previous}]
+  (if previous
+    (format (str "RE-RUN RULE: %s was already covered on %s. The previous brief "
+                 "is reproduced below in full. This hour you must produce a FOLLOW-UP, "
+                 "not a rewrite:
+"
+                 "- Open with what is NEW: developments since %s, fresh news, changed numbers, new catalysts.
+"
+                 "- Bring NEW angles the prior brief did not examine (a different section lens, a competitor contrast, a historical episode). Do not retread it.
+"
+                 "- Any section whose content would merely repeat the prior take must be replaced with new substance or omitted — repetition is failure.
+"
+                 "- Same output format (frontmatter + all sections), same tone. Use the current verified numbers above, not the old ones.
+
+"
+                 "PREVIOUS BRIEF (%s):
+%s")
+            ticker date date date text)
+    (format "This is the first coverage of %s — write a complete company analysis per the format below." ticker)))
+
+(defn build-prompt [template ticker quote headlines today previous]
   (-> template
+      (str/replace "{{PRIOR_COVERAGE}}" (prior-coverage-block ticker previous))
       (str/replace "{{TICKER}}" ticker)
       (str/replace "{{DATE}}" today)
       (str/replace "{{PRICE}}" (str (:close quote)))
@@ -183,17 +227,30 @@
         (finally (fs/delete-if-exists lock))))))
 
 (defn run-brief! [{:keys [dry-run?]}]
-  (let [state (parse-state (slurp (state-file)))
-        ticker (next-ticker state)
-        today (str (java.time.LocalDate/now))]
+  (let [today (str (java.time.LocalDate/now))
+        state (parse-state (slurp (state-file)))
+        {:keys [ticker state]}
+        (if-let [queued (next-ticker state)]
+          {:ticker queued :state state}
+          (or (recycle-oldest state)
+              (throw (ex-info "rotation queue is empty — refill state.md" {}))))]
     (when (str/blank? ticker)
       (throw (ex-info "rotation queue is empty — refill state.md" {})))
+    (when-not (next-ticker state)
+      (log! (str "queue exhausted — recycling oldest covered: " ticker)))
     (log! (str "brief start: " ticker (when dry-run? " (dry-run)")))
     (let [quote (or (fetch-quote ticker)
                     (throw (ex-info (str "no quote for " ticker) {})))
           headlines (fetch-headlines ticker)
           template (slurp (str (brief-dir) "/prompt.md"))
-          prompt (build-prompt template ticker quote headlines today)
+          previous (when-let [pf (latest-brief-file
+                                  (map (comp str fs/file-name)
+                                       (fs/list-dir (brief-dir)))
+                                  ticker)]
+                     (log! (str "rerun detected — prior brief: " pf))
+                     {:date (subs pf 0 10)
+                      :text (slurp (str (brief-dir) "/" pf))})
+          prompt (build-prompt template ticker quote headlines today previous)
           cfg (config/load-config)
           turn (core/run-turn! cfg prompt)
           text (str/trim (str (:assistant/final turn)))]

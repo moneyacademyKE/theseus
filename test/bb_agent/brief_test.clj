@@ -51,3 +51,54 @@ ORCL
       (is (= big (str/join chunks)))))
   (testing "no empty chunks"
     (is (not-any? str/blank? (brief/chunk-text "a\n\n\n\nb" 100)))))
+
+(deftest recycle-oldest-test
+  (let [state (brief/parse-state sample-state)
+        drained (assoc state :queue [])]
+    (testing "empty queue rotates the oldest-covered ticker back into play"
+      (let [{:keys [ticker state]} (brief/recycle-oldest drained)]
+        (is (= "AVGO" ticker))
+        (is (nil? (some #(= "AVGO" (first %)) (:covered state))))
+        (is (= ["NVDA" "2026-09-10"] (first (:covered state))))
+        (testing "and the recycled ticker re-advances onto covered with a fresh date"
+          (let [re-advanced (brief/advance-state state ticker "2026-09-25")]
+            (is (= ["AVGO" "2026-09-25"] (last (:covered re-advanced))))
+            (is (= 2 (count (:covered re-advanced))))))))
+    (testing "nothing covered and nothing queued is nil, not a crash"
+      (is (nil? (brief/recycle-oldest {:covered [] :queue []}))))))
+
+;; ---------- rerun: new takes only ----------
+
+(deftest latest-brief-file-test
+  (let [files ["2026-09-10-AAPL.md" "2026-09-25-AAPL.md" "2026-09-10-NVDA.md" "prompt.md" "state.md"]]
+    (testing "picks the newest dated brief for the ticker"
+      (is (= "2026-09-25-AAPL.md" (brief/latest-brief-file files "AAPL"))))
+    (testing "nil when the ticker was never covered"
+      (is (nil? (brief/latest-brief-file files "ASML"))))))
+
+(deftest build-prompt-first-run-test
+  (let [prompt (brief/build-prompt "Tick: {{TICKER}} on {{DATE}}\nPrior: {{PRIOR_COVERAGE}}\n"
+                                   "NVDA"
+                                   {:close 1.0 :currency "USD"}
+                                   ["- headline"]
+                                   "2026-09-25"
+                                   nil)]
+    (testing "first coverage says so explicitly"
+      (is (str/includes? prompt "first coverage of NVDA")))
+    (testing "no placeholder survives"
+      (is (not (str/includes? prompt "{{PRIOR_COVERAGE}}"))))))
+
+(deftest build-prompt-rerun-test
+  (let [prompt (brief/build-prompt "Tick: {{TICKER}}\nPrior: {{PRIOR_COVERAGE}}\n"
+                                   "AAPL"
+                                   {:close 1.0 :currency "USD"}
+                                   []
+                                   "2026-09-25"
+                                   {:date "2026-09-10" :text "OLD TAKE: iPhone toll booth."})]
+    (testing "rerun injects the previous brief verbatim"
+      (is (str/includes? prompt "OLD TAKE: iPhone toll booth.")))
+    (testing "rerun carries the new-takes-only rule with the prior date"
+      (is (str/includes? prompt "2026-09-10"))
+      (is (str/includes? prompt "FOLLOW-UP")))
+    (testing "no placeholder survives"
+      (is (not (str/includes? prompt "{{PRIOR_COVERAGE}}"))))))

@@ -42,7 +42,8 @@
                                [bb-agent.schedule-test]
                                [bb-agent.session-test]
                                [bb-agent.telegram-lifecycle-test]
-                               [bb-agent.goal.author-progress-test])
+                               [bb-agent.goal.author-progress-test]
+                               [bb-agent.brief-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -59,7 +60,8 @@
                                              'bb-agent.session-test
                                              'bb-agent.telegram-lifecycle-test
                                              'bb-agent.boot-health-test
-                                             'bb-agent.goal.author-progress-test)]
+                                             'bb-agent.goal.author-progress-test
+                                             'bb-agent.brief-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"

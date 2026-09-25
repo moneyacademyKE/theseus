@@ -414,7 +414,7 @@
           r (#'bridge/watch-authoring! fut prog
                                        {:idle-ms 2000 :ceiling-ms nil :poll-ms 25})]
       (is (= :done r)
-          "no ceiling: the future's value passes through past where one would have fired"))))
+          "no ceiling: the future's value passes through past where one would have fired")))
 
 (deftest authoring-progress-emit-test
   (testing "emit activity bumps the idle clock AND forwards to the requester"
