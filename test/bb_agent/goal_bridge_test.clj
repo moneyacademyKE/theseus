@@ -631,3 +631,7 @@
     (with-redefs [registry/pid-alive? (constantly false)]
       (is (re-find #"runner is dead — /goal resume dead-goal"
                    (bridge/watch! "dead-goal" 100 200))))))
+
+(deftest authoring-default-ceiling-test
+  (testing "total-budget ceiling defaults to 2h — 45 min amputated authoring runs that were still progressing (2026-09-25)"
+    (is (= 7200000 (deref #'bridge/default-authoring-timeout-ms)))))

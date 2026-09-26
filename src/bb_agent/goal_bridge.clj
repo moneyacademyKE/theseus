@@ -259,8 +259,10 @@ Do NOT run the goal. Write files only.")
    (see default-authoring-idle-ms); this only fires when work is STILL
    moving past any sane total. Override via :goal/authoring-timeout-ms;
    set it to 0 or nil to disable the ceiling entirely (the idle fuse
-   then decides alone — owner config 2026-09-12)."
-  2700000)
+   then decides alone — owner config 2026-09-12). 2026-09-25:
+   make-rsi-do-this hit 45 min STILL making progress — 45 min is a
+   floor under complex specs, not a ceiling over them; 2h it is."
+  7200000)
 
 (defn ^:private author-attempts!
   "One authoring turn, then the validator judges; on failure, one repair
