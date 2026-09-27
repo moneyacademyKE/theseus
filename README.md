@@ -40,7 +40,7 @@ The product surface. Doctor's `:telegram-config` check requires a `:telegram` ma
 2. **Copy the template** — `config.example.edn` is annotated with every key the system reads:
 
    ```sh
-   cp config.example.edn "$OPENCRABS_HOME/config.edn"   # or ~/.opencrabs-bb/config.edn
+   cp config.example.edn "$THESEUS_HOME/config.edn"   # or ~/theseus/config.edn
    ```
 
 3. **Fill it** — replace `BOTFATHER-TOKEN-HERE` with the token. To restrict who talks to the bot, set `:allowed-chat-ids` / `:allowed-user-ids` (find your ids via [@userinfobot](https://t.me/userinfobot)). To use a real model, point `:provider` at a `:providers` entry and fill its `:api-key`.
@@ -79,7 +79,7 @@ In a forum group, `/goal <spec>` in a topic launches a goal owned by that topic:
 
 ## State
 
-Theseus stores state under `OPENCRABS_HOME` when set, otherwise `~/.opencrabs-bb`.
+Theseus stores state under `$THESEUS_HOME` when set, otherwise `~/theseus`.
 
 Durable state lives in `state/` (a hygiene gate pins an allowlist; scratch is exiled to `scratch/`):
 
@@ -88,7 +88,7 @@ Durable state lives in `state/` (a hygiene gate pins an allowlist; scratch is ex
 - `state/session-metadata/*.edn`, `state/session-models/`, `state/session-summaries.edn`
 - `state/usage.edn`, `state/usage-index.db`
 - `state/outbox/` (unsent intents; drained every poll cycle, dead-letters after 5 attempts)
-- `state/telegram-offset.edn`, `state/telegram-seen.edn`, `state/telegram-replies/`
+- `state/telegram-offset.edn`, `state/telegram-seen.edn`, `state/telegram-edits/`, `state/telegram-replies/`
 - `state/poller.pid` (instance lock — a live foreign pid refuses the boot)
 - `state/goal-queue.edn` (durable FIFO, created when goals queue)
 - `state/schedules.edn`, `state/schedule-runs.edn`
@@ -151,6 +151,32 @@ bb test:e2e:all    # full composite (includes boot-load pins, state hygiene, fak
 ## Documentation
 
 See `docs/babashka-rewrite/` for the product spec, roadmap, tasklist, and ADR. Audits and release records live in `docs/audits/` and `docs/roadmaps/`; `docs/INDEX.md` is the lineage record.
+
+## Running as a daemon (launchd)
+
+Theseus runs as its own launchd fleet — no dependency on any other agent
+runtime. Process sources live in `ops/launchd/` (installed copies are at
+`~/Library/LaunchAgents/`):
+
+| Job | Cadence | What it does |
+|---|---|---|
+| `com.theseus.telegram` | KeepAlive | The poller: turns, goals, schedules, outbox drain, digest |
+| `com.theseus.notify` | KeepAlive | Local notify listener (`bb notify-listen`) |
+| `com.theseus.schedule-tick` | every 60s | `bb daemon start --once` — fires due schedules |
+| `com.theseus.ai-stock-brief` | hourly at :05 | `bb brief` |
+| `com.theseus.watchdog-briefs` | every 60s | Brief-freshness watchdog + one debounced retry |
+
+Every job sets `THESEUS_HOME=/Users/moe/theseus`; without the env var,
+Theseus defaults to `~/theseus`, so the variable is an override, not a
+lifeline. (The `OPENCRABS_HOME` name was retired 2026-09-27 — it existed
+only because Theseus grew out of that tree.)
+
+Reload one after editing its plist:
+
+```sh
+launchctl bootout gui/$(id -u)/com.theseus.telegram
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.theseus.telegram.plist
+```
 
 ## Releases & rollback
 

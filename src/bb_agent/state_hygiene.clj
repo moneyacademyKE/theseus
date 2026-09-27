@@ -24,7 +24,13 @@
     "digest.edn"
     "memory.edn" "session-summaries.edn" "usage.edn" "usage-index.db"
     "telegram-offset.edn" "telegram-seen.edn"
-    "telegram-poll.log" "telegram-poller.pid" "gateway.pid"})
+    "telegram-poll.log" "telegram-poller.pid" "gateway.pid"
+    ;; bk-6121 audit: the live-dir check only ever saw the old default home
+    ;; (~/.opencrabs-bb) — never the production home. First honest run
+    ;; flagged these two. notify-listen.log: the notify daemon's launchd
+    ;; log, same fd contract as telegram-poll.log. telegram-edits/: the
+    ;; edited-message seen-cache owned by telegram_notes.clj.
+    "notify-listen.log" "telegram-edits"})
 
 (defn violations
   "Top-level entries under state-dir that are not allowlisted durable

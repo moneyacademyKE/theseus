@@ -8,14 +8,14 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (deftest doctor-reports-degraded-for-default-config
   ;; 2026-09-09 (bk-1825): theseus is telegram-first — no config file means
   ;; no bot token, and doctor now says so with exit 1 instead of blessing
   ;; an install that cannot serve its only product surface.
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doctor-ok-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doctor-ok-"})]
     (try
       (let [result (shell! home "config" "doctor")]
         (is (= 1 (:exit result)) (:err result))
@@ -27,7 +27,7 @@
         (fs/delete-tree home)))))
 
 (deftest doctor-reports-error-for-missing-provider-keys
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doctor-missing-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-doctor-missing-"})
         config-file (fs/path home "config.edn")]
     (try
       (spit (str config-file)
@@ -42,7 +42,7 @@
         (fs/delete-tree home)))))
 
 (deftest doctor-reports-warning-for-session-model-drift
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doctor-drift-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-doctor-drift-"})
         config-file (fs/path home "config.edn")]
     (try
       (spit (str config-file)
@@ -59,7 +59,7 @@
         (fs/delete-tree home)))))
 
 (deftest doctor-reports-ok-for-complete-openai-config
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doctor-complete-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-doctor-complete-"})
         config-file (fs/path home "config.edn")]
     (try
       (spit (str config-file)

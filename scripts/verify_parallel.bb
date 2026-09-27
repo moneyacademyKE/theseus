@@ -17,7 +17,7 @@
          '[clojure.string :as str]
          '[babashka.fs :as fs])
 
-(def home (or (System/getenv "OPENCRABS_HOME")
+(def home (or (System/getenv "THESEUS_HOME")
               (str (System/getProperty "user.home") "/theseus")))
 (def goals-root (io/file home "goals"))
 (def ta (first *command-line-args*))

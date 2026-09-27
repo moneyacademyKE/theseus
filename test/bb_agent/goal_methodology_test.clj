@@ -10,7 +10,7 @@
 (deftest methodology-canon-test
   ;; The canon's home is the production brain by owner directive — pin the
   ;; real file (the 423bd0f policy-contract precedent), not the ambient
-  ;; (config/home), which resolves to ~/.opencrabs-bb in bare agent shells.
+  ;; (config/home), which resolves to ~/theseus in bare agent shells.
   (let [f "/Users/moe/theseus/brain/knowledge/goal-methodology.md"]
     (when (.exists (java.io.File. f))
       (let [body (slurp f)]

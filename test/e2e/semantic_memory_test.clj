@@ -11,7 +11,7 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (defn- run-agent [home prompt]
@@ -66,7 +66,7 @@
 ;; ---------- indexing (real store seam, temp home) ----------
 
 (defn- with-temp-home [test-fn]
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-sm-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-sm-"})]
     (try
       (with-redefs [config/home (fn [] home)]
         (test-fn home))
@@ -117,7 +117,7 @@
 ;; ---------- e2e: gate, auto-index, cross-session recall ----------
 
 (deftest agent-auto-indexes-and-recalls-across-sessions-when-enabled
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-sm-e2e-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-sm-e2e-"})]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:semantic-memory {:enabled true}}))
@@ -138,7 +138,7 @@
         (fs/delete-tree home)))))
 
 (deftest semantic-memory-stays-off-without-config
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-sm-off-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-sm-off-"})]
     (try
       (let [a (run-agent home "the vault codename is zanzibar")]
         (is (= 0 (:exit a)) (:err a))
@@ -151,7 +151,7 @@
         (fs/delete-tree home)))))
 
 (deftest cli-commands-index-and-search
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-sm-cli-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-sm-cli-"})]
     (try
       (let [a (run-agent home "the vault codename is zanzibar")
             _ (is (= 0 (:exit a)) (:err a))

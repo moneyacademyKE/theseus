@@ -87,7 +87,7 @@
     (is (= [a] (mapv :subagent/id (sa/claimed l))))))
 
 (deftest file-shell-round-trips-through-state-edn
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-subagent-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-subagent-e2e-"})
         script (str/join "\n"
                          ["(require '[bb-agent.subagent :as sa])"
                           "(sa/spawn! \"t1\" \"do work\")"
@@ -98,7 +98,7 @@
       (let [r (p/shell {:out :string
                         :err :string
                         :continue true
-                        :extra-env {"OPENCRABS_HOME" (str home)}}
+                        :extra-env {"THESEUS_HOME" (str home)}}
                        "bb" "-e" script)]
         (is (= 0 (:exit r)) (:err r))
         (is (.contains ^String (:out r) "shell-ok"))

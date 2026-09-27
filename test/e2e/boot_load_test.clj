@@ -5,7 +5,8 @@
   working tree briefly held a stale predicates.clj; the poller crash-looped
   ~30 min at analysis phase ('Unable to resolve symbol') with no test red.
   These pins fail in the suite instead of in a silent service restart loop."
-  (:require [babashka.process :refer [sh]]
+  (:require [babashka.fs :as fs]
+            [babashka.process :refer [sh]]
             [clojure.string :as str]
             [clojure.test :as t :refer [deftest is testing]]))
 
@@ -37,3 +38,23 @@
     (testing "fresh process analyzes goal runner chain"
       (is (zero? exit) (str "runner chain failed: " err))
       (is (str/includes? out ":load-ok")))))
+
+(deftest home-resolution-is-theseus-owned
+  ;; 2026-09-27 daemon decoupling (bk-6121): home = $THESEUS_HOME or ~/theseus.
+  ;; The OPENCRABS_HOME name and the ~/.opencrabs-bb default are gone — a
+  ;; fresh process must find its home without any other runtime's env var.
+  (testing "default home is ~/theseus when no env override is set"
+    (let [{:keys [exit out]}
+          (sh {:dir "." :continue true}
+              "bb" "-e" "(require '[bb-agent.config :as c]) (print (c/home))")]
+      (is (zero? exit))
+      (is (str/includes? out (str (System/getProperty "user.home") "/theseus"))
+          (str "unexpected default home: " out))))
+  (testing "$THESEUS_HOME override is honored in a fresh process"
+    (let [tmp (str (fs/create-temp-dir {:prefix "theseus-home-"}))
+          {:keys [exit out]}
+          (sh {:dir "." :continue true :extra-env {"THESEUS_HOME" tmp}}
+              "bb" "-e" "(require '[bb-agent.config :as c]) (print (c/home))")]
+      (is (zero? exit))
+      (is (.startsWith (str/trim out) tmp)
+          (str "override ignored, got: " out)))))

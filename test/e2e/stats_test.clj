@@ -10,7 +10,7 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (defn- base-event [provider]
@@ -45,7 +45,7 @@
     (is (nil? (:fallback/served e)))))
 
 (deftest report-aggregates-fallback-stats
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-stats-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-stats-"})]
     (try
       (fs/create-dirs (fs/path home "state"))
       (spit (str (fs/path home "state" "usage.edn"))
@@ -66,7 +66,7 @@
         (fs/delete-tree home)))))
 
 (deftest report-zero-fallbacks-for-legacy-events
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-stats-legacy-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-stats-legacy-"})]
     (try
       (fs/create-dirs (fs/path home "state"))
       (spit (str (fs/path home "state" "usage.edn"))

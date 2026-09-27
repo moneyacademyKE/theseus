@@ -46,7 +46,7 @@
         "cron schedule catches up, order preserved")))
 
 (deftest run-all-fires-on-cron-with-catch-up
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-cron-gate-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-cron-gate-"})
         runs-file (fs/path home "state" "schedule-runs.edn")]
     (with-redefs [config/home (constantly (str home))]
       (try

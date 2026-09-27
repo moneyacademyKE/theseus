@@ -9,11 +9,11 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (deftest schedule-commands-and-daemon-run-one-shot-workflow
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-scheduler-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-scheduler-e2e-"})
         schedules-file (fs/path home "state" "schedules.edn")
         log-file (fs/path home "state" "schedule-runs.edn")
         session-file (fs/path home "state" "sessions" "daily.edn")]

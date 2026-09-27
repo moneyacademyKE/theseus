@@ -30,7 +30,7 @@
 ;; The local `home` below already preferred :home, but it only feeds the token
 ;; and base-url reads: everything that goes through config/home —
 ;; registry/goals-root, outcomes/queue-outcome!, gb/launch-next-queued!, the
-;; topic-scoped registry drop — resolved from OPENCRABS_HOME instead. An e2e
+;; topic-scoped registry drop — resolved from the ambient home env instead. An e2e
 ;; run against a fake Bot API server therefore queued `ship-it` into the REAL
 ;; goals/ and appended a turn to a REAL session file (2026-09-11). The
 ;; registry writes are worse than litter: they mutate the live run table.
@@ -41,8 +41,8 @@
   "The dispatching process's home rides the args file (:home) — this child
    does NOT trust the ambient env (a test's redef or a launchd override)."
   (or (:home args*)
-      (System/getenv "OPENCRABS_HOME")
-      (str (System/getProperty "user.home") "/.opencrabs-bb")))
+      (System/getenv "THESEUS_HOME")
+      (str (System/getProperty "user.home") "/theseus")))
 
 (defn bot-token []
   (let [cfg (edn/read-string (slurp (str (home) "/config.edn")))]

@@ -11,7 +11,7 @@
   (p/shell {:out :string
             :err :string
             :continue true
-            :extra-env {"OPENCRABS_HOME" (str home)}}
+            :extra-env {"THESEUS_HOME" (str home)}}
            "bb" "agent" prompt))
 
 (defn- free-port []
@@ -19,7 +19,7 @@
     (.getLocalPort socket)))
 
 (deftest anthropic-provider-persists-session-turn
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-anthropic-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-anthropic-e2e-"})
         port (free-port)
         captured (promise)
         stop-server (server/run-server
@@ -66,7 +66,7 @@
         (fs/delete-tree home)))))
 
 (deftest anthropic-provider-parses-tool-use
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-anthropic-tool-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-anthropic-tool-e2e-"})
         port (free-port)
         calls (atom 0)
         stop-server (server/run-server

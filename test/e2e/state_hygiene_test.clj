@@ -1,7 +1,7 @@
 (ns e2e.state-hygiene-test
   "Pins the state/ directory contract: only allowlisted durable entries
    at top level. Fixture tests are hermetic; the live gate runs against
-   OPENCRABS_HOME when it points at a home with a state/ dir."
+   THESEUS_HOME when it points at a home with a state/ dir."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.state-hygiene :as hygiene]

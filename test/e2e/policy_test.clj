@@ -51,14 +51,14 @@
   (p/shell {:out :string
             :err :string
             :continue true
-            :extra-env {"OPENCRABS_HOME" (str home)}}
+            :extra-env {"THESEUS_HOME" (str home)}}
            "bb" "agent" prompt))
 
 (defn- write-config! [home m]
   (spit (str (fs/path home "config.edn")) (pr-str m)))
 
 (deftest allow-verdict-lifts-default-ask
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-allow-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-allow-"})
         target (fs/path home "docs" "plan.md")]
     (try
       (write-rules! home rules-allow-writes)
@@ -75,7 +75,7 @@
         (fs/delete-tree home)))))
 
 (deftest deny-verdict-overrides-auto-all
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-deny-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-deny-"})]
     (try
       (write-rules! home rules-deny-shell)
       (let [result (run-tool home
@@ -89,7 +89,7 @@
         (fs/delete-tree home)))))
 
 (deftest first-match-wins
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-order-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-order-"})
         note (fs/path home "note.txt")]
     (try
       (spit (str note) "readable")
@@ -104,7 +104,7 @@
         (fs/delete-tree home)))))
 
 (deftest runaway-pred-times-out-to-baseline
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-loop-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-loop-"})]
     (try
       (write-rules! home rules-runaway)
       (let [result (run-tool home
@@ -117,7 +117,7 @@
         (fs/delete-tree home)))))
 
 (deftest broken-rules-fail-to-baseline
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-broken-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-broken-"})
         note (fs/path home "note.txt")]
     (try
       (spit (str note) "readable")
@@ -140,7 +140,7 @@
         (fs/delete-tree home)))))
 
 (deftest disabled-ignores-rules
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-off-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-off-"})]
     (try
       (write-rules! home rules-allow-writes)
       (let [result (run-tool home
@@ -161,7 +161,7 @@
   (is (= "A" (sci/eval-string "(require '[clojure.string :as str]) (str/upper-case \"a\")" {}))))
 
 (deftest subprocess-policy-deny-beats-auto-all
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-e2e-deny-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-e2e-deny-"})]
     (try
       (write-config! home {:policy {:enabled true}})
       (write-rules! home rules-deny-shell)
@@ -186,7 +186,7 @@
         (fs/delete-tree home)))))
 
 (deftest subprocess-policy-allow-beats-ask
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-policy-e2e-allow-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-policy-e2e-allow-"})]
     (try
       (write-config! home {:policy {:enabled true}})
       (write-rules! home rules-allow-shell)
@@ -207,7 +207,7 @@
   ;; layer 2 only — this test fails if a rebuild drops the durable floor or
   ;; reorders it below the allows. Skips harmlessly where no constitution exists.
   (let [candidates [(fs/path (config/home) "brain" "rules.clj")
-                    ;; the production runtime home (launchd sets OPENCRABS_HOME
+                    ;; the production runtime home (launchd sets THESEUS_HOME
                     ;; there; bare shells don't have it) — pin the real law
                     (fs/path "/Users/moe/theseus/brain" "rules.clj")]
         f (some #(when (fs/exists? %) %) candidates)]

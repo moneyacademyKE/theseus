@@ -9,14 +9,14 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (defn- run-agent [home prompt]
   (shell! home "agent" prompt))
 
 (deftest memory-add-search-and-context-attachment
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-memory-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-memory-e2e-"})
         memory-file (fs/path home "state" "memory.edn")
         session-file (fs/path home "state" "sessions" "default.edn")]
     (try
@@ -43,7 +43,7 @@
         (fs/delete-tree home)))))
 
 (deftest curated-tier-promotes-and-ranks-first
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-memory-curate-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-memory-curate-"})
         memory-file (fs/path home "state" "memory.edn")]
     (try
       (let [add-raw (shell! home "memory" "add" "deploy deploy pipeline")

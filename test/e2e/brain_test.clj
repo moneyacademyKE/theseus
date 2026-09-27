@@ -11,7 +11,7 @@
   (is (= "" (brain/load-brain "/tmp/definitely-not-a-brain-dir-8391"))))
 
 (deftest load-brain-sorts-headers-and-filters
-  (let [dir (fs/create-temp-dir {:prefix "opencrabs-bb-brain-"})]
+  (let [dir (fs/create-temp-dir {:prefix "theseus-brain-"})]
     (try
       (spit (str (fs/path dir "z-identity.md")) "I am terse.")
       (spit (str (fs/path dir "a-rules.md")) "Never guess.")
@@ -28,7 +28,7 @@
         (fs/delete-tree dir)))))
 
 (deftest brain-context-injected-into-provider-request
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-brain-home-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-brain-home-"})
         captured (atom nil)]
     (try
       (fs/create-dirs (fs/path home "brain"))

@@ -78,7 +78,7 @@
       nil)))
 
 (defn- browser-command [url]
-  (when-let [command (System/getenv "OPENCRABS_BROWSER_CLI")]
+  (when-let [command (System/getenv "THESEUS_BROWSER_CLI")]
     [command url]))
 
 (defn- browser-cli! [{:keys [url timeout-ms]}]

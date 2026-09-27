@@ -5,7 +5,7 @@
             [bb-agent.skill-research :as research]))
 
 (def ^:private max-body-bytes (* 1024 1024))
-(def ^:private user-agent "opencrabs-skill-research/1.0")
+(def ^:private user-agent "theseus-skill-research/1.0")
 
 (defn- data-error [message data]
   (throw (ex-info message (assoc data :type :github-data-error))))

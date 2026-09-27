@@ -11,14 +11,14 @@
   (p/shell {:out :string
             :err :string
             :continue true
-            :extra-env {"OPENCRABS_HOME" (str home)}}
+            :extra-env {"THESEUS_HOME" (str home)}}
            "bb" "agent" prompt))
 
 (defn- shell! [home & args]
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (defn- free-port []
@@ -26,7 +26,7 @@
     (.getLocalPort socket)))
 
 (deftest fake-provider-persists-session-turn
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-e2e-"})
         result (run-agent home "say pong")
         session-file (fs/path home "state" "sessions" "default.edn")]
     (try
@@ -46,7 +46,7 @@
         (fs/delete-tree home)))))
 
 (deftest openai-compatible-provider-persists-session-turn
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-http-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-http-e2e-"})
         port (free-port)
         captured (promise)
         stop-server (server/run-server
@@ -96,7 +96,7 @@
         (fs/delete-tree home)))))
 
 (deftest openai-compatible-provider-renders-clear-errors
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-http-error-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-http-error-e2e-"})
         port (free-port)
         stop-server (server/run-server
                      (fn [_req]
@@ -122,7 +122,7 @@
         (fs/delete-tree home)))))
 
 (deftest openai-compatible-provider-parses-tool-calls
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-http-tools-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-http-tools-e2e-"})
         port (free-port)
         calls (atom 0)
         stop-server (server/run-server
@@ -167,7 +167,7 @@
          (fs/delete-tree home)))))
 
 (deftest openai-compatible-provider-continues-when-text-accompanies-tool-calls
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-http-mixed-tools-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-http-mixed-tools-e2e-"})
         port (free-port)
         calls (atom 0)
         stop-server (server/run-server
@@ -217,7 +217,7 @@
         (fs/delete-tree home)))))
 
 (deftest session-metadata-and-usage-report-are-persisted
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-session-usage-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-session-usage-"})
         workspace (fs/path home "workspace")]
     (try
       (fs/create-dirs workspace)
@@ -241,7 +241,7 @@
         (fs/delete-tree home)))))
 
 (deftest ask-flag-approves-one-tool-interactively
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-ask-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-ask-"})
         side-effect-file (fs/path home "approved")
         command (str "touch " side-effect-file)]
     (try
@@ -250,7 +250,7 @@
                                :err :string
                                :in "y\n"
                                :continue true
-                               :extra-env {"OPENCRABS_HOME" (str home)}})
+                               :extra-env {"THESEUS_HOME" (str home)}})
             completed @result]
         (is (= 0 (:exit completed)) (:err completed))
         (is (fs/exists? side-effect-file))

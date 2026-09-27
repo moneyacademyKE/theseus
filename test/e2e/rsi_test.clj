@@ -153,7 +153,7 @@
     (let [result (p/shell {:out :string
                            :err :string
                            :continue true
-                           :env {"OPENCRABS_HOME" home}}
+                           :env {"THESEUS_HOME" home}}
                           "bb rsi digest")]
       (is (zero? (:exit result)))
       (is (str/includes? (:out result) ":test-provider")))))
@@ -201,7 +201,7 @@
     (let [result (p/shell {:out :string
                            :err :string
                            :continue true
-                           :env {"OPENCRABS_HOME" home}}
+                           :env {"THESEUS_HOME" home}}
                           "bb rsi cycle --dry-run")]
       (is (zero? (:exit result)))
       (is (str/includes? (:out result) "dry-run"))

@@ -12,7 +12,7 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (defn- free-port []
@@ -20,7 +20,7 @@
     (.getLocalPort socket)))
 
 (deftest telegram-polling-reuses-core-turn-loop
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-telegram-e2e-"})
         port (free-port)
         calls (atom [])
         stop-server (server/run-server
@@ -89,7 +89,7 @@
         (fs/delete-tree home)))))
 
 (deftest telegram-approval-replies-do-not-run-agent-turns
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-approval-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-telegram-approval-"})
         port (free-port)
         calls (atom [])
         stop-server (server/run-server
@@ -139,7 +139,7 @@
         (fs/delete-tree home)))))
 
 (deftest telegram-approval-reply-resolves-pending-request
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-resolve-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-telegram-resolve-"})
         port (free-port)
         calls (atom [])
         stop-server (server/run-server
@@ -197,7 +197,7 @@
         (fs/delete-tree home)))))
 
 (deftest telegram-denies-chats-outside-allowlist
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-deny-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-telegram-deny-"})
         port (free-port)
         calls (atom [])
         stop-server (server/run-server
@@ -247,7 +247,7 @@
    status, run one poll-once against a temp home, and return the observed
    outbound calls as parsed bodies."
   [reaction-status]
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-presence-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-telegram-presence-"})
         port (free-port)
         calls (atom [])
         stop-server (server/run-server
@@ -337,7 +337,7 @@
       (is (= "pong" (:text (:reply observed)))))))
 
 (deftest get-updates-conflict-is-surfaced-not-fatal
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-telegram-conflict-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-telegram-conflict-"})
         port (free-port)
         calls (atom [])
         stop-server (server/run-server

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.theseus.telegram</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/moe/.local/bin/bb</string>
+		<string>telegram</string>
+		<string>poll</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/moe/theseus/theseus</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>THESEUS_HOME</key>
+		<string>/Users/moe/theseus</string>
+		<key>PATH</key>
+		<string>/Users/moe/.local/bin:/opt/homebrew/bin:/opt/homebrew/opt/ffmpeg-full/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/moe/theseus/state/telegram-poll.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/moe/theseus/state/telegram-poll.log</string>
+</dict>
+</plist>

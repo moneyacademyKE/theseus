@@ -27,8 +27,8 @@
 (when-let [h (:home args*)]
   (alter-var-root #'config/home (constantly (fn [] h))))
 
-(defn home [] (or (System/getenv "OPENCRABS_HOME")
-                  (str (System/getProperty "user.home") "/.opencrabs-bb")))
+(defn home [] (or (System/getenv "THESEUS_HOME")
+                  (str (System/getProperty "user.home") "/theseus")))
 
 (defn api!
   "One Bot API call; parsed JSON or nil. Receipted to the workspace's

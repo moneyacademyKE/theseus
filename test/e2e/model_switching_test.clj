@@ -9,11 +9,11 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (deftest session-scoped-model-switching
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-model-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-model-e2e-"})
         model-file (fs/path home "state" "session-models" "default.edn")
         default-session (fs/path home "state" "sessions" "default.edn")
         other-session (fs/path home "state" "sessions" "other.edn")]

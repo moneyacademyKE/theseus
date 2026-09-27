@@ -113,7 +113,7 @@
 
 (deftest agent-retries-transient-provider-failures-end-to-end
   (testing "bb agent absorbs two 503s from a real HTTP provider, succeeds on the third"
-    (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-retry-e2e-"})
+    (let [home (fs/create-temp-dir {:prefix "theseus-retry-e2e-"})
           port (with-open [socket (java.net.ServerSocket. 0)]
                  (.getLocalPort socket))
           hits (atom 0)
@@ -140,7 +140,7 @@
         (let [result (p/shell {:out :string
                                :err :string
                                :continue true
-                               :extra-env {"OPENCRABS_HOME" (str home)}}
+                               :extra-env {"THESEUS_HOME" (str home)}}
                               "bb" "agent" "say pong")]
           (is (= 0 (:exit result)) (:err result))
           (is (= "pong-retry\n" (:out result)))

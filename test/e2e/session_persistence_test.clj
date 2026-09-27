@@ -43,7 +43,7 @@
                    (for [s (range 3)]
                      (p/process {:dir (str (fs/cwd))
                                  ;; into{} first: System/getenv is a bare Java map SCI can't merge.
-                                 :env (assoc (into {} (System/getenv)) "OPENCRABS_HOME" home)
+                                 :env (assoc (into {} (System/getenv)) "THESEUS_HOME" home)
                                  :out :string :err :string}
                                 "bb" "-cp" "src" "-e"
                                 (str "(require '[bb-agent.session :as session])"

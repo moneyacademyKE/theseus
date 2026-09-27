@@ -39,7 +39,7 @@
   (is (thrown? Exception (fallback/try-chain [] identity))))
 
 (deftest run-turn-falls-back-to-fake
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-fallback-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-fallback-"})]
     (with-redefs [config/home (constantly (str home))]
       (try
         (let [turn (core/run-turn! {:session/id "fb"

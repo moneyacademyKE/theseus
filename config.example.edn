@@ -1,7 +1,7 @@
 ;;; config.example.edn — copy to your Theseus home as config.edn, fill the
 ;;; placeholders, then run `bb doctor`. Every value here is what the running
 ;;; system actually reads; anything you omit falls back to a safe default
-;;; (fake provider, no telegram). Home dir = $OPENCRABS_HOME or ~/.opencrabs-bb.
+;;; (fake provider, no telegram). Home dir = $THESEUS_HOME or ~/theseus.
 
 {;;; ── Provider: which model answers turns ────────────────────────────────────
  ;:provider :fake is the zero-config default. Point :provider at a key in

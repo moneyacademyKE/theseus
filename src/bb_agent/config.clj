@@ -3,9 +3,15 @@
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
-(defn home []
-  (or (System/getenv "OPENCRABS_HOME")
-      (str (fs/path (System/getProperty "user.home") ".opencrabs-bb"))))
+(defn home
+  "Theseus data home: $THESEUS_HOME or ~/theseus.
+   Renamed 2026-09-27 (bk-6121, daemon decoupling): the OPENCRABS_HOME name
+   was pure inheritance from the tree Theseus grew out of, and the old
+   default pointed at that tree's graveyard. The default now names the
+   real home, so the env var is an override, not a lifeline."
+  []
+  (or (System/getenv "THESEUS_HOME")
+      (str (fs/path (System/getProperty "user.home") "theseus"))))
 
 (defn config-file []
   (fs/path (home) "config.edn"))

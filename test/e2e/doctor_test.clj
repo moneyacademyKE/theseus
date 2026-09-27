@@ -8,7 +8,7 @@
   (apply p/shell {:out :string
                   :err :string
                   :continue true
-                  :extra-env {"OPENCRABS_HOME" (str home)}}
+                  :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
 (def ^:private valid-config
@@ -21,7 +21,7 @@
                 :api-key "test-key"}}})
 
 (deftest doctor-reports-error-for-corrupt-config
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-corrupt-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-corrupt-"})]
     (try
       (spit (str (fs/path home "config.edn")) "{:provider :fake :model")
       (let [result (shell! home "config" "doctor")]
@@ -32,7 +32,7 @@
         (fs/delete-tree home)))))
 
 (deftest doctor-reports-error-for-corrupt-memory-store
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-mem-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-mem-"})]
     (try
       (fs/create-dirs (fs/path home "state"))
       (spit (str (fs/path home "state" "memory.edn")) "[{:memory/text")
@@ -44,7 +44,7 @@
         (fs/delete-tree home)))))
 
 (deftest doctor-ok-with-parseable-stores
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-ok-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-ok-"})]
     (try
       (spit (str (fs/path home "config.edn")) (pr-str valid-config))
       (let [add (shell! home "memory" "add" "anchors help recall")]
@@ -57,8 +57,8 @@
         (fs/delete-tree home)))))
 
 (deftest apply-rejects-invalid-candidate-untouched
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-apply-bad-"})
-        candidate (fs/create-temp-dir {:prefix "opencrabs-bb-doc-cand-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-apply-bad-"})
+        candidate (fs/create-temp-dir {:prefix "theseus-doc-cand-"})]
     (try
       (spit (str (fs/path home "config.edn")) (pr-str valid-config))
       (spit (str (fs/path candidate "c.edn"))
@@ -77,8 +77,8 @@
         (fs/delete-tree candidate)))))
 
 (deftest apply-swaps-atomically-keeping-last-good
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-apply-ok-"})
-        candidate (fs/create-temp-dir {:prefix "opencrabs-bb-doc-cand2-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-apply-ok-"})
+        candidate (fs/create-temp-dir {:prefix "theseus-doc-cand2-"})]
     (try
       (spit (str (fs/path home "config.edn")) (pr-str valid-config))
       (spit (str (fs/path candidate "c.edn"))
@@ -95,8 +95,8 @@
         (fs/delete-tree candidate)))))
 
 (deftest restore-last-good-recovers-from-corrupt-config
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-restore-"})
-        candidate (fs/create-temp-dir {:prefix "opencrabs-bb-doc-cand3-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-restore-"})
+        candidate (fs/create-temp-dir {:prefix "theseus-doc-cand3-"})]
     (try
       (spit (str (fs/path home "config.edn")) (pr-str valid-config))
       (spit (str (fs/path candidate "c.edn"))
@@ -114,7 +114,7 @@
         (fs/delete-tree candidate)))))
 
 (deftest doctor-top-level-runs-full-matrix-green
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-matrix-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-matrix-"})]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
@@ -132,7 +132,7 @@
         (fs/delete-tree home)))))
 
 (deftest doctor-warns-when-http-provider-unreachable
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-doc-unreach-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-unreach-"})]
     (try
       (spit (str (fs/path home "config.edn")) (pr-str valid-config))
       (let [result (shell! home "doctor")]

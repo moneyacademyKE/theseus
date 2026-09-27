@@ -72,7 +72,7 @@
   (let [{:keys [out err exit]} (p/shell {:out :string
                                          :err :string
                                          :continue true
-                                         :extra-env {"OPENCRABS_HOME" *home*}}
+                                         :extra-env {"THESEUS_HOME" *home*}}
                                         "bb" "stats")]
     (is (zero? exit))
     (is (str/includes? out "Theseus stats"))

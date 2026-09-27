@@ -10,11 +10,11 @@
   (p/shell {:out :string
             :err :string
             :continue true
-            :extra-env {"OPENCRABS_HOME" (str home)}}
+            :extra-env {"THESEUS_HOME" (str home)}}
            "bb" "agent" prompt))
 
 (deftest shell-tool-call-is-denied-by-default
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-e2e-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-e2e-"})
         side-effect-file (fs/path home "should-not-exist")
         denied-command (str "touch " side-effect-file)
         session-file (fs/path home "state" "sessions" "default.edn")]
@@ -44,7 +44,7 @@
         (fs/delete-tree home)))))
 
 (deftest approved-shell-tool-executes-and-feeds-result-back
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-approve-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-approve-"})
         side-effect-file (fs/path home "did-exist")
         command (str "touch " side-effect-file)
         session-file (fs/path home "state" "sessions" "default.edn")]
@@ -63,7 +63,7 @@
         (fs/delete-tree home)))))
 
 (deftest approved-read-write-search-and-git-tools-execute
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-files-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-files-"})
         nested-file (fs/path home "workspace" "nested" "note.txt")
         session-file (fs/path home "state" "sessions" "default.edn")]
     (try
@@ -89,8 +89,8 @@
         (fs/delete-tree home)))))
 
 (deftest approved-file-tools-work-outside-home
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-boundary-"})
-        outside (fs/create-temp-dir {:prefix "opencrabs-bb-outside-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-boundary-"})
+        outside (fs/create-temp-dir {:prefix "theseus-outside-"})
         outside-file (fs/path outside "escaped.txt")]
     (try
       (let [result (run-agent home (str "try approved write_file " outside-file "|nope"))]
@@ -102,7 +102,7 @@
         (fs/delete-tree outside)))))
 
 (deftest approved-shell-denies-destructive-command
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-shell-safe-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-shell-safe-"})
         victim (fs/path home "victim.txt")]
     (try
       (spit (str victim) "keep")
@@ -115,7 +115,7 @@
         (fs/delete-tree home)))))
 
 (deftest approved-shell-denies-bypass-command
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-shell-bypass-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-shell-bypass-"})
         victim (fs/path home "victim.txt")]
     (try
       (spit (str victim) "keep")
@@ -128,7 +128,7 @@
         (fs/delete-tree home)))))
 
 (deftest approved-shell-enforces-timeout
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-timeout-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-timeout-"})]
     (try
       (with-redefs [bb-agent.config/home (fn [] (str home))]
         (let [result (tool/handle-tool-request {:tool/name "shell"
@@ -142,8 +142,8 @@
         (fs/delete-tree home)))))
 
 (deftest file-and-document-tools-follow-symlinks
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-symlink-"})
-        outside (fs/create-temp-dir {:prefix "opencrabs-bb-secret-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-symlink-"})
+        outside (fs/create-temp-dir {:prefix "theseus-secret-"})
         secret (fs/path outside "secret.txt")
         link (fs/path home "linked-secret.txt")]
     (try
@@ -162,7 +162,7 @@
         (fs/delete-tree outside)))))
 
 (deftest auto-safe-only-approves-read-only-tools
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-auto-safe-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-auto-safe-"})
         file (fs/path home "note.txt")]
     (try
       (spit (str file) "safe read")
@@ -185,8 +185,8 @@
         (fs/delete-tree home)))))
 
 (deftest search-follows-symlinked-files
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-search-symlink-"})
-        outside (fs/create-temp-dir {:prefix "opencrabs-bb-search-secret-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-search-symlink-"})
+        outside (fs/create-temp-dir {:prefix "theseus-search-secret-"})
         secret (fs/path outside "secret.txt")
         link (fs/path home "linked-secret.txt")]
     (try
@@ -200,8 +200,8 @@
         (fs/delete-tree outside)))))
 
 (deftest shell-and-git-cwd-work-outside-home
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-cwd-"})
-        outside (fs/create-temp-dir {:prefix "opencrabs-bb-tools-outside-cwd-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-cwd-"})
+        outside (fs/create-temp-dir {:prefix "theseus-tools-outside-cwd-"})]
     (try
       (with-redefs [bb-agent.config/home (fn [] (str home))]
         (let [_ (p/shell {:dir (str outside)} "git" "init" "-q")
@@ -219,7 +219,7 @@
         (fs/delete-tree outside)))))
 
 (deftest large-file-tools-check-size-before-reading
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-large-"})
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-large-"})
         large (fs/path home "large.txt")]
     (try
       (spit (str large) (apply str (repeat 1000001 "x")))
@@ -241,7 +241,7 @@
   ;; v5 grants chmod/mv; the handler's never-auto floor keeps only
   ;; rm/dd/sudo/chown for policy-silent homes. Live-fire 2026-09-06:
   ;; `chmod +x check.sh` was shadow-denied below the constitution.
-  (let [home (fs/create-temp-dir {:prefix "opencrabs-bb-tools-shell-v5-"})]
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-shell-v5-"})]
     (try
       (spit (str (fs/path home "x.sh")) "#!/bin/sh\n")
       (with-redefs [bb-agent.config/home (fn [] (str home))]
