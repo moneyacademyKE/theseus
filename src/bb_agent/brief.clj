@@ -6,6 +6,11 @@
    RSS), the LLM only writes. Delivery goes through the durable outbox, so
    the Sly bot (@eileenslybot) is the sender — never OpenCrabs.
 
+   Dossier mode (2026-09-28, owner directive): long deep reports delivered
+   as .md document files — quote-level fundamentals ride the prompt so the
+   writer has valuation-grade facts, the .md lands as a Telegram document
+   with the Executive Summary as the in-thread message.
+
    Ordering: enqueue + confirmed drain FIRST, then state.md and the .md
    artifact. A crashed run therefore retries the ticker next hour instead
    of silently skipping it (at-least-once, same semantics as the outbox).
@@ -17,6 +22,7 @@
             [bb-agent.core :as core]
             [bb-agent.outbox :as outbox]
             [bb-agent.telegram-delivery :as delivery]
+            [bb-agent.telegram-upload :as upload]
             [cheshire.core :as json]
             [clojure.string :as str]))
 
@@ -140,6 +146,84 @@
         []))
     (catch Exception _ [])))
 
+;; ---------- deep-dossier: fundamentals facts block ----------
+
+(defn- fmt-billions
+  "123456789 -> \"$12.3B\". Nil-safe."
+  [n]
+  (when n (format "$%.1fB" (/ (double n) 1e9))))
+
+(def fundamentals-fields
+  "TradingView scanner field -> renderer. Order is presentation order.
+   Rendering is data, not a wall of conds."
+  [[:total_revenue_ttm              #(str "TTM revenue: " (fmt-billions %))]
+   [:gross_margin_ttm               #(str "Gross margin: " (format "%.1f%%" (double %)))]
+   [:net_margin_ttm                 #(str "Net margin: " (format "%.1f%%" (double %)))]
+   [:earnings_per_share_diluted_ttm #(str "Diluted EPS (TTM): " (format "%.2f" (double %)))]
+   [:price_free_cash_flow_ttm       #(str "P/FCF (TTM): " (format "%.1f" (double %)))]
+   [:revenue_growth_ttm             #(str "Revenue growth (TTM): " (format "%.1f%%" (* 100 (double %))))]
+   [:price_book_ttm                 #(str "P/B (TTM): " (format "%.1f" (double %)))]
+   [:total_debt_total_equity        #(str "Debt/equity: " (format "%.2f" (double %)))]])
+
+(defn fundamentals-block
+  "Labeled lines for the non-null fundamentals of a quote map. Null and
+   missing fields are omitted — the writer sees facts or nothing."
+  [quote]
+  (->> fundamentals-fields
+       (keep (fn [[k f]] (when (get quote k) (f (get quote k)))))
+       (str/join "\n")))
+
+(defn- fetch-fundamentals
+  "Second TradingView call for the dossier-grade fields. Missing fields
+   come back nil and are simply omitted from the prompt."
+  [ticker]
+  (let [fields "total_revenue_ttm,gross_margin_ttm,net_margin_ttm,earnings_per_share_diluted_ttm,price_free_cash_flow_ttm,revenue_growth_ttm,price_book_ttm,total_debt_total_equity"]
+    (some (fn [exch]
+            (let [sym (if (str/blank? exch) ticker (str exch ":" ticker))
+                  url (str "https://scanner.tradingview.com/symbol?symbol="
+                           sym "&fields=" fields)]
+              (try
+                (let [{:keys [status body]} (http/get url {:throw false})
+                      data (when (= 200 status)
+                             (json/parse-string body true))]
+                  (when (:close data) data))
+                (catch Exception _ nil))))
+          ["NASDAQ" "NYSE" ""])))
+
+(defn report-caption
+  "Document caption: names ticker, date, and file kind."
+  [ticker date]
+  (format "%s — deep report (%s), full .md attached" ticker date))
+
+(defn- extract-summary
+  "Executive Summary section of a report, for the in-thread message.
+   Falls back to the report head when the section header is missing."
+  [text]
+  (let [start (str/index-of text "Executive Summary")]
+    (if start
+      (subs text start (min (count text) (+ start 1200)))
+      (subs text 0 (min 1200 (count text))))))
+
+(defn- deliver-document!
+  "Dossier delivery: the full report as a Telegram document (the .md file,
+   saved by the caller first), then the Executive Summary as an in-thread
+   message. Returns a drain-map shape {:sent n :dead d} for the state gate."
+  [telegram-cfg path ticker today summary-text]
+  (let [doc (upload/send-file! telegram-cfg chat-id path
+                               :document {:thread-id thread-id
+                                          :caption (report-caption ticker today)})
+        msg (delivery/post-api telegram-cfg "sendMessage"
+                               {:headers {"content-type" "application/json"}
+                                :body (json/generate-string
+                                       {:chat_id chat-id
+                                        :message_thread_id thread-id
+                                        :text summary-text})}
+                               {:chat-id chat-id :thread-id thread-id}
+                               delivery/default-runtime)]
+    (if (and (:message-id doc) (:message-id msg))
+      {:sent 2 :dead 0}
+      {:sent 0 :dead 2})))
+
 ;; ---------- impure: generate + deliver ----------
 
 (defn latest-brief-file
@@ -158,19 +242,12 @@
   (if previous
     (format (str "RE-RUN RULE: %s was already covered on %s. The previous brief "
                  "is reproduced below in full. This hour you must produce a FOLLOW-UP, "
-                 "not a rewrite:
-"
-                 "- Open with what is NEW: developments since %s, fresh news, changed numbers, new catalysts.
-"
-                 "- Bring NEW angles the prior brief did not examine (a different section lens, a competitor contrast, a historical episode). Do not retread it.
-"
-                 "- Any section whose content would merely repeat the prior take must be replaced with new substance or omitted — repetition is failure.
-"
-                 "- Same output format (frontmatter + all sections), same tone. Use the current verified numbers above, not the old ones.
-
-"
-                 "PREVIOUS BRIEF (%s):
-%s")
+                 "not a rewrite:\n"
+                 "- Open with what is NEW: developments since %s, fresh news, changed numbers, new catalysts.\n"
+                 "- Bring NEW angles the prior brief did not examine (a different section lens, a competitor contrast, a historical episode). Do not retread it.\n"
+                 "- Any section whose content would merely repeat the prior take must be replaced with new substance or omitted — repetition is failure.\n"
+                 "- Same output format (frontmatter + all sections), same tone. Use the current verified numbers above, not the old ones.\n\n"
+                 "PREVIOUS BRIEF (%s):\n%s")
             ticker date date date text)
     (format "This is the first coverage of %s — write a complete company analysis per the format below." ticker)))
 
@@ -188,7 +265,8 @@
                    (if (:market_cap_basic quote)
                      (format "$%.1fB" (/ (double (:market_cap_basic quote)) 1e9))
                      "unavailable"))
-      (str/replace "{{HEADLINES}}" (str/join "\n" headlines))))
+      (str/replace "{{HEADLINES}}" (str/join "\n" headlines))
+      (str/replace "{{FUNDAMENTALS}}" (fundamentals-block quote))))
 
 (defn- deliver!
   "Enqueue every chunk to the durable outbox, then drain immediately so the
@@ -233,44 +311,46 @@
         (if-let [queued (next-ticker state)]
           {:ticker queued :state state}
           (or (recycle-oldest state)
-              (throw (ex-info "rotation queue is empty — refill state.md" {}))))]
-    (when (str/blank? ticker)
-      (throw (ex-info "rotation queue is empty — refill state.md" {})))
-    (when-not (next-ticker state)
-      (log! (str "queue exhausted — recycling oldest covered: " ticker)))
-    (log! (str "brief start: " ticker (when dry-run? " (dry-run)")))
-    (let [quote (or (fetch-quote ticker)
-                    (throw (ex-info (str "no quote for " ticker) {})))
-          headlines (fetch-headlines ticker)
-          template (slurp (str (brief-dir) "/prompt.md"))
-          previous (when-let [pf (latest-brief-file
-                                  (map (comp str fs/file-name)
-                                       (fs/list-dir (brief-dir)))
-                                  ticker)]
-                     (log! (str "rerun detected — prior brief: " pf))
-                     {:date (subs pf 0 10)
-                      :text (slurp (str (brief-dir) "/" pf))})
-          prompt (build-prompt template ticker quote headlines today previous)
-          cfg (config/load-config)
-          turn (core/run-turn! cfg prompt)
-          text (str/trim (str (:assistant/final turn)))]
-      (when-not (str/starts-with? text "---")
-        (throw (ex-info "generation did not start with frontmatter — refusing to post"
-                        {:ticker ticker :head (subs text 0 (min 120 (count text)))})))
-      (let [chunks (chunk-text text max-chunk)]
-        (log! (str "generated " (count text) " chars in " (count chunks) " chunk(s)"))
-        (if dry-run?
-          (do (doseq [c chunks] (println "--- chunk ---") (println c))
-              (log! "dry-run: nothing sent, state untouched"))
-          (let [{:keys [sent dead] :as drain}
-                (deliver! (:telegram cfg) chunks)]
-            (if (and (= sent (count chunks)) (zero? dead))
-              (do
-                (spit (str (brief-dir) "/" today "-" ticker ".md") text)
-                (spit (state-file) (render-state (advance-state state ticker today)))
-                (log! (str "brief posted: " ticker " (" sent " message(s))")))
-              (throw (ex-info "drain incomplete — state NOT advanced, will retry"
-                              (assoc drain :ticker ticker))))))))))
+              (throw (ex-info "rotation queue is empty — refill state.md" {}))))
+        _ (when (str/blank? ticker)
+            (throw (ex-info "rotation queue is empty — refill state.md" {})))
+        _ (when-not (next-ticker state)
+            (log! (str "queue exhausted — recycling oldest covered: " ticker)))
+        _ (log! (str "brief start: " ticker (when dry-run? " (dry-run)")))
+        quote (or (fetch-quote ticker)
+                  (throw (ex-info (str "no quote for " ticker) {})))
+        fundamentals (fetch-fundamentals ticker)
+        headlines (fetch-headlines ticker)
+        template (slurp (str (brief-dir) "/prompt.md"))
+        previous (when-let [pf (latest-brief-file
+                                (map (comp str fs/file-name)
+                                     (fs/list-dir (brief-dir)))
+                                ticker)]
+                   (log! (str "rerun detected — prior brief: " pf))
+                   {:date (subs pf 0 10)
+                    :text (slurp (str (brief-dir) "/" pf))})
+        prompt (build-prompt template ticker (merge quote fundamentals)
+                             headlines today previous)
+        cfg (config/load-config)
+        turn (core/run-turn! cfg prompt)
+        text (str/trim (str (:assistant/final turn)))]
+    (when-not (str/starts-with? text "---")
+      (throw (ex-info "generation did not start with frontmatter — refusing to post"
+                      {:ticker ticker :head (subs text 0 (min 120 (count text)))})))
+    (let [path (str (brief-dir) "/" today "-" ticker ".md")
+          summary (extract-summary text)]
+      (log! (str "generated " (count text) " chars"))
+      (if dry-run?
+        (do (spit (str path ".draft") text)
+            (log! (str "dry-run: draft at " path ".draft, nothing sent, state untouched")))
+        (let [{:keys [sent dead]} (deliver-document! (:telegram cfg) path ticker today summary)]
+          (if (and (pos? sent) (zero? dead))
+            (do
+              (spit path text)
+              (spit (state-file) (render-state (advance-state state ticker today)))
+              (log! (str "brief posted: " ticker " (document + summary message)")))
+            (throw (ex-info "dossier delivery incomplete — state NOT advanced, will retry"
+                            {:sent sent :dead dead :ticker ticker}))))))))
 
 (defn -main [& args]
   (with-lock #(run-brief! {:dry-run? (some #{"--dry-run"} args)})))

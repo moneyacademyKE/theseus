@@ -77,16 +77,20 @@ ORCL
       (is (nil? (brief/latest-brief-file files "ASML"))))))
 
 (deftest build-prompt-first-run-test
-  (let [prompt (brief/build-prompt "Tick: {{TICKER}} on {{DATE}}\nPrior: {{PRIOR_COVERAGE}}\n"
+  (let [prompt (brief/build-prompt "Tick: {{TICKER}} on {{DATE}}\nPrior: {{PRIOR_COVERAGE}}\nFund: {{FUNDAMENTALS}}\n"
                                    "NVDA"
-                                   {:close 1.0 :currency "USD"}
+                                   {:close 1.0 :currency "USD"
+                                    :total_revenue_ttm 8.91e10}
                                    ["- headline"]
                                    "2026-09-25"
                                    nil)]
     (testing "first coverage says so explicitly"
       (is (str/includes? prompt "first coverage of NVDA")))
+    (testing "fundamentals rendered into the facts block"
+      (is (str/includes? prompt "TTM revenue: $89.1B")))
     (testing "no placeholder survives"
-      (is (not (str/includes? prompt "{{PRIOR_COVERAGE}}"))))))
+      (is (not (str/includes? prompt "{{PRIOR_COVERAGE}}")))
+      (is (not (str/includes? prompt "{{FUNDAMENTALS}}"))))))
 
 (deftest build-prompt-rerun-test
   (let [prompt (brief/build-prompt "Tick: {{TICKER}}\nPrior: {{PRIOR_COVERAGE}}\n"
@@ -102,3 +106,31 @@ ORCL
       (is (str/includes? prompt "FOLLOW-UP")))
     (testing "no placeholder survives"
       (is (not (str/includes? prompt "{{PRIOR_COVERAGE}}"))))))
+
+;; ---------- deep-dossier: fundamentals facts block ----------
+
+(deftest fundamentals-block-test
+  (let [block (brief/fundamentals-block
+               {:total_revenue_ttm 8.91e10
+                :gross_margin_ttm 66.543
+                :net_margin_ttm 42.944
+                :earnings_per_share_diluted_ttm 7.8332
+                :price_free_cash_flow_ttm 43.7576})]
+    (testing "each non-null fundamental is a labeled line with a human unit"
+      (is (str/includes? block "TTM revenue: $89.1B"))
+      (is (str/includes? block "Gross margin: 66.5%"))
+      (is (str/includes? block "Net margin: 42.9%"))
+      (is (str/includes? block "Diluted EPS (TTM): 7.83"))
+      (is (str/includes? block "P/FCF (TTM): 43.8"))))
+  (testing "null and missing fields are omitted, never printed as filler"
+    (let [partial (brief/fundamentals-block {:total_revenue_ttm 5e9 :gross_margin_ttm nil})]
+      (is (str/includes? partial "TTM revenue: $5.0B"))
+      (is (not (str/includes? partial "Gross margin"))))
+    (is (str/blank? (brief/fundamentals-block {})))))
+
+(deftest report-caption-test
+  (testing "caption names ticker, date, and the file kind"
+    (let [cap (brief/report-caption "AAPL" "2026-09-29")]
+      (is (str/includes? cap "AAPL"))
+      (is (str/includes? cap "2026-09-29"))
+      (is (str/includes? cap ".md")))))
