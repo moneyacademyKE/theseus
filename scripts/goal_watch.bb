@@ -209,8 +209,13 @@
                   (post! token chat-id thread-id text ws))
                 (catch Exception e
                   (spit (str ws "/watch.err") (.getMessage e))))
-              ;; V2: fulfilled goals ship their DECLARED artifacts to the topic
-              (when (str/includes? text "GOAL FULFILLED")
+              ;; V2: fulfilled goals ship their DECLARED artifacts to the
+              ;; topic. ALREADY SATISFIED ships too — the artifacts are the
+              ;; pre-existing evidence the verdict text points at; skipping
+              ;; them left make-rsi-do-this's relaunch with receipts on disk
+              ;; and none in the topic (2026-09-30).
+              (when (or (str/includes? text "GOAL FULFILLED")
+                        (str/includes? text "GOAL ALREADY SATISFIED"))
                 (ship-deliverables! token chat-id thread-id ws name)))
             ;; V5: a slot just freed — launch the oldest queued goal, if any
             (try (gb/launch-next-queued!) (catch Exception _ nil)))))
