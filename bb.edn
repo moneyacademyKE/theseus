@@ -239,9 +239,11 @@
    test:e2e:scheduler {:doc "Run scheduler e2e tests."
                        :extra-paths ["test"]
                        :requires ([clojure.test :as t]
-                                  [e2e.scheduler-test])
+                                  [e2e.scheduler-test]
+                                  [e2e.schedule-command-test])
                        :task (let [{:keys [fail error]}
-                                   (t/run-tests 'e2e.scheduler-test)]
+                                   (t/run-tests 'e2e.scheduler-test
+                                                'e2e.schedule-command-test)]
                                (when (pos? (+ fail error))
                                  (System/exit 1)))}
    test:e2e:telegram-edits {:doc "Run Telegram edited-message e2e tests."
@@ -463,9 +465,11 @@
    test:e2e:rsi {:doc "Run RSI digest/analyze/propose e2e tests."
                  :extra-paths ["test"]
                  :requires ([clojure.test :as t]
-                            [e2e.rsi-test])
+                            [e2e.rsi-test]
+                            [e2e.rsi-tools-test])
                  :task (let [{:keys [fail error]}
-                             (t/run-tests 'e2e.rsi-test)]
+                             (t/run-tests 'e2e.rsi-test
+                                          'e2e.rsi-tools-test)]
                           (when (pos? (+ fail error))
                             (System/exit 1)))}
    test:e2e:rsi-learn {:doc "Run RSI learn (GitHub self-learning scout) e2e tests."
