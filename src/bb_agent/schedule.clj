@@ -1,8 +1,10 @@
 (ns bb-agent.schedule
   (:require [babashka.fs :as fs]
+            [babashka.process :as p]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.cron :as cron]
+            [bb-agent.outbox :as outbox]
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
@@ -123,33 +125,79 @@
                            now)))
           schedules))
 
+(defn- run-command-lane!
+  "Command-shaped schedules never touch an LLM. The prompt lane's job was
+  'run this command, make its stdout your final message' — but a model
+  asked to parrot can fabricate the parrot instead: rsi-daily's fallback
+  model produced three weeks of plausible cycle output with ZERO tool
+  calls (session receipts, 2026-09-28), each day's lie seeded by the
+  previous one in the shared session history. Direct execution cannot
+  lie — stdout is the command's, or the failure is. Optional
+  :schedule/deliver-to {:chat-id :thread-id} routes the output through
+  the durable outbox to a topic; absent means the ledger is the only
+  record, as before."
+  [cfg {:keys [schedule/command cwd schedule/deliver-to] :as _schedule} schedule-id at]
+  (let [res (p/shell {:dir (or cwd (System/getProperty "user.dir"))
+                      :out :string :err :string :continue true}
+                     command)
+        exit (:exit res)
+        out (str/trim (str (:out res)))
+        err (str/trim (str (:err res)))
+        final (if (zero? exit)
+                out
+                (cond-> (if (str/blank? out) "" (str out "\n"))
+                  (seq err) (str "[exit " exit "] " err "\n")
+                  (str/blank? err) (str "[exit " exit "]\n")))
+        entry {:schedule/id schedule-id
+               :status (if (zero? exit) :ok :failed)
+               :at at
+               :command command
+               :command/exit exit
+               :assistant/final final}]
+    (when deliver-to
+      (try
+        (outbox/enqueue! cfg {:method "sendMessage"
+                              :params (cond-> {:chat_id (:chat-id deliver-to)
+                                               :text (subs final 0 (min (count final) 4000))}
+                                        (:thread-id deliver-to)
+                                        (assoc :message_thread_id (:thread-id deliver-to)))
+                              :routing deliver-to})
+        (catch Exception e
+          (println (str "command-lane delivery enqueue failed: " (.getMessage e)
+                        " @ " (java.time.Instant/now))))))
+    (append-run-log! entry)
+    {:assistant/final final :command/exit exit :status (:status entry)}))
+
 (defn run-schedule!
   "Run one schedule by id and log it with an :at stamp — the
-  wall-clock instant of the run, the hook the cron gate reads back.
-  The 3-arity lets the cron lane stamp the injected clock instead of
-  the host's, keeping the log consistent with the window that
-  justified the run."
+   wall-clock instant of the run, the hook the cron gate reads back.
+   The 3-arity lets the cron lane stamp the injected clock instead of
+   the host's, keeping the log consistent with the window that
+   justified the run. Entries with :schedule/command execute directly
+   (see run-command-lane!); everything else runs an LLM turn."
   ([cfg schedule-id] (run-schedule! cfg schedule-id (str (java.time.Instant/now))))
   ([cfg schedule-id at]
    (if-let [schedule (find-schedule schedule-id)]
-     (let [turn (core/run-turn! (merge cfg
-                                       (select-keys schedule [:cwd :provider :model])
-                                       {:session/id schedule-id
-                                        ;; Scheduled turns are non-interactive: no human
-                                        ;; can answer an approval prompt inside a cron lane
-                                        ;; (the request just expires and the run fails, as
-                                        ;; ai-stock-brief-hourly did hourly). The owner
-                                        ;; pre-consented by installing the schedule, and
-                                        ;; the constitution still vetoes first — policy
-                                        ;; :deny short-circuits before this gate.
-                                        :approval/ask (constantly :approved)})
-                                (:schedule/prompt schedule))
-           log-entry {:schedule/id schedule-id
-                      :status :ok
-                      :at at
-                      :assistant/final (:assistant/final turn)}]
-       (append-run-log! log-entry)
-       turn)
+     (if-let [cmd (:schedule/command schedule)]
+       (run-command-lane! cfg schedule schedule-id at)
+       (let [turn (core/run-turn! (merge cfg
+                                         (select-keys schedule [:cwd :provider :model])
+                                         {:session/id schedule-id
+                                          ;; Scheduled turns are non-interactive: no human
+                                          ;; can answer an approval prompt inside a cron lane
+                                          ;; (the request just expires and the run fails, as
+                                          ;; ai-stock-brief-hourly did hourly). The owner
+                                          ;; pre-consented by installing the schedule, and
+                                          ;; the constitution still vetoes first — policy
+                                          ;; :deny short-circuits before this gate.
+                                          :approval/ask (constantly :approved)})
+                                    (:schedule/prompt schedule))
+             log-entry {:schedule/id schedule-id
+                        :status :ok
+                        :at at
+                        :assistant/final (:assistant/final turn)}]
+         (append-run-log! log-entry)
+         turn))
      (throw (ex-info (str "Unknown schedule: " schedule-id)
                      {:schedule/id schedule-id})))))
 
