@@ -235,8 +235,10 @@
         (is (str/includes? (:out list-result) ":session/id \"default\""))
         (is (str/includes? (:out set-cwd) (str workspace)))
         (let [report (edn/read-string (:out usage-result))]
-          (is (= 1 (:usage/events report)))
-          (is (pos? (:tokens/total report)))))
+          (is (zero? (:usage/events report))
+              "the fake provider is a fixture, not a billable turn")
+          (is (zero? (:tokens/total report))
+              "test-double tokens must not contaminate usage metrics")))
       (finally
         (fs/delete-tree home)))))
 

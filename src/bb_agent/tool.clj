@@ -7,7 +7,8 @@
             [bb-agent.tool.file :as file]
             [bb-agent.tool.goal :as goal]
             [bb-agent.tool.process :as process]
-            [bb-agent.tool.telegram :as telegram]))
+            [bb-agent.tool.telegram :as telegram]
+            [bb-agent.usage :as usage]))
 
 (def normalize-request common/normalize-request)
 (def approval-decision common/approval-decision)
@@ -83,4 +84,18 @@
                            (execute-tool-request request)
                            (deny-result request))
                     :denied (deny-result request)))]
+     ;; THE funnel: one recording site for every tool outcome — ok, error,
+     ;; or denied with its denial source (approval vs constitution). The
+     ;; RSI digest builds its tool-failure table from these events; a
+     ;; tool that errors on 20%+ of ≥5 calls becomes a named opportunity.
+     ;; Telemetry is best-effort: a ledger failure must never fail the
+     ;; tool call it measures. Attribution is required (see usage/tool-event!).
+     (try
+       (usage/tool-event! {:tool (:tool/name request)
+                           :session-id (or (:session/id cfg) (:session/id request))
+                           :status (:status result)
+                           :ok (boolean (and (:executed? result)
+                                             (= :ok (:status result))))
+                           :denial-source (:denial/source result)})
+       (catch Exception _ nil))
      (rtk/apply request result cfg))))

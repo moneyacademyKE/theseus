@@ -50,16 +50,37 @@
   [event]
   (boolean (and (:fallback/served event) (seq (:fallback/tried event)))))
 
+(defn- tool-events [events]
+  (filter #(= :tool (:usage/event %)) events))
+
+(defn tools-aggregate
+  "Per-tool outcome counts from the funnel's :usage/event :tool entries.
+  :fail counts :error results only — a :denied call is a policy outcome,
+  not a tool failure (the veto-costume lesson, restated at the aggregate
+  layer: a denial has a source and a recourse; an error is just broken)."
+  [events]
+  (->> (tool-events events)
+       (group-by :tool/name)
+       (map (fn [[t xs]]
+              [t {:calls (count xs)
+                  :ok (count (filter :ok xs))
+                  :fail (count (filter #(= :error (:tool/status %)) xs))
+                  :denied (count (filter #(= :denied (:tool/status %)) xs))}]))
+       (into {})))
+
 (defn digest
   "Per-provider aggregate over the usage ledger. :fallback-hits counts
    verified rescues only (see verified-rescue?). :unverified-fallback-tags
    reports the legacy tags that were excluded, so the discarded noise is
-   visible rather than silently dropped."
+   visible rather than silently dropped. :tools aggregates the funnel's
+   :usage/event :tool entries — what the TOOLS did, separate from what
+   the providers did."
   ([]
    (digest (usage/load-events)))
   ([events]
-   (let [rescues (filter verified-rescue? events)
-         providers (->> events
+   (let [turns (filter #(= :turn (:usage/event %)) events)
+         rescues (filter verified-rescue? turns)
+         providers (->> turns
                         (group-by :provider)
                         (map (fn [[p xs]]
                                [p {:turns (count xs)
@@ -68,7 +89,8 @@
                                    :fallback-hits (count (filter #(= p (:fallback/served %)) rescues))}]))
                         (into {})
                         provider-signal)]
-     {:events (count events)
+     {:events (count turns)
+      :tools (tools-aggregate events)
       :unverified-fallback-tags (- (count (filter :fallback/served events))
                                    (count rescues))
       :providers providers})))
@@ -79,7 +101,7 @@
 (defn write-digest!
   "Write the digest as readable markdown; returns the path."
   ([] (write-digest! (digest)))
-  ([{:keys [events providers unverified-fallback-tags]}]
+  ([{:keys [events providers tools unverified-fallback-tags]}]
   (let [unverified (or unverified-fallback-tags 0)
         path (fs/path (digest-dir) "digest.md")]
     (fs/create-dirs (fs/parent path))
@@ -94,7 +116,16 @@
                                 (format "| %s | %s | %s | %s | %s |"
                                         p (:turns s) (:ok s) (:fail s) (:fallback-hits s)))
                               (sort-by key providers)))
-               "\n"))
+               "\n"
+               (when (seq tools)
+                 (str "\n| tool | calls | ok | fail | denied |\n"
+                      "|---|---|---|---|---|\n"
+                      (str/join "\n"
+                                (map (fn [[t s]]
+                                       (format "| %s | %s | %s | %s | %s |"
+                                               t (:calls s) (:ok s) (:fail s) (:denied s)))
+                                     (sort-by key tools)))
+                      "\n"))))
     path)))
 
 (defn- provider-failure-opportunity [[p s]]
@@ -107,6 +138,24 @@
                      p (:fail s) (:turns s)
                      (* 100.0 (/ (double (:fail s)) (:turns s))))
      :suggestion (format "provider-failures: %s fails often — check its breaker threshold and its position in :provider/fallbacks" p)}))
+
+(def ^:private min-tool-calls 5)
+(def ^:private tool-flag-rate 0.2)
+
+(defn- tool-failure-opportunity
+  "A tool erroring on ≥20% of ≥5 calls is a named failure, not noise. The
+  funnel's :usage/event :tool entries are the evidence; :fail counts
+  :error results only — policy denials are decisions, not defects."
+  [[t s]]
+  (when (and (>= (:calls s) min-tool-calls)
+             (pos? (:fail s))
+             (>= (/ (double (:fail s)) (:calls s)) tool-flag-rate))
+    {:kind :tool-failures
+     :tool t
+     :detail (format "%s errored on %s/%s calls (%.0f%%)"
+                     t (:fail s) (:calls s)
+                     (* 100.0 (/ (double (:fail s)) (:calls s))))
+     :suggestion (format "tool-failures: %s errors on at least 20%% of its calls — inspect its handler and what the failures share" t)}))
 
 (defn- fallback-pressure-opportunity
   "Grouped by provider AND model. The live chain is model-level — every
@@ -140,13 +189,15 @@
   ([{:keys [min-events events]}]
    (let [min-events* (or min-events default-min-events)
          events (or events (usage/load-events))
-         n (count events)]
+         summary (digest events)
+         n (:events summary)]
      (if (< n min-events*)
        {:blocked (format "blocked: need %s more usage events (have %s of %s)"
                          (- min-events* n) n min-events*)}
-       (let [opportunities (->> (map provider-failure-opportunity (:providers (digest events)))
+       (let [opportunities (->> (map provider-failure-opportunity (:providers summary))
                                 (remove nil?)
                                 (concat (fallback-pressure-opportunity events))
+                                (concat (keep tool-failure-opportunity (:tools summary)))
                                 (vec))]
          {:opportunities opportunities})))))
 
@@ -219,6 +270,7 @@
             ops (:opportunities analysis)]
         (cond-> {:digest-path digest-path
                  :events (:events summary)
+                 :tools (:tools summary)
                  :opportunities (count ops)
                  :added added :skipped skipped}
           (pos? (:unverified-fallback-tags summary))

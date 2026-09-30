@@ -332,6 +332,12 @@
                             (if dry-run
                               " | dry-run — no proposals written"
                               (str " | " (:added result) " added, " (:skipped result) " skipped"))))
+              (when-let [tools (seq (:tools result))]
+                (println "| tool | calls | ok | fail | denied |")
+                (println "|---|---|---|---|---|")
+                (doseq [[t s] (sort-by key tools)]
+                  (println (format "| %s | %s | %s | %s | %s |"
+                                   t (:calls s) (:ok s) (:fail s) (:denied s)))))
               (doseq [{:keys [provider fail-rate fallback-rate]}
                       (take 2 (:nearest-signals result))]
                 (println (format "  nearest: %s — fail %.0f%%, fallback %.0f%% (flags at %.0f%%)"

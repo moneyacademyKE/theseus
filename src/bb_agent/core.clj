@@ -270,16 +270,21 @@
     (when (and (semantic-memory/enabled? cfg)
                (not (:session/shared? cfg)))
       (semantic-memory/index-session! id))
-    (usage/append-event! (usage/event {:session-id id
-                                       :provider (or (:provider turn) (:provider cfg))
-                                       :model (:model cfg)
-                                       :prompt prompt
-                                       :final final-content
-                                       :usage usage
-                                       :fallback-tried (not-empty (:fallback/tried turn))
-                                       :fallback-served (:fallback/served-by turn)
-                                       :fallback-model (:fallback/model turn)
-                                       :ok (:turn/ok completed true)}))
+    ;; Test doubles are not usage: a :fake provider turn stays out of the
+    ;; live ledger. 441 fixture events once rode test-suite runs into the
+    ;; real usage.edn and bent every rate the RSI digest computed — the
+    ;; goal runner's own act gates wrote them, 12 per attempt.
+    (when (not= :fake (or (:provider turn) (:provider cfg)))
+      (usage/append-event! (usage/event {:session-id id
+                                         :provider (or (:provider turn) (:provider cfg))
+                                         :model (:model cfg)
+                                         :prompt prompt
+                                         :final final-content
+                                         :usage usage
+                                         :fallback-tried (not-empty (:fallback/tried turn))
+                                         :fallback-served (:fallback/served-by turn)
+                                         :fallback-model (:fallback/model turn)
+                                         :ok (:turn/ok completed true)})))
     completed))
 
 (defn- vision-chain-cfg

@@ -95,6 +95,35 @@
     (spit (str path) (pr-str events))
     events))
 
+(defn- turn-events
+  "Usage events that are LLM turns. The ledger also carries :tool funnel
+  events (see tool-event!) — telemetry about the tool surface, not usage.
+  Aggregations that speak about providers or tokens filter through this."
+  [events]
+  (filter #(= :turn (:usage/event %)) events))
+
+(defn tool-event!
+  "Append one tool outcome to the usage ledger. This is THE single
+  recording site for tool traffic — tool.clj/handle-tool-request is its
+  only caller (the funnel; goal make-rsi-do-this pins exactly one
+  non-usage src reference). Concurrency decision, made deliberately:
+  append is a read-modify-write spit, so concurrent writers can race
+  and lose an event; that is accepted — usage is telemetry, not the
+  ledger-of-record, and a file lock serializing every tool call would
+  tax the hot path to protect data nobody reconciles. Attribution is
+  the price of admission: no session id, no event — an outcome that
+  cannot be attributed is a fixture, not signal (this is also what
+  keeps contextless unit-test calls out of the live ledger)."
+  [{:keys [tool session-id status ok denial-source]}]
+  (when session-id
+    (append-event! {:usage/event :tool
+                    :tool/name tool
+                    :ok (boolean ok)
+                    :tool/status status
+                    :denial/source denial-source
+                    :session/id session-id
+                    :created/at (str (java.time.Instant/now))})))
+
 (defn- fallback-stats [events]
   (let [hits (filter :fallback/served events)
         total (count events)]
@@ -103,7 +132,7 @@
      :by-served (frequencies (map :fallback/served hits))}))
 
 (defn report []
-  (let [events (load-events)
+  (let [events (turn-events (load-events))
         total (reduce + 0 (map :tokens/total events))]
     {:usage/events (count events)
      :tokens/total total
