@@ -503,6 +503,17 @@ Do NOT run the goal. Write files only.")
         ;; run.log is scraped by substring for the verdict, so it starts
         ;; empty per launch: an appended stale HALT would read as this run's.
         _ (spit log-path "")
+        ;; Same rule for the rest of the per-run state: the watcher's final
+        ;; world line is (last (ledger-events)) and ledger-events sorts by
+        ;; FILENAME — stale iter-*.edn from the previous run sort after the
+        ;; fresh run's iter-000 and their world rides into the verdict
+        ;; message (2026-09-30: the satisfied relaunch of make-rsi-do-this
+        ;; shipped iter-044's stale HALT world). acts.log feeds the :acts
+        ;; progress ref; old receipts would inflate the new run's count.
+        _ (when (fs/directory? (str ws "/logs"))
+            (doseq [f (fs/glob (str ws "/logs") "iter-*.edn")]
+              (fs/delete f)))
+        _ (spit (str ws "/logs/acts.log") "")
         pid (spawn-detached! repo (str "bb goal " cfg-path) log-path)
         ;; the registry carries the routing needed to recover this run after
         ;; a poller/daemon restart — pid+name alone orphaned every run that
