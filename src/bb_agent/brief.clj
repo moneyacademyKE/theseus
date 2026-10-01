@@ -20,6 +20,11 @@
    the single attempt. fetch-quote now backs off and retries with jitter
    across exchanges before giving up.
 
+   Generation timeout (2026-10-01): dossier prompts ask for 3,500–6,000
+   words; the provider default of 60s cannot carry a long completion and
+   dies mid-stream as 'request timed out'. The brief lane overrides
+   :timeout-ms to 600s — a slow-but-alive generation beats a fast death.
+
    Usage: bb brief [--dry-run]"
   (:require [babashka.fs :as fs]
             [babashka.http-client :as http]
@@ -35,6 +40,7 @@
 (def ^:private thread-id 239)             ; ai-stock-briefs topic
 (def ^:private max-chunk 3800)            ; Telegram limit is 4096
 (def ^:private lock-stale-minutes 30)
+(def ^:private generation-timeout-ms 600000) ; dossiers are long; 60s kills them mid-stream
 
 (defn- brief-dir [] (str (config/home) "/brain/ai-stock-briefs"))
 (defn- state-file [] (str (brief-dir) "/state.md"))
@@ -341,7 +347,7 @@
                     :text (slurp (str (brief-dir) "/" pf))})
         prompt (build-prompt template ticker (merge quote fundamentals)
                              headlines today previous)
-        cfg (config/load-config)
+        cfg (assoc (config/load-config) :timeout-ms generation-timeout-ms)
         turn (core/run-turn! cfg prompt)
         text (str/trim (str (:assistant/final turn)))]
     (when-not (str/starts-with? text "---")
