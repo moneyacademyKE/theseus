@@ -125,6 +125,20 @@
                            now)))
           schedules))
 
+(defn failure-notice
+  "Terse one-line failure notice: schedule id, exit code, and the cause —
+   the babashka crash box's `Message:` line when present, else trimmed
+   stdout, else a placeholder. Never a stacktrace dump: the topic is the
+   reader's surface, a crash box is ledger material."
+  [schedule-id exit out err]
+  (let [msg-line (some->> err
+                          (re-find #"Message:\s*(\S[^\n]*)")
+                          (second))
+        cause (or (some-> msg-line str/trim)
+                  (-> out str/trim not-empty)
+                  "no output")]
+    (format "❌ %s failed (exit %d): %s" schedule-id exit cause)))
+
 (defn- run-command-lane!
   "Command-shaped schedules never touch an LLM. The prompt lane's job was
   'run this command, make its stdout your final message' — but a model
@@ -135,8 +149,15 @@
   lie — stdout is the command's, or the failure is. Optional
   :schedule/deliver-to {:chat-id :thread-id} routes the output through
   the durable outbox to a topic; absent means the ledger is the only
-  record, as before."
-  [cfg {:keys [schedule/command cwd schedule/deliver-to] :as _schedule} schedule-id at]
+  record, as before. Delivery shape (2026-10-01, owner: 'unacceptable
+  format'): a non-zero exit NEVER posts raw stderr — the run ledger
+  keeps the full crash, and a deliver-to topic gets one terse
+  failure-notice line. A raw babashka crash box in a Telegram topic is
+  a failure reaching the reader, not a report reaching him. Lanes that
+  deliver their own content (brief posts its document itself) set
+  :schedule/deliver-on-success false so operational stdout never posts
+  on success either."
+  [cfg {:keys [schedule/command cwd schedule/deliver-to schedule/deliver-on-success] :as _schedule} schedule-id at]
   (let [res (p/shell {:dir (or cwd (System/getProperty "user.dir"))
                       :out :string :err :string :continue true}
                      command)
@@ -145,16 +166,20 @@
         err (str/trim (str (:err res)))
         final (if (zero? exit)
                 out
-                (cond-> (if (str/blank? out) "" (str out "\n"))
-                  (seq err) (str "[exit " exit "] " err "\n")
-                  (str/blank? err) (str "[exit " exit "]\n")))
+                (failure-notice schedule-id exit out err))
         entry {:schedule/id schedule-id
                :status (if (zero? exit) :ok :failed)
                :at at
                :command command
                :command/exit exit
                :assistant/final final}]
-    (when deliver-to
+    ;; Deliver on success by default; :schedule/deliver-on-success false
+    ;; gates success delivery for self-delivering lanes. A failure with a
+    ;; deliver-to still posts the terse notice — silence is how misses
+    ;; went unseen for two weeks.
+    (when (and deliver-to
+               (or (not (zero? exit))
+                   (not (false? deliver-on-success))))
       (try
         (outbox/enqueue! cfg {:method "sendMessage"
                               :params (cond-> {:chat_id (:chat-id deliver-to)

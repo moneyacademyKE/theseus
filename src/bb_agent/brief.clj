@@ -15,6 +15,11 @@
    artifact. A crashed run therefore retries the ticker next hour instead
    of silently skipping it (at-least-once, same semantics as the outbox).
 
+   Quote resilience (2026-10-01, owner: 'no quote for AMD'): TradingView
+   rate-limits bursts — five watchdog-retried runs in an hour all failed
+   the single attempt. fetch-quote now backs off and retries with jitter
+   across exchanges before giving up.
+
    Usage: bb brief [--dry-run]"
   (:require [babashka.fs :as fs]
             [babashka.http-client :as http]
@@ -112,21 +117,33 @@
 
 ;; ---------- impure: data ----------
 
-(defn- fetch-quote
+(defn- tv-fetch
+  "One TradingView scanner call for `fields`. Returns the parsed map or
+   nil (non-200, unparseable, connection error — all just 'no data')."
+  [sym fields]
+  (try
+    (let [url (str "https://scanner.tradingview.com/symbol?symbol="
+                   sym "&fields=" fields)
+          {:keys [status body]} (http/get url {:throw false})]
+      (when (= 200 status)
+        (json/parse-string body true)))
+    (catch Exception _ nil)))
+
+(defn- jitter-sleep! [ms]
+  (Thread/sleep (+ ms (long (rand ms)))))
+
+(defn fetch-quote
   "TradingView scanner: price, currency, market cap, TTM P/E. Tries NASDAQ,
-   NYSE, then the bare symbol. Returns a map or nil."
+   NYSE, then the bare symbol, with backoff-and-retry per exchange — the
+   scanner rate-limits bursts, and a cron lane (plus its watchdog) is
+   exactly a burst. Two attempts per exchange, ~1.5-3s between."
   [ticker]
   (let [fields "close,currency,market_cap_basic,price_earnings_ttm"]
     (some (fn [exch]
-            (let [sym (if (str/blank? exch) ticker (str exch ":" ticker))
-                  url (str "https://scanner.tradingview.com/symbol?symbol="
-                           sym "&fields=" fields)]
-              (try
-                (let [{:keys [status body]} (http/get url {:throw false})
-                      data (when (= 200 status)
-                             (json/parse-string body true))]
-                  (when (number? (:close data)) data))
-                (catch Exception _ nil))))
+            (let [sym (if (str/blank? exch) ticker (str exch ":" ticker))]
+              (or (tv-fetch sym fields)
+                  (do (jitter-sleep! 1500)
+                      (tv-fetch sym fields)))))
           ["NASDAQ" "NYSE" ""])))
 
 (defn- fetch-headlines
@@ -179,15 +196,8 @@
   [ticker]
   (let [fields "total_revenue_ttm,gross_margin_ttm,net_margin_ttm,earnings_per_share_diluted_ttm,price_free_cash_flow_ttm,revenue_growth_ttm,price_book_ttm,total_debt_total_equity"]
     (some (fn [exch]
-            (let [sym (if (str/blank? exch) ticker (str exch ":" ticker))
-                  url (str "https://scanner.tradingview.com/symbol?symbol="
-                           sym "&fields=" fields)]
-              (try
-                (let [{:keys [status body]} (http/get url {:throw false})
-                      data (when (= 200 status)
-                             (json/parse-string body true))]
-                  (when (:close data) data))
-                (catch Exception _ nil))))
+            (let [sym (if (str/blank? exch) ticker (str exch ":" ticker))]
+              (tv-fetch sym fields)))
           ["NASDAQ" "NYSE" ""])))
 
 (defn report-caption
@@ -228,7 +238,7 @@
 
 (defn latest-brief-file
   "Newest dated brief filename for ticker from a list of filenames, or nil
-  if the ticker was never covered."
+   if the ticker was never covered."
   [files ticker]
   (->> files
        (keep #(re-find (re-pattern (str "^\\d{4}-\\d{2}-\\d{2}-" ticker "\\.md$")) %))
