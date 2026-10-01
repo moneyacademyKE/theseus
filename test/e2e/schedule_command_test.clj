@@ -59,6 +59,10 @@
         (let [runs (edn/read-string (slurp (str (fs/path home "state" "schedule-runs.edn"))))]
           (is (= :failed (:status (first runs))))
           (is (= 1 (:command/exit (first runs))))
-          (is (str/includes? (:assistant/final (first runs)) "[exit 1]"))))
+          ;; Terse notice contract (2026-10-01, owner: "unacceptable format"):
+          ;; the topic gets one line; the raw crash box lives in the ledger.
+          (is (str/includes? (:assistant/final (first runs)) "failed (exit 1)"))
+          (is (not (str/includes? (:assistant/final (first runs)) "-----"))
+              "no raw crash stack in the failure notice")))
       (finally
         (fs/delete-tree home)))))
