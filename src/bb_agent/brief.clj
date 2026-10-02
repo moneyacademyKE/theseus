@@ -33,7 +33,8 @@
 
    Failure visibility (2026-10-02): a run that dies after 'brief start'
    used to vanish — no log line, only a missing post. -main now logs the
-   exception message before rethrowing, so the log tells the whole story.
+   exception message and its data (the fallback chain's :fallback/tried
+   ledger) before rethrowing, so the log tells the whole story.
 
    Usage: bb brief [--dry-run]"
   (:require [babashka.fs :as fs]
@@ -282,22 +283,79 @@
             ticker date date date text)
     (format "This is the first coverage of %s — write a complete company analysis per the format below." ticker)))
 
-(defn build-prompt [template ticker quote headlines today previous]
-  (-> template
-      (str/replace "{{PRIOR_COVERAGE}}" (prior-coverage-block ticker previous))
-      (str/replace "{{TICKER}}" ticker)
-      (str/replace "{{DATE}}" today)
-      (str/replace "{{PRICE}}" (str (:close quote)))
-      (str/replace "{{CURRENCY}}" (or (:currency quote) "USD"))
-      (str/replace "{{PE}}" (if (:price_earnings_ttm quote)
-                              (format "%.2f" (double (:price_earnings_ttm quote)))
-                              "n/a (negative or unavailable)"))
-      (str/replace "{{MARKETCAP}}"
-                   (if (:market_cap_basic quote)
-                     (format "$%.1fB" (/ (double (:market_cap_basic quote)) 1e9))
-                     "unavailable"))
-      (str/replace "{{HEADLINES}}" (str/join "\n" headlines))
-      (str/replace "{{FUNDAMENTALS}}" (fundamentals-block quote))))
+(def section-plan
+  "Three passes instead of one 3,500-6,000-word completion (2026-10-02):
+   the provider times out on long generations, so the dossier is written in
+   sections and stitched. Each pass sees the verified facts, the rerun rule,
+   and the verbatim text of the passes before it — the verdict stays
+   coherent while every request stays small."
+  [{:ask (str "PASS 1 OF 3 — the opening sections of the report. Emit ONLY: the markdown "
+              "frontmatter, **Executive Summary**, **The Stat Block**, **The Story Right Now**, and "
+              "**What Changed Since the Last Look** (first coverage: retitle this last one **The Three Questions**). "
+              "Start immediately with the `---` frontmatter. Stop when these sections are done — emit no later sections. "
+              "Sections marked (+) in the format spec still get multiple substantive paragraphs with numbers woven in.")}
+   {:ask (str "PASS 2 OF 3 — continue the SAME report. Emit ONLY: **What They Sell and Who Buys**, "
+              "**How They Make Money and Revenue Quality**, **The Weakness Section**, "
+              "**Capital Intensity and the Funding Model**, **Growth Drivers**, **Competitive Edge (The Moat)**, "
+              "and **Industry Structure and Position**. No frontmatter, no code fences, no repetition of earlier sections. "
+              "Every number you cite must come from the verified facts above or be marked as an estimate.")}
+   {:ask (str "PASS 3 OF 3 — the closing sections of the SAME report. Emit ONLY: **Capital Allocation**, "
+              "**Valuation: Update the Model** (bear/base/bull with explicit assumptions, then "
+              "what-does-the-work and the skew), **Catalysts and Time Horizon**, and **Bottom Line and Verdict** "
+              "ending with the exact disclaimer footer line. Stop at the footer — nothing after it. "
+              "Your verdict, rating, and every number must stay consistent with the sections already written.")}])
+
+(defn build-prompt
+  "Fill the template. The 7-arity carries the sectioned-generation slots:
+   which sections this pass emits, and the text of the passes before it."
+  ([template ticker quote headlines today previous]
+   (build-prompt template ticker quote headlines today previous nil nil))
+  ([template ticker quote headlines today previous section-ask earlier-passes]
+   (-> template
+       (str/replace "{{SECTION_ASK}}"
+                    (or section-ask "write the complete report now, every section, in one pass"))
+       (str/replace "{{EARLIER_PASSES}}"
+                    (if (str/blank? (str/trim (str earlier-passes)))
+                      "(none yet — this pass opens the report)"
+                      (str "TEXT ALREADY WRITTEN IN EARLIER PASSES — stay consistent with it, never repeat it:\n"
+                           earlier-passes)))
+       (str/replace "{{PRIOR_COVERAGE}}" (prior-coverage-block ticker previous))
+       (str/replace "{{TICKER}}" ticker)
+       (str/replace "{{DATE}}" today)
+       (str/replace "{{PRICE}}" (str (:close quote)))
+       (str/replace "{{CURRENCY}}" (or (:currency quote) "USD"))
+       (str/replace "{{PE}}" (if (:price_earnings_ttm quote)
+                               (format "%.2f" (double (:price_earnings_ttm quote)))
+                               "n/a (negative or unavailable)"))
+       (str/replace "{{MARKETCAP}}"
+                    (if (:market_cap_basic quote)
+                      (format "$%.1fB" (/ (double (:market_cap_basic quote)) 1e9))
+                      "unavailable"))
+       (str/replace "{{HEADLINES}}" (str/join "\n" headlines))
+       (str/replace "{{FUNDAMENTALS}}" (fundamentals-block quote)))))
+
+(defn generate-dossier!
+  "Write the dossier in section-plan passes and stitch them in document
+   order. Every pass gets the full template — facts, rerun rule, format —
+   plus the verbatim text of the earlier passes, so the final verdict and
+   the frontmatter agree. run-turn!* is injected for testability."
+  [run-turn!* cfg template ticker quote headlines today previous]
+  (let [step (fn [earlier {:keys [ask]}]
+               (let [prompt (build-prompt template ticker quote headlines
+                                          today previous ask earlier)
+                     {:keys [assistant/final]} (run-turn!* cfg prompt)
+                     part (str/trim (str final))]
+                 (when (str/blank? part)
+                   (throw (ex-info "dossier pass returned empty text"
+                                   {:ticker ticker :pass ask})))
+                 (str/trim (str part))))
+        parts (reduce (fn [acc pass]
+                        (conj acc (step (str/join "\n\n" acc) pass)))
+                      []
+                      section-plan)]
+    (str/join "\n\n" parts)))
+
+
 
 (defn- deliver!
   "Enqueue every chunk to the durable outbox, then drain immediately so the
@@ -371,11 +429,10 @@
                    (log! (str "rerun detected — prior brief: " pf))
                    {:date (subs pf 0 10)
                     :text (slurp (str (brief-dir) "/" pf))})
-        prompt (build-prompt template ticker (merge quote fundamentals)
-                             headlines today previous)
+        fundamentals* (merge quote fundamentals)
         cfg (generation-cfg (config/load-config))
-        turn (core/run-turn! cfg prompt)
-        text (str/trim (str (:assistant/final turn)))]
+        text (generate-dossier! core/run-turn! cfg template ticker
+                                fundamentals* headlines today previous)]
     (when-not (str/starts-with? text "---")
       (throw (ex-info "generation did not start with frontmatter — refusing to post"
                       {:ticker ticker :head (subs text 0 (min 120 (count text)))})))
@@ -399,5 +456,6 @@
     #(try
        (run-brief! {:dry-run? (some #{"--dry-run"} args)})
        (catch Exception e
-         (log! (str "brief FAILED: " (ex-message e)))
+         (log! (str "brief FAILED: " (ex-message e)
+                    (when-let [d (ex-data e)] (str " " (pr-str d)))))
          (throw e)))))

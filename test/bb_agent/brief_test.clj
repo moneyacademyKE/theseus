@@ -148,3 +148,59 @@ ORCL
       (is (= 600000 (:timeout-ms cfg))))
     (testing "everything else passes through untouched"
       (is (= {:token "x"} (:telegram cfg))))))
+
+;; ---------- sectioned dossier generation (2026-10-02: the long-completion death) ----------
+
+(deftest section-plan-test
+  (testing "three passes — one 5k-word completion times out, three short ones don't"
+    (is (= 3 (count brief/section-plan))))
+  (testing "the first pass opens with the frontmatter"
+    (is (re-find #"(?i)frontmatter" (:ask (first brief/section-plan)))))
+  (testing "the passes together cover every section of the report"
+    (let [asks (str/join " " (map :ask brief/section-plan))]
+      (doseq [s ["Executive Summary" "Stat Block" "What Changed Since the Last Look"
+                 "What They Sell" "Weakness Section" "Growth Drivers"
+                 "Valuation: Update the Model" "Bottom Line and Verdict"]]
+        (is (str/includes? asks s) (str "no pass covers: " s))))))
+
+(deftest generate-dossier-test
+  (let [calls (atom [])
+        runner (fn [cfg prompt]
+                 (swap! calls conj {:cfg cfg :prompt prompt})
+                 {:assistant/final (str "PART-" (count @calls))})
+        out (brief/generate-dossier! runner
+                                     {:model "m"}
+                                     "Tick: {{TICKER}} Prior: {{PRIOR_COVERAGE}} Ask: {{SECTION_ASK}} Earlier: {{EARLIER_PASSES}}"
+                                     "AMD"
+                                     {:close 1.0 :currency "USD"}
+                                     ["- headline"]
+                                     "2026-10-02"
+                                     {:date "2026-09-26" :text "OLD TAKE"})]
+    (testing "one generation call per pass"
+      (is (= 3 (count @calls))))
+    (testing "each pass's ask lands in its own prompt"
+      (is (str/includes? (:prompt (first @calls)) (:ask (first brief/section-plan))))
+      (is (str/includes? (:prompt (second @calls)) (:ask (second brief/section-plan)))))
+    (testing "earlier passes accumulate so the verdict stays coherent"
+      (is (not (str/includes? (:prompt (first @calls)) "PART-")))
+      (is (str/includes? (:prompt (second @calls)) "PART-1"))
+      (is (str/includes? (:prompt (nth @calls 2)) "PART-1"))
+      (is (str/includes? (:prompt (nth @calls 2)) "PART-2")))
+    (testing "passes stitch in document order"
+      (is (= "PART-1\n\nPART-2\n\nPART-3" out)))
+    (testing "the cfg (pinned model, long timeout) rides every call"
+      (is (every? #(= "m" (:model %)) (map :cfg @calls))))
+    (testing "the verified facts and rerun context reach every pass"
+      (is (every? #(str/includes? (:prompt %) "OLD TAKE") @calls))
+      (is (every? #(str/includes? (:prompt %) "AMD") @calls)))))
+
+(deftest build-prompt-section-slot-test
+  (let [prompt (brief/build-prompt "T: {{TICKER}} | A: {{SECTION_ASK}} | E: {{EARLIER_PASSES}}"
+                                   "NVDA" {:close 1.0 :currency "USD"} [] "2026-10-02" nil
+                                   "emit ONLY the Stat Block" "EARLIER TEXT")]
+    (testing "the 7-arity threads the pass instruction and earlier sections"
+      (is (str/includes? prompt "emit ONLY the Stat Block"))
+      (is (str/includes? prompt "EARLIER TEXT")))
+    (testing "no placeholder survives"
+      (is (not (str/includes? prompt "{{SECTION_ASK}}")))
+      (is (not (str/includes? prompt "{{EARLIER_PASSES}}"))))))
