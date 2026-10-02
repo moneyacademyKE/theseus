@@ -513,6 +513,12 @@ Do NOT run the goal. Write files only.")
         _ (when (fs/directory? (str ws "/logs"))
             (doseq [f (fs/glob (str ws "/logs") "iter-*.edn")]
               (fs/delete f)))
+        ;; Fresh authored workspaces may have no logs/ dir yet — the runner's
+        ;; first act creates it, and nothing before launch ever did. Spit into
+        ;; the missing dir killed end-state-users-moe-thes-64535 at launch
+        ;; (2026-10-01): authoring :authored, runner never started. Create
+        ;; before reset, always.
+        _ (fs/create-dirs (str ws "/logs"))
         _ (spit (str ws "/logs/acts.log") "")
         pid (spawn-detached! repo (str "bb goal " cfg-path) log-path)
         ;; the registry carries the routing needed to recover this run after
