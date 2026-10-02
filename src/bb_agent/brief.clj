@@ -444,10 +444,10 @@
       (if dry-run?
         (do (spit (str path ".draft") text)
             (log! (str "dry-run: draft at " path ".draft, nothing sent, state untouched")))
-        (let [{:keys [sent dead]} (deliver-document! (:telegram cfg) path ticker today summary)]
+        (let [_ (spit path text) ; the file must exist before send-file
+              {:keys [sent dead]} (deliver-document! (:telegram cfg) path ticker today summary)]
           (if (and (pos? sent) (zero? dead))
             (do
-              (spit path text)
               (spit (state-file) (render-state (advance-state state ticker today)))
               (log! (str "brief posted: " ticker " (document + summary message)")))
             (throw (ex-info "dossier delivery incomplete — state NOT advanced, will retry"
