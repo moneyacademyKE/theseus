@@ -25,6 +25,16 @@
    dies mid-stream as 'request timed out'. The brief lane overrides
    :timeout-ms to 600s — a slow-but-alive generation beats a fast death.
 
+   Generation model (2026-10-02, owner directive): the brief lane pins
+   its own provider+model (`ali/glm-5.3` via :openai-compatible) instead
+   of inheriting the daemon's default — the hourly lane's quality bar and
+   latency budget are its own, and a default-model change elsewhere must
+   not silently change what writes the dossiers.
+
+   Failure visibility (2026-10-02): a run that dies after 'brief start'
+   used to vanish — no log line, only a missing post. -main now logs the
+   exception message before rethrowing, so the log tells the whole story.
+
    Usage: bb brief [--dry-run]"
   (:require [babashka.fs :as fs]
             [babashka.http-client :as http]
@@ -41,6 +51,11 @@
 (def ^:private max-chunk 3800)            ; Telegram limit is 4096
 (def ^:private lock-stale-minutes 30)
 (def ^:private generation-timeout-ms 600000) ; dossiers are long; 60s kills them mid-stream
+
+(def generation-model
+  "Owner-pinned model for the hourly brief lane (2026-10-02)."
+  {:provider :openai-compatible
+   :model "ali/glm-5.3"})
 
 (defn- brief-dir [] (str (config/home) "/brain/ai-stock-briefs"))
 (defn- state-file [] (str (brief-dir) "/state.md"))
@@ -61,7 +76,7 @@
   (let [lines (str/split-lines text)
         queue-start (count (take-while #(not (str/starts-with? % "# Queue")) lines))
         covered (->> (take queue-start lines)
-                     (keep #(re-find #"^-\s+([A-Z.]+)\s+\((\d{4}-\d{2}-\d{2})\)" %))
+                     (keep #(re-find #"^- ([A-Z.]+) \((\d{4}-\d{2}-\d{2})\)" %))
                      (mapv rest))
         queue (->> (drop (inc queue-start) lines)
                    (map str/trim)
@@ -320,6 +335,15 @@
         (f)
         (finally (fs/delete-if-exists lock))))))
 
+(defn generation-cfg
+  "The brief lane's own generation config: the owner-pinned model and the
+   long dossier timeout, layered over whatever the daemon default is."
+  [base]
+  (assoc base
+         :timeout-ms generation-timeout-ms
+         :provider (:provider generation-model)
+         :model (:model generation-model)))
+
 (defn run-brief! [{:keys [dry-run?]}]
   (let [today (str (java.time.LocalDate/now))
         state (parse-state (slurp (state-file)))
@@ -332,7 +356,9 @@
             (throw (ex-info "rotation queue is empty — refill state.md" {})))
         _ (when-not (next-ticker state)
             (log! (str "queue exhausted — recycling oldest covered: " ticker)))
-        _ (log! (str "brief start: " ticker (when dry-run? " (dry-run)")))
+        _ (log! (str "brief start: " ticker
+                     " model=" (:model generation-model)
+                     (when dry-run? " (dry-run)")))
         quote (or (fetch-quote ticker)
                   (throw (ex-info (str "no quote for " ticker) {})))
         fundamentals (fetch-fundamentals ticker)
@@ -347,7 +373,7 @@
                     :text (slurp (str (brief-dir) "/" pf))})
         prompt (build-prompt template ticker (merge quote fundamentals)
                              headlines today previous)
-        cfg (assoc (config/load-config) :timeout-ms generation-timeout-ms)
+        cfg (generation-cfg (config/load-config))
         turn (core/run-turn! cfg prompt)
         text (str/trim (str (:assistant/final turn)))]
     (when-not (str/starts-with? text "---")
@@ -369,4 +395,9 @@
                             {:sent sent :dead dead :ticker ticker}))))))))
 
 (defn -main [& args]
-  (with-lock #(run-brief! {:dry-run? (some #{"--dry-run"} args)})))
+  (with-lock
+    #(try
+       (run-brief! {:dry-run? (some #{"--dry-run"} args)})
+       (catch Exception e
+         (log! (str "brief FAILED: " (ex-message e)))
+         (throw e)))))
