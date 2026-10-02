@@ -340,7 +340,8 @@
    plus the verbatim text of the earlier passes, so the final verdict and
    the frontmatter agree. run-turn!* is injected for testability."
   [run-turn!* cfg template ticker quote headlines today previous]
-  (let [step (fn [earlier {:keys [ask]}]
+  (let [pass-n (atom 0)
+        step (fn [earlier {:keys [ask]}]
                (let [prompt (build-prompt template ticker quote headlines
                                           today previous ask earlier)
                      {:keys [assistant/final]} (run-turn!* cfg prompt)
@@ -348,6 +349,7 @@
                  (when (str/blank? part)
                    (throw (ex-info "dossier pass returned empty text"
                                    {:ticker ticker :pass ask})))
+                 (log! (str "dossier pass " (swap! pass-n inc) "/3 done (" (count part) " chars)"))
                  (str/trim (str part))))
         parts (reduce (fn [acc pass]
                         (conj acc (step (str/join "\n\n" acc) pass)))
