@@ -135,16 +135,16 @@ ORCL
       (is (str/includes? cap "2026-09-29"))
       (is (str/includes? cap ".md")))))
 
-;; ---------- generation model (owner directive 2026-10-02) ----------
+;; ---------- generation config (pin removed 2026-10-09, owner directive) ----------
 
 (deftest generation-cfg-test
   (let [cfg (brief/generation-cfg {:provider :anthropic-compatible
                                    :model "some-default"
                                    :telegram {:token "x"}})]
-    (testing "the brief lane pins its own model, not the daemon's default"
-      (is (= "ali/glm-5.3" (:model cfg)))
-      (is (= :openai-compatible (:provider cfg))))
-    (testing "long dossier timeout survives the override"
+    (testing "the brief lane rides the daemon default model"
+      (is (= "some-default" (:model cfg)))
+      (is (= :anthropic-compatible (:provider cfg))))
+    (testing "long dossier timeout survives"
       (is (= 600000 (:timeout-ms cfg))))
     (testing "everything else passes through untouched"
       (is (= {:token "x"} (:telegram cfg))))))

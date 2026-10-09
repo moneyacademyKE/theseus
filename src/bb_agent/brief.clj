@@ -25,11 +25,10 @@
    dies mid-stream as 'request timed out'. The brief lane overrides
    :timeout-ms to 600s — a slow-but-alive generation beats a fast death.
 
-   Generation model (2026-10-02, owner directive): the brief lane pins
-   its own provider+model (`ali/glm-5.3` via :openai-compatible) instead
-   of inheriting the daemon's default — the hourly lane's quality bar and
-   latency budget are its own, and a default-model change elsewhere must
-   not silently change what writes the dossiers.
+   Generation model (2026-10-02, owner directive; REVOKED 2026-10-09,
+   owner directive 'remove pinned model — everything should run on default
+   model'): the brief lane rides the daemon default model like every other
+   lane. What stays lane-local is only the timeout — dossiers are long.
 
    Failure visibility (2026-10-02): a run that dies after 'brief start'
    used to vanish — no log line, only a missing post. -main now logs the
@@ -53,10 +52,12 @@
 (def ^:private lock-stale-minutes 30)
 (def ^:private generation-timeout-ms 600000) ; dossiers are long; 60s kills them mid-stream
 
-(def generation-model
-  "Owner-pinned model for the hourly brief lane (2026-10-02)."
-  {:provider :openai-compatible
-   :model "ali/glm-5.3"})
+(defn generation-cfg
+  "The brief lane's generation config: the daemon default model with only
+   the long dossier timeout layered on. (Model pin removed 2026-10-09,
+   owner directive — every lane rides the default.)"
+  [base]
+  (assoc base :timeout-ms generation-timeout-ms))
 
 (defn- brief-dir [] (str (config/home) "/brain/ai-stock-briefs"))
 (defn- state-file [] (str (brief-dir) "/state.md"))
@@ -395,15 +396,6 @@
         (f)
         (finally (fs/delete-if-exists lock))))))
 
-(defn generation-cfg
-  "The brief lane's own generation config: the owner-pinned model and the
-   long dossier timeout, layered over whatever the daemon default is."
-  [base]
-  (assoc base
-         :timeout-ms generation-timeout-ms
-         :provider (:provider generation-model)
-         :model (:model generation-model)))
-
 (defn run-brief! [{:keys [dry-run?]}]
   (let [today (str (java.time.LocalDate/now))
         state (parse-state (slurp (state-file)))
@@ -417,8 +409,9 @@
         _ (when-not (next-ticker state)
             (log! (str "queue exhausted — recycling oldest covered: " ticker)))
         _ (log! (str "brief start: " ticker
-                     " model=" (:model generation-model)
                      (when dry-run? " (dry-run)")))
+        cfg (generation-cfg (config/load-config))
+        _ (log! (str "model=" (:model cfg)))
         quote (or (fetch-quote ticker)
                   (throw (ex-info (str "no quote for " ticker) {})))
         fundamentals (fetch-fundamentals ticker)
@@ -432,7 +425,6 @@
                    {:date (subs pf 0 10)
                     :text (slurp (str (brief-dir) "/" pf))})
         fundamentals* (merge quote fundamentals)
-        cfg (generation-cfg (config/load-config))
         text (generate-dossier! core/run-turn! cfg template ticker
                                 fundamentals* headlines today previous)]
     (when-not (str/starts-with? text "---")
