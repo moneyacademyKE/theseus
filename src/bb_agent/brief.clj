@@ -20,15 +20,27 @@
    the single attempt. fetch-quote now backs off and retries with jitter
    across exchanges before giving up.
 
-   Generation timeout (2026-10-01): dossier prompts ask for 3,500–6,000
-   words; the provider default of 60s cannot carry a long completion and
-   dies mid-stream as 'request timed out'. The brief lane overrides
-   :timeout-ms to 600s — a slow-but-alive generation beats a fast death.
+   Generation budget (2026-10-10, owner: 'increase timeout for this'): the
+   lane's old top-level :timeout-ms never reached the wire — provider.clj
+   reads (:timeout-ms provider/config), so the real per-request budget was
+   the provider's own 300s and every dossier died as 'request timed out'
+   ~12 min in (300s x retries) while the lane believed it had 600s.
+   generation-cfg now writes the budget into every provider entry, caps the
+   lane at one attempt per pass, and publishes worst-case-generation-ms so
+   the lock invariant is a number instead of a hope.
 
-   Generation model (2026-10-02, owner directive; REVOKED 2026-10-09,
-   owner directive 'remove pinned model — everything should run on default
-   model'): the brief lane rides the daemon default model like every other
-   lane. What stays lane-local is only the timeout — dossiers are long.
+   Generation model (2026-10-09 owner directive: ride the daemon default;
+   2026-10-10 owner directive: pin ali/deepseek-v4.1-flash). The pin is NOT
+   live and cannot be made live from here: every deepseek-v4.1-flash route on
+   the provider answers 402 no_provider_under_bid (the account's max-per-mtok
+   bid sits below the model's ask — min $0.0045/Mtok in, $0.018/Mtok out) or
+   403 'model disabled in your preferences'. Probed at the wire 2026-10-10;
+   the default model answers 200. Raise the bid or re-enable the model in the
+   provider dashboard and the pin is a two-line change here.
+
+   Lock liveness (2026-10-10): the stale window is a backstop, not the release
+   mechanism — a lock whose recorded pid is dead is free at once, so a killed
+   run no longer silently skips the next hourly fire.
 
    Failure visibility (2026-10-02): a run that dies after 'brief start'
    used to vanish — no log line, only a missing post. -main now logs the
@@ -37,6 +49,7 @@
 
    Usage: bb brief [--dry-run]"
   (:require [babashka.fs :as fs]
+            [babashka.process :as process]
             [babashka.http-client :as http]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
@@ -49,15 +62,26 @@
 (def ^:private chat-id "-1003995594829") ; Sly Theseus group
 (def ^:private thread-id 239)             ; ai-stock-briefs topic
 (def ^:private max-chunk 3800)            ; Telegram limit is 4096
-(def ^:private lock-stale-minutes 30)
-(def ^:private generation-timeout-ms 600000) ; dossiers are long; 60s kills them mid-stream
+(def lock-stale-minutes 60) ; backstop only — a dead pid releases the lock at once
+(def generation-timeout-ms 900000) ; per pass, at the wire; the old top-level 600s never left the config
 
 (defn generation-cfg
-  "The brief lane's generation config: the daemon default model with only
-   the long dossier timeout layered on. (Model pin removed 2026-10-09,
-   owner directive — every lane rides the default.)"
+  "The brief lane's generation config: the daemon default model with the long
+   dossier budget layered on where the wire actually reads it. provider.clj
+   takes (:timeout-ms provider/config), so a top-level assoc was decoration —
+   every configured provider gets the budget. :retry :max-attempts 1 keeps a
+   raised budget from silently multiplying; the fallback chain, not retries,
+   is the recovery path (same shape as goal_bridge)."
   [base]
-  (assoc base :timeout-ms generation-timeout-ms))
+  (-> base
+      (assoc :timeout-ms generation-timeout-ms
+             :retry (merge (:retry base) {:max-attempts 1}))
+      (cond-> (seq (:providers base))
+        (update :providers
+                (fn [ps]
+                  (into {} (map (fn [[k v]]
+                                  [k (assoc v :timeout-ms generation-timeout-ms)])
+                                ps)))))))
 
 (defn- brief-dir [] (str (config/home) "/brain/ai-stock-briefs"))
 (defn- state-file [] (str (brief-dir) "/state.md"))
@@ -306,6 +330,12 @@
               "ending with the exact disclaimer footer line. Stop at the footer — nothing after it. "
               "Your verdict, rating, and every number must stay consistent with the sections already written.")}])
 
+(def worst-case-generation-ms
+  "The lane's whole budget: every pass at its ceiling, one attempt each. The
+   lock's stale window must cover this, or a live run's lock can be stolen
+   mid-report."
+  (* generation-timeout-ms (count section-plan)))
+
 (defn build-prompt
   "Fill the template. The 7-arity carries the sectioned-generation slots:
    which sections this pass emits, and the text of the passes before it."
@@ -383,16 +413,46 @@
 
 ;; ---------- run ----------
 
-(defn- with-lock [f]
+(defn lock-held?
+  "Does this lock still have an owner? Pure, so the semantics are testable.
+   Held = the recorded pid is alive AND the stamp is younger than the stale
+   window. A dead pid releases at once — a killed run must not silently skip
+   the next hourly fire; a live-but-hung run is freed by the age backstop;
+   unparsable content is never held, because a corrupt lock file may not wedge
+   the lane. Legacy content (bare millis, no pid) keeps the old age-only rule."
+  [lock-text now-ms stale-ms pid-alive?]
+  (let [text (str/trim (str lock-text))
+        pid (some-> (re-find #"pid=(\d+)" text) second parse-long)
+        at (or (some-> (re-find #"at=(\d+)" text) second parse-long)
+               (when (re-find #"^\d+$" text) (parse-long text)))]
+    (cond
+      (and (nil? pid) (nil? at)) false
+      (some? pid) (and (boolean (pid-alive? pid))
+                       (or (nil? at) (< (- now-ms at) stale-ms)))
+      :else (< (- now-ms at) stale-ms))))
+
+(defn- pid-alive?
+  "`ps -p pid` exits 0 while the process exists."
+  [pid]
+  (try
+    (zero? (:exit (process/shell {:continue true} "ps" "-p" (str pid))))
+    (catch Exception _
+      false)))
+
+(defn- with-lock
+  "Single-writer for the lane: take the lock only when no live owner holds it,
+   stamp it with this pid, always release it."
+  [f]
   (fs/create-dirs (str (config/home) "/state/ai-brief"))
-  (let [lock (fs/file (lock-file))]
-    (if (and (fs/exists? lock)
-             (< (- (System/currentTimeMillis)
-                   (.toMillis (fs/last-modified-time lock)))
-                (* lock-stale-minutes 60 1000)))
-      (log! "SKIP brief: fresh lock held by another run.")
+  (let [lock (fs/file (lock-file))
+        now (System/currentTimeMillis)
+        held? (and (fs/exists? lock)
+                   (lock-held? (slurp lock) now
+                               (* lock-stale-minutes 60 1000) pid-alive?))]
+    (if held?
+      (log! "SKIP brief: lock held by a live run.")
       (try
-        (spit lock (str (System/currentTimeMillis)))
+        (spit lock (str "pid=" (.pid (java.lang.ProcessHandle/current)) " at=" now))
         (f)
         (finally (fs/delete-if-exists lock))))))
 

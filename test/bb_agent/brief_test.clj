@@ -135,7 +135,7 @@ ORCL
       (is (str/includes? cap "2026-09-29"))
       (is (str/includes? cap ".md")))))
 
-;; ---------- generation config (pin removed 2026-10-09, owner directive) ----------
+;; ---------- generation config (budget raised 2026-10-10, owner directive) ----------
 
 (deftest generation-cfg-test
   (let [cfg (brief/generation-cfg {:provider :anthropic-compatible
@@ -145,7 +145,8 @@ ORCL
       (is (= "some-default" (:model cfg)))
       (is (= :anthropic-compatible (:provider cfg))))
     (testing "long dossier timeout survives"
-      (is (= 600000 (:timeout-ms cfg))))
+      (is (= brief/generation-timeout-ms (:timeout-ms cfg)))
+      (is (> brief/generation-timeout-ms 600000)))
     (testing "everything else passes through untouched"
       (is (= {:token "x"} (:telegram cfg))))))
 
@@ -204,3 +205,48 @@ ORCL
     (testing "no placeholder survives"
       (is (not (str/includes? prompt "{{SECTION_ASK}}")))
       (is (not (str/includes? prompt "{{EARLIER_PASSES}}"))))))
+
+;; ---------- the timeout must reach the wire (2026-10-10: provider/config, not top level) ----------
+
+(deftest generation-timeout-reaches-provider-test
+  (let [base {:provider :openai-compatible
+              :model "some-default"
+              :providers {:openai-compatible {:base-url "https://x/v1"
+                                               :timeout-ms 300000}
+                          :other {:base-url "https://y/v1"}}
+              :telegram {:token "x"}}
+        cfg (brief/generation-cfg base)]
+    (testing "the lane's budget lands in the provider config the wire actually reads"
+      (is (= brief/generation-timeout-ms
+             (get-in cfg [:providers :openai-compatible :timeout-ms])))
+      (is (= brief/generation-timeout-ms (:timeout-ms cfg))))
+    (testing "every configured provider gets the budget, not just the primary"
+      (is (= brief/generation-timeout-ms (get-in cfg [:providers :other :timeout-ms]))))
+    (testing "a raised budget does not silently multiply: one attempt per pass"
+      (is (= 1 (get-in cfg [:retry :max-attempts]))))
+    (testing "the lock cannot go stale while a run is still inside its budget"
+      (is (>= (* brief/lock-stale-minutes 60 1000) brief/worst-case-generation-ms)))))
+
+;; ---------- the lock releases on death, not on a guessed age (2026-10-10) ----------
+
+(deftest lock-held-test
+  (let [now 1000000000
+        minute 60000
+        stale (* 60 minute)]
+    (testing "a live owner inside its budget holds the lane"
+      (is (brief/lock-held? "pid=42 at=999999000" now stale #{42})))
+    (testing "a dead pid releases at once — a killed run cannot skip the next fire"
+      (is (not (brief/lock-held? "pid=42 at=999999000" now stale #{}))))
+    (testing "a live-but-hung run is freed by the stale backstop"
+      (is (not (brief/lock-held? "pid=42 at=1" now stale #{42}))))
+    (testing "legacy bare-millis locks keep the age-only rule"
+      (is (brief/lock-held? "999999000" now stale #{}))
+      (is (not (brief/lock-held? "1" now stale #{}))))
+    (testing "garbage never wedges the lane"
+      (is (not (brief/lock-held? "" now stale #{})))
+      (is (not (brief/lock-held? "nonsense" now stale #{}))))))
+
+(deftest generation-budget-math-test
+  (testing "the worst case is the per-pass budget times the passes, no hidden retries"
+    (is (= (* brief/generation-timeout-ms (count brief/section-plan))
+           brief/worst-case-generation-ms))))
