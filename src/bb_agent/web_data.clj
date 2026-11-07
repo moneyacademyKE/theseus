@@ -4,8 +4,9 @@
   One reader per column, each tolerant of a missing or mid-append file:
   an empty column tells the truth, a 500 lies. No writes, no caching —
   state is read fresh on every request; the files are small and the deck
-  polls slowly. The GUI token lives at the home root as a dotfile
-  (outside state/) so the state-hygiene gate stays untouched."
+  polls slowly. Auth lives in bb-agent.web-auth; the master-password
+  record sits at the home root as a dotfile (outside state/) so the
+  state-hygiene gate stays untouched."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
             [clojure.edn :as edn]
@@ -46,24 +47,6 @@
 
 (defn- events []
   (or (read-edn (fs/path (home) "state" "usage.edn")) []))
-
-;; ---------- token ----------
-
-(defn gui-token
-  "The deck's shared secret. Empty string when unset."
-  []
-  (str/trim (or (slurp-quiet (fs/path (home) ".gui-token")) "")))
-
-(defn ensure-gui-token!
-  "Return the token, minting a fresh 32-hex one at the home root if absent."
-  []
-  (let [existing (gui-token)]
-    (if (not (str/blank? existing))
-      existing
-      (let [fresh (apply str (repeatedly 16
-                                        #(format "%02x" (.nextInt (java.security.SecureRandom.) 16))))]
-        (spit (str (fs/path (home) ".gui-token")) fresh)
-        fresh))))
 
 ;; ---------- columns ----------
 

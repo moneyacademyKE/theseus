@@ -3,14 +3,16 @@
   column UI in web/. Run with: bb src/bb_agent/web.clj
 
   Binds 127.0.0.1 only — reach it through the cloudflared tunnel
-  (ops/launchd/com.theseus.tunnel.plist). Auth is a bearer token from the
-  home dotfile (bb-agent.web-data/gui-token); the static shell carries no
-  data so it serves ungated, every /api/* route requires the token. The
+  (ops/launchd/com.theseus.tunnel.plist). Auth is the master password
+  (bb-agent.web-auth): POST /api/login exchanges it for a session token,
+  and every /api/* route then requires that token as the Bearer
+  credential. The static shell carries no data so it serves ungated. The
   API is strictly read-only: there is no code path from here to a write."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
             [org.httpkit.server :as server]
+            [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]))
 
 (def ^:private static-files
@@ -37,19 +39,10 @@
           (str/split #"\s+" 2)
           (second)))
 
-(defn- query-token [req]
-  (->> (str/split (str (req :query-string)) #"&")
-       (map #(str/split % #"=" 2))
-       (some (fn [[k v]] (when (= "token" k) v)))))
-
 (defn authorized?
-  "Token via Authorization: Bearer ... or ?token=... (the latter is a
-  convenience for one-tap URLs; it stays out of history as a query)."
+  "A live session token in Authorization: Bearer <token>."
   [req]
-  (let [tok (data/gui-token)]
-    (and (not (str/blank? tok))
-         (or (= tok (bearer req))
-             (= tok (query-token req))))))
+  (auth/session-live? (bearer req)))
 
 (defn- respond [code body type]
   {:status code
@@ -66,10 +59,34 @@
       (respond 200 (slurp (str path)) type)
       (respond 404 "not found" "text/plain; charset=utf-8"))))
 
+(defn- handle-login
+  "POST /api/login {password: ...} — the only place the password is ever
+  read. Answers not-set (nothing to check yet), missing-password, a
+  fresh session token, or bad-password."
+  [{:keys [body] :as _req}]
+  (let [payload  (try (json/parse-string (slurp body) true)
+                      (catch Exception _ nil))
+        password (get payload :password)]
+    (cond
+      (not (auth/password-set?))
+      (json-res 401 {:error "not-set"
+                     :hint "on the host: bb scripts/set_web_password.bb"})
+
+      (not (string? password))
+      (json-res 400 {:error "missing-password"})
+
+      :else
+      (if-let [session (auth/login! password)]
+        (json-res 200 session)
+        (json-res 401 {:error "bad-password"})))))
+
 (defn app
   "The whole HTTP surface as one pure function request->response."
-  [{:keys [uri] :as req}]
+  [{:keys [uri request-method] :as req}]
   (cond
+    (and (= :post request-method) (= "/api/login" uri))
+    (handle-login req)
+
     (contains? api-routes uri)
     (if (authorized? req)
       (try
@@ -85,11 +102,12 @@
 
 (defn -main
   [& _]
-  (let [port  (Integer/parseInt (or (System/getenv "THESEUS_WEB_PORT") "8787"))
-        token (data/ensure-gui-token!)]
+  (let [port (Integer/parseInt (or (System/getenv "THESEUS_WEB_PORT") "8787"))]
     (server/run-server app {:ip "127.0.0.1" :port port})
     (println "theseus web deck on http://127.0.0.1:" port)
-    (println "gui token:" token)
+    (println "auth:" (if (auth/password-set?)
+                       "master password set"
+                       "NO MASTER PASSWORD — run: bb scripts/set_web_password.bb"))
     (flush)
     (deref (promise))))
 

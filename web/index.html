@@ -51,11 +51,11 @@
 <div id="login" hidden>
   <form id="login-form">
     <div class="login-title"><span class="glyph">◉</span>theseus deck</div>
-    <p class="login-hint">This deck is read-only and token-gated.<br>
-    The token lives on the host at <code>~/.gui-token</code> (under the Theseus home).</p>
-    <input id="login-token" type="password" placeholder="gui token" autocomplete="current-password" autofocus>
-    <button type="submit">open the deck</button>
-    <div id="login-error" class="login-error" hidden>token rejected</div>
+    <p class="login-hint">Read-only deck, master-password gated.<br>
+    One-time on the host: <code>bb scripts/set_web_password.bb</code></p>
+    <input id="login-pass" type="password" placeholder="master password" autocomplete="current-password" autofocus>
+    <button type="submit">unlock</button>
+    <div id="login-error" class="login-error" hidden>wrong password</div>
   </form>
 </div>
 

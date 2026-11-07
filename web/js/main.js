@@ -1,5 +1,5 @@
 // deck main — clock (EAT, always), column wiring, login overlay.
-import { getToken, setToken, poll, setApiState } from './api.js';
+import { getToken, login, poll, setApiState } from './api.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem } from './columns.js';
 
@@ -26,27 +26,26 @@ function tickClock() {
 tickClock();
 setInterval(tickClock, 1000);
 
-// ---- login overlay ----
+// ---- login overlay: the master password buys a session token ----
 const form = document.getElementById('login-form');
 if (form) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const input = document.getElementById('login-token');
+    const input = document.getElementById('login-pass');
     const err = document.getElementById('login-error');
     err.hidden = true;
-    setToken(input.value.trim());
     try {
-      const res = await fetch('/api/status', {
-        headers: { Authorization: 'Bearer ' + getToken() },
-      });
-      if (res.status === 200) {
-        location.reload();
-      } else {
-        err.hidden = false;
-        localStorage.removeItem('theseus-deck-token');
-      }
-    } catch (_) {
+      await login(input.value);
+      location.reload();
+    } catch (ex) {
+      err.textContent =
+        ex.code === 'not-set'
+          ? 'No master password set yet — on the host: bb scripts/set_web_password.bb'
+          : ex.code === 'bad-password'
+            ? 'wrong password'
+            : 'login failed';
       err.hidden = false;
+      input.select();
     }
   });
 }
@@ -54,7 +53,7 @@ if (form) {
 // ---- boot the deck ----
 if (!getToken()) {
   document.getElementById('login').hidden = false;
-  setApiState('token required');
+  setApiState('login required');
 } else {
   setApiState('connecting…');
   for (const c of COLUMNS) {

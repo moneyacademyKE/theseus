@@ -200,10 +200,15 @@ bb -e "(require '[clojure.test :as t] '[e2e.web-test]) (t/run-tests 'e2e.web-tes
 ```
 
 **Security shape.** The API is strictly read-only — no code path writes.
-The server binds `127.0.0.1` only. Every `/api/*` route requires the
-bearer token stored at `<home>/.gui-token` (minted on first run); static
-assets are served from an exact-path whitelist, so traversal has no
-grammar. First load shows a token prompt; the browser remembers it.
+The server binds `127.0.0.1` only. Auth is a single master password:
+one-time setup on the host with `bb scripts/set_web_password.bb` (typed
+twice, minimum 8 characters; only a PBKDF2-SHA256 salt+hash lands on
+disk, at `<home>/.web-pass.edn`, owner-only permissions — never the
+password). The browser login exchanges it for a session token (7-day
+TTL, held in memory: a service restart or a password rotation logs
+everyone out) and every `/api/*` route requires that token. Until a
+password is set the deck answers 401 and says so. Static assets are
+served from an exact-path whitelist, so traversal has no grammar.
 
 **Online access.** `com.theseus.tunnel` runs a Cloudflare quick tunnel to
 the local server. Find the current public URL anytime:

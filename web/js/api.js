@@ -1,9 +1,29 @@
-// deck api — token-gated fetch + a poller that keeps the topbar honest.
+// deck api — session-gated fetch + a poller that keeps the topbar honest.
+// The stored credential is a session token minted by POST /api/login
+// (master password); it never equals the password itself.
 const TOKEN_KEY = 'theseus-deck-token';
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
 export function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+
+export async function login(password) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (res.status === 200) {
+    const session = await res.json();
+    setToken(session.token);
+    return session;
+  }
+  const err = await res.json().catch(() => ({}));
+  throw Object.assign(new Error('login failed'), {
+    code: err.error || 'unknown',
+    hint: err.hint || '',
+  });
+}
 
 export function showLogin() {
   const el = document.getElementById('login');
