@@ -165,6 +165,8 @@ runtime. Process sources live in `ops/launchd/` (installed copies are at
 | `com.theseus.schedule-tick` | every 60s | `bb daemon start --once` — fires due schedules |
 | `com.theseus.ai-stock-brief` | hourly at :05 | `bb brief` |
 | `com.theseus.watchdog-briefs` | every 60s | Brief-freshness watchdog + one debounced retry |
+| `com.theseus.web` | KeepAlive | The web deck: read-only GUI + JSON API on `127.0.0.1:8787` |
+| `com.theseus.tunnel` | KeepAlive | Cloudflare quick tunnel exposing the deck online |
 
 Every job sets `THESEUS_HOME=/Users/moe/theseus`; without the env var,
 Theseus defaults to `~/theseus`, so the variable is an override, not a
@@ -177,6 +179,44 @@ Reload one after editing its plist:
 launchctl bootout gui/$(id -u)/com.theseus.telegram
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.theseus.telegram.plist
 ```
+
+## Web deck
+
+A read-only, TweetDeck-style dashboard over live state: columns for LLM
+turns, the tool-funnel table, the RSI digest, session summaries, goals,
+schedule runs, and system health. Run it directly:
+
+```sh
+bb src/bb_agent/web.clj     # serves 127.0.0.1:8787 (THESEUS_WEB_PORT overrides)
+```
+
+The JSON API (`/api/status|turns|tools|rsi|sessions|goals|schedules`) and
+the static UI (`web/`) are served by `bb-agent.web` / `bb-agent.web-data`.
+Shape contract and auth behavior are pinned in `test/e2e/web_test.clj`
+(pure handler tests — the whole HTTP surface is one function):
+
+```sh
+bb -e "(require '[clojure.test :as t] '[e2e.web-test]) (t/run-tests 'e2e.web-test)"
+```
+
+**Security shape.** The API is strictly read-only — no code path writes.
+The server binds `127.0.0.1` only. Every `/api/*` route requires the
+bearer token stored at `<home>/.gui-token` (minted on first run); static
+assets are served from an exact-path whitelist, so traversal has no
+grammar. First load shows a token prompt; the browser remembers it.
+
+**Online access.** `com.theseus.tunnel` runs a Cloudflare quick tunnel to
+the local server. Find the current public URL anytime:
+
+```sh
+grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' ~/theseus/logs/tunnel.log | tail -1
+```
+
+Quick-tunnel URLs rotate on restart (they are unguessable but not
+stable). For a permanent `theseus.<your-domain>` URL, run
+`cloudflared tunnel login` once, then create a named tunnel and point its
+ingress at `http://127.0.0.1:8787` — the plist is the only thing that
+changes.
 
 ## Releases & rollback
 

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.theseus.tunnel</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/cloudflared</string>
+		<string>tunnel</string>
+		<string>--url</string>
+		<string>http://127.0.0.1:8787</string>
+		<string>--no-autoupdate</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/moe/theseus/theseus</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/Users/moe/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/moe/theseus/logs/tunnel.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/moe/theseus/logs/tunnel.log</string>
+</dict>
+</plist>
