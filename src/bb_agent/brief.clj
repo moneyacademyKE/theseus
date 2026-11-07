@@ -137,6 +137,19 @@
   {:covered (conj (:covered state) [ticker today])
    :queue (vec (remove #(= ticker %) (:queue state)))})
 
+(defn refill-queue
+  "An exhausted queue refills from the Binance universe: tradable names not
+   already covered, in universe order. A queue that still has entries is
+   never touched, and covered history is read-only here — recycle-oldest
+   owns the covered-list rewiring, refill only fills the empty case."
+  [state universe]
+  (if (seq (:queue state))
+    state
+    (let [covered (set (map first (:covered state)))]
+      (assoc state :queue
+             (vec (remove #(contains? covered %)
+                          (map :underlying (:tokens universe))))))))
+
 ;; ---------- pure: chunking ----------
 
 (defn chunk-text
@@ -335,6 +348,75 @@
    lock's stale window must cover this, or a live run's lock can be stolen
    mid-report."
   (* generation-timeout-ms (count section-plan)))
+
+(def prior-excerpt-max-chars
+  "Ceiling for what a prior brief may contribute to a pass prompt. The prior
+   is context, not cargo: 2026-10-10, an unbounded prior rode every pass and
+   ate the generation budget."
+  4000)
+
+(def ^:private prior-section-titles
+  "The sections that set and state the verdict. A prior brief is summarized
+   by its ends — the opening numbers and the final call. The narrative in
+   the middle is what the fresh report rewrites anyway."
+  #{"Executive Summary" "The Stat Block"
+    "Valuation: Update the Model" "Bottom Line and Verdict"})
+
+(def ^:private prior-section-body-max-chars
+  "Per-section budget inside an excerpt: the verdict sentences and their
+   numbers, nothing more."
+  700)
+
+(defn- prior-frontmatter
+  "The leading --- block, or nil when the report has none."
+  [report]
+  (when (str/starts-with? report "---\n")
+    (when-let [end (str/index-of report "\n---\n")]
+      (subs report 0 (+ end (count "\n---\n"))))))
+
+(defn- prior-sections
+  "Body blocks grouped by their **Section** header. A block only counts as
+   a header when it starts with **; blocks before the first header drop."
+  [body]
+  (reduce
+   (fn [sections block]
+     (if-let [title (and (str/starts-with? block "**")
+                         (second (re-find #"\*\*(.+?)\*\*" block)))]
+       (conj sections {:title title :header block :text []})
+       (if (seq sections)
+         (update-in sections [(dec (count sections)) :text] conj block)
+         sections)))
+   []
+   (str/split body #"\n\n+")))
+
+(defn- prior-section-excerpt
+  "One kept section: header verbatim, body capped to its budget."
+  [{:keys [header text]}]
+  (let [body (str/join "\n\n" text)]
+    (str header "\n\n"
+         (if (> (count body) prior-section-body-max-chars)
+           (subs body 0 prior-section-body-max-chars)
+           body))))
+
+(defn prior-excerpt
+  "A bounded excerpt of the previous brief: frontmatter plus the
+   verdict-bearing sections, each body-capped, cut announced up front. A
+   prior that already fits the ceiling passes through whole and silent."
+  [report]
+  (if (<= (count report) prior-excerpt-max-chars)
+    report
+    (let [fm (or (prior-frontmatter report) "")
+          body (if (str/blank? fm)
+                 report
+                 (str/triml (subs report (count fm))))
+          kept (->> (prior-sections body)
+                    (filter #(contains? prior-section-titles (:title %)))
+                    (map prior-section-excerpt))
+          note "[excerpted: verdict sections only — the full prior is on disk]"
+          out (str/join "\n\n" (remove str/blank? (cons note (cons fm kept))))]
+      (if (> (count out) prior-excerpt-max-chars)
+        (subs out 0 prior-excerpt-max-chars)
+        out))))
 
 (defn build-prompt
   "Fill the template. The 7-arity carries the sectioned-generation slots:
