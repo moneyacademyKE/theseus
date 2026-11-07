@@ -165,7 +165,7 @@ runtime. Process sources live in `ops/launchd/` (installed copies are at
 | `com.theseus.schedule-tick` | every 60s | `bb daemon start --once` — fires due schedules |
 | `com.theseus.ai-stock-brief` | hourly at :05 | `bb brief` |
 | `com.theseus.watchdog-briefs` | every 60s | Brief-freshness watchdog + one debounced retry |
-| `com.theseus.web` | KeepAlive | The web deck: read-only GUI + JSON API on `127.0.0.1:8787` |
+| `com.theseus.web` | KeepAlive | The web deck: interactive cockpit + read-only columns on `127.0.0.1:8787` |
 | `com.theseus.tunnel` | KeepAlive | Cloudflare quick tunnel exposing the deck online |
 
 Every job sets `THESEUS_HOME=/Users/moe/theseus`; without the env var,
@@ -182,33 +182,59 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.theseus.telegram.pli
 
 ## Web deck
 
-A read-only, TweetDeck-style dashboard over live state: columns for LLM
-turns, the tool-funnel table, the RSI digest, session summaries, goals,
-schedule runs, and system health. Run it directly:
+A TweetDeck-style dashboard over live state: the **cockpit** column is
+the interactive surface (full parity with how Theseus interacts over
+Telegram), and the rest are read-only columns for LLM turns, the
+tool-funnel table, the RSI digest, session summaries, goals, schedule
+runs, and system health. Run it directly:
 
 ```sh
 bb src/bb_agent/web.clj     # serves 127.0.0.1:8787 (THESEUS_WEB_PORT overrides)
 ```
 
-The JSON API (`/api/status|turns|tools|rsi|sessions|goals|schedules`) and
-the static UI (`web/`) are served by `bb-agent.web` / `bb-agent.web-data`.
-Shape contract and auth behavior are pinned in `test/e2e/web_test.clj`
-(pure handler tests — the whole HTTP surface is one function):
+**The cockpit (interactive).** Compose a message and the deck runs the
+same `core/run-turn!` the Telegram poller runs — one engine, two
+transports. A POST `/api/turn` queues a job on a single-threaded lane;
+the job streams tool-call events into the page (the ⚙️/✅/❌ flow), and
+when a tool call needs approval the job surfaces **approve / approve
+rest / deny** buttons (or a plain `approve`/`deny` message — same
+contract as Telegram, resolved through the same `state/approvals.edn`).
+Chat commands work verbatim: `/new /reset /usage /stats /autonomy
+/model <p/m> /goals /skills`, plus `/<skill-name> <input>`. Attachments
+upload via `PUT /api/attachment` and ride the same pipeline: text
+extraction for documents, the vision chain for images, STT for audio.
+The transcript is the session file itself — a session continued in the
+deck is the same conversation, and `POST /api/turn` results land in the
+history Telegram reads too. `/goal <spec>` launches route their
+progress and deliverables to the chat/topic named by `[:web
+:goal-chat-id]` in config.edn (unset: the deck says so honestly instead
+of going silent).
+
+**The read-only API** (`/api/status|turns|tools|rsi|sessions|goals|
+schedules`, plus `/api/session-list`, `/api/transcript?id=`) and the
+static UI (`web/`) are served by `bb-agent.web` / `bb-agent.web-data`,
+with the turn lane in `bb-agent.web-turn`. Shape contract and auth
+behavior are pinned in `test/e2e/web_test.clj` (pure handler tests —
+the whole HTTP surface is one function, plus an end-to-end turn pin
+through the `:fake` provider):
 
 ```sh
 bb -e "(require '[clojure.test :as t] '[e2e.web-test]) (t/run-tests 'e2e.web-test)"
 ```
 
-**Security shape.** The API is strictly read-only — no code path writes.
-The server binds `127.0.0.1` only. Auth is a single master password:
-one-time setup on the host with `bb scripts/set_web_password.bb` (typed
-twice, minimum 8 characters; only a PBKDF2-SHA256 salt+hash lands on
-disk, at `<home>/.web-pass.edn`, owner-only permissions — never the
-password). The browser login exchanges it for a session token (7-day
-TTL, held in memory: a service restart or a password rotation logs
-everyone out) and every `/api/*` route requires that token. Until a
-password is set the deck answers 401 and says so. Static assets are
-served from an exact-path whitelist, so traversal has no grammar.
+**Security shape.** The write surface sits behind the same single gate
+as everything else: a master password. One-time setup on the host with
+`bb scripts/set_web_password.bb` (typed twice, minimum 8 characters;
+only a PBKDF2-SHA256 salt+hash lands on disk, at
+`<home>/.web-pass.edn`, owner-only permissions — never the password).
+The browser login exchanges it for a session token (7-day TTL, held in
+memory: a service restart or a password rotation logs everyone out)
+and every `/api/*` route requires that token in the Authorization
+header. Login is rate-limited: five consecutive misses lock it for a
+minute, even for the right password. Until a password is set the deck
+answers 401 and says so. Static assets are served from an exact-path
+whitelist, so traversal has no grammar, and uploads are name-sanitized
+and byte-capped (20 MB).
 
 **Online access.** `com.theseus.tunnel` runs a Cloudflare quick tunnel to
 the local server. Find the current public URL anytime:

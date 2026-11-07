@@ -103,17 +103,47 @@
 
 ;; ---------- login ----------
 
+(def ^:private max-login-failures 5)
+(def ^:private login-lockout-ms 60000)
+
+(def ^:private login-failures
+  "Consecutive-failure counter for the login endpoint: the write surface
+  made this door load-bearing, so guessing gets expensive — 5 misses
+  lock it for a minute. In-memory: a restart clears it, and the password
+  record on disk is untouched."
+  (atom {:count 0 :locked-until 0}))
+
+(defn reset-login-failures!
+  "Tests: clear the lockout so a suite run never inherits it."
+  []
+  (reset! login-failures {:count 0 :locked-until 0}))
+
 (defn login!
   "Verify the master password against the record on disk; mint a session
-  token on success. Returns {:token .. :expires ..} or nil. Expired
-  entries are pruned on every attempt."
+  token on success. Returns {:token .. :expires ..}, {:locked true
+  :retry-ms n} while rate-limited, or nil on a bad password. Expired
+  entries are pruned on every attempt; a success resets the counter."
   [password]
-  (when-let [rec (and (password-set?)
-                      (try (edn/read-string (slurp (str (password-file))))
-                           (catch Exception _ nil)))]
-    (when (verify-password password rec)
-      (swap! sessions (fn [m] (into {} (remove (fn [[_ exp]] (<= exp (now)))) m)))
-      (let [token  (new-token)
-            expires (+ (now) session-ttl-ms)]
-        (swap! sessions assoc token expires)
-        {:token token :expires expires}))))
+  (let [{:keys [locked-until]} @login-failures]
+    (if (> locked-until (now))
+      {:locked true :retry-ms (- locked-until (now))}
+      (if-let [session (when-let [rec (and (password-set?)
+                                           (try (edn/read-string
+                                                 (slurp (str (password-file))))
+                                                (catch Exception _ nil)))]
+                         (when (verify-password password rec)
+                           (swap! sessions (fn [m]
+                                             (into {} (remove (fn [[_ exp]] (<= exp (now)))) m)))
+                           (let [token  (new-token)
+                                 expires (+ (now) session-ttl-ms)]
+                             (swap! sessions assoc token expires)
+                             {:token token :expires expires})))]
+        (do (reset! login-failures {:count 0 :locked-until 0})
+            session)
+        (do (swap! login-failures
+                   (fn [{:keys [count]}]
+                     (let [count (inc (long count))]
+                       (if (>= count max-login-failures)
+                         {:count count :locked-until (+ (now) login-lockout-ms)}
+                         {:count count :locked-until 0}))))
+            nil)))))

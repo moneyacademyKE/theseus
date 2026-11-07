@@ -83,7 +83,7 @@
   #{:providers :provider :model :session/id :provider/fallbacks
     :nudge-final-rounds :nudge-interval :max-tool-rounds
     :vision-chain :vision-model :goal :goal/max-authoring-rounds
-    :policy :approval/mode :notify :telegram
+    :policy :approval/mode :notify :telegram :web
     :retry :cwd :max-tokens :max-cost-usd})
 
 (defn- check-unknown-config-keys [cfg]

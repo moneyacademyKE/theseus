@@ -18,6 +18,27 @@
 </header>
 
 <main id="deck">
+  <section class="col col-wide" id="col-cockpit">
+    <header><h2>cockpit</h2><span class="count" id="cockpit-status">idle</span></header>
+    <div class="cockpit">
+      <div class="cockpit-sessions">
+        <select id="cockpit-session" title="session — the same files Telegram turns append to"></select>
+        <button type="button" id="cockpit-new" title="fresh session">+ new</button>
+      </div>
+      <div class="cockpit-transcript" id="cockpit-transcript"></div>
+      <div class="cockpit-job" id="cockpit-job" hidden></div>
+      <form class="cockpit-compose" id="cockpit-form">
+        <input type="file" id="cockpit-file" hidden multiple>
+        <div id="cockpit-attached" class="cockpit-attached"></div>
+        <div class="cockpit-row">
+          <button type="button" id="cockpit-attach" title="attach files, images, voice">📎</button>
+          <textarea id="cockpit-text" rows="2"
+            placeholder="message theseus…  (commands work: /new /usage /model /goals /skills /goal …)"></textarea>
+          <button type="submit" id="cockpit-send">send</button>
+        </div>
+      </form>
+    </div>
+  </section>
   <section class="col" id="col-flow">
     <header><h2>flow</h2><span class="count" data-count="flow"></span></header>
     <div class="body" data-body="flow" data-src="/api/turns" data-interval="10"></div>
@@ -51,7 +72,7 @@
 <div id="login" hidden>
   <form id="login-form">
     <div class="login-title"><span class="glyph">◉</span>theseus deck</div>
-    <p class="login-hint">Read-only deck, master-password gated.<br>
+    <p class="login-hint">Theseus deck, master-password gated.<br>
     One-time on the host: <code>bb scripts/set_web_password.bb</code></p>
     <input id="login-pass" type="password" placeholder="master password" autocomplete="current-password" autofocus>
     <button type="submit">unlock</button>

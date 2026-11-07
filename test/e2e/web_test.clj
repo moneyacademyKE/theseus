@@ -11,10 +11,12 @@
             [cheshire.core :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [bb-agent.approval :as approval]
             [bb-agent.config :as config]
             [bb-agent.web :as web]
             [bb-agent.web-auth :as auth]
-            [bb-agent.web-data :as data]))
+            [bb-agent.web-data :as data]
+            [bb-agent.web-turn :as turn]))
 
 (def ^:private deck-pass "deckpass-9")
 
@@ -30,12 +32,12 @@
              (pr-str (auth/hash-password deck-pass 1000))))
      (spit (str (fs/path home "state" "usage.edn"))
            (pr-str [{:usage/event :turn :created/at "2026-11-07T10:00:00Z"
-                     :model "m1" :ok true :session/id "s1"
+                     :model "m1" :ok true :session/id "s1" :provider :openai-compatible
                      :tokens/total 10 :cost/estimate-usd 0.0}
                     {:usage/event :tool :tool/name :shell
                      :tool/status :ok :ok true :created/at "2026-11-07T10:01:00Z"}
                     {:usage/event :turn :created/at "2026-11-07T10:02:00Z"
-                     :model "m2" :ok false :session/id "s1"
+                     :model "m2" :ok false :session/id "s1" :provider :openai-compatible
                      :tokens/total 20 :cost/estimate-usd 0.0}]))
      (spit (str (fs/path home "state" "schedule-runs.edn"))
            (pr-str [{:schedule/id "sched-x" :status :ok
@@ -226,3 +228,201 @@
         (is (= 404 (:status (web/app (req "/logs/usage.edn")))))
         (is (= 404 (:status (web/app (req "/api/login"
                                           {:request-method :get})))))))))
+
+;; ---------- cockpit: the interactive lane ----------
+
+(defn- wait-for-job
+  "Poll the job registry until :done/:failed or timeout. The lane runs
+  on a real executor thread; with-redefs rides the root binding, so the
+  job sees the fixture home."
+  [id timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (let [job (turn/job-view id)]
+        (if (or (nil? job) (contains? #{:done :failed} (:status job)))
+          job
+          (if (< (System/currentTimeMillis) deadline)
+            (do (Thread/sleep 50) (recur))
+            ::timeout))))))
+
+(defn- post-turn [token payload]
+  (web/app (req "/api/turn"
+                {:request-method :post
+                 :headers {"authorization" (str "Bearer " token)}
+                 :body (java.io.StringReader. (json/generate-string payload))})))
+
+(deftest cockpit-runs-a-real-turn-through-the-engine
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))
+                  config/load-config (fn [] {:provider :fake})]
+      (let [token (:token (body-json (do-login deck-pass)))
+            res (post-turn token {:session "web-e2e" :text "say pong"})]
+        (testing "submit answers 200 with a job id"
+          (is (= 200 (:status res)))
+          (is (string? (:job/id (body-json res)))))
+        (let [job (wait-for-job (:job/id (body-json res)) 20000)]
+          (testing "the turn runs on the shared engine and finishes"
+            (is (map? job))
+            (is (= :done (:status job)))
+            (is (= "pong" (:final job))))
+          (testing "the transcript endpoint serves the persisted session turn"
+            (let [get-res (web/app (req "/api/transcript"
+                                        {:headers {"authorization" (str "Bearer " token)}
+                                         :query-string "id=web-e2e"}))
+                  rows (body-json get-res)]
+              (is (= 200 (:status get-res)))
+              (is (= 1 (count rows)))
+              (is (= "say pong" (:input (first rows))))
+              (is (= "pong" (:final (first rows))))))
+          (testing "the session appears in the live session list"
+            (let [rows (body-json (web/app (req "/api/session-list"
+                                                {:headers {"authorization" (str "Bearer " token)}})))]
+              (is (some #(= "web-e2e" (:id %)) rows))))
+          (testing "fake-provider turns stay out of the usage ledger"
+            (is (= 3 (:events (body-json (web/app (authed "/api/status"))))))))))))
+
+(deftest cockpit-auth-gates-the-write-routes
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (testing "no token: turn, approval, upload, readers all refuse"
+        (is (= 401 (:status (web/app (req "/api/turn"
+                                          {:request-method :post
+                                           :body (java.io.StringReader. "{}")})))))
+        (is (= 401 (:status (web/app (req "/api/approval"
+                                          {:request-method :post
+                                           :body (java.io.StringReader. "{}")})))))
+        (is (= 401 (:status (web/app (req "/api/attachment"
+                                          {:request-method :put})))))
+        (is (= 401 (:status (web/app (req "/api/session-list")))))
+        (is (= 401 (:status (web/app (req "/api/transcript"
+                                          {:query-string "id=x"})))))))))
+
+(deftest cockpit-approval-decisions-resolve-pending-requests
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (let [token (:token (body-json (do-login deck-pass)))
+            pending (approval/create-pending! "web-appr" :web
+                                              {:tool/name "shell"
+                                               :tool/args {:cmd "ls"}})]
+        (swap! turn/jobs assoc "job-appr"
+               {:job/id "job-appr" :session/id "web-appr" :status :running
+                :events [] :approval {:id (:approval/id pending)
+                                      :tool "shell" :context "ls"}})
+        (testing "the decision POST resolves through approvals.edn"
+          (let [res (web/app (req "/api/approval"
+                                  {:request-method :post
+                                   :headers {"authorization" (str "Bearer " token)}
+                                   :body (java.io.StringReader.
+                                          (json/generate-string
+                                           {:id (:approval/id pending)
+                                            :decision "approve"}))}))]
+            (is (= 200 (:status res)))
+            (is (= "approve" (:decision (body-json res)))))
+          (is (= :approve (get-in (approval/load-state)
+                                  [:decisions (:approval/id pending)])))
+          (is (nil? (:approval (turn/job-view "job-appr")))))
+        (testing "a second decision on the same id is honestly refused"
+          (is (= 404 (:status (web/app (req "/api/approval"
+                                            {:request-method :post
+                                             :headers {"authorization" (str "Bearer " token)}
+                                             :body (java.io.StringReader.
+                                                    (json/generate-string
+                                                     {:id (:approval/id pending)
+                                                      :decision "deny"}))})))))
+        (testing "garbage decisions are refused without touching state"
+          (is (= 400 (:status (web/app (req "/api/approval"
+                                            {:request-method :post
+                                             :headers {"authorization" (str "Bearer " token)}
+                                             :body (java.io.StringReader.
+                                                    (json/generate-string
+                                                     {:id "nope" :decision "maybe"}))})))))
+        (testing "an unknown approval id maps to 404, not a crash"
+          (is (= 404 (:status (web/app (req "/api/approval"
+                                            {:request-method :post
+                                             :headers {"authorization" (str "Bearer " token)}
+                                             :body (java.io.StringReader.
+                                                    (json/generate-string
+                                                     {:id "ghost" :decision "deny"}))}))))))))))))
+
+(deftest cockpit-uploads-sanitize-and-derive-kind
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (let [img (turn/save-upload! "../../secrets/token.png" "image/png"
+                                  (.getBytes "PNGDATA"))]
+        (testing "traversal is stripped to a harmless basename under web/"
+          (is (= :photo (:kind img)))
+          (is (str/includes? (:path img) "channel_attachments/web"))
+          (is (str/ends-with? (:path img) "token.png"))
+          (is (not (str/includes? (:path img) "..")))
+          (is (fs/exists? (fs/path (:path img))))
+          (is (= 7 (:bytes img)))))
+      (testing "kind derivation: audio is a voice note, else a document"
+        (is (= :voice (:kind (turn/save-upload! "note.ogg" "audio/ogg"
+                                                (.getBytes "OGG")))))
+        (is (= :document (:kind (turn/save-upload! "notes.md" "text/markdown"
+                                                   (.getBytes "# hi"))))))
+      (testing "the byte cap throws for the route to map"
+        (is (thrown? Exception
+                     (turn/save-upload! "big.bin" "application/octet-stream"
+                                        (byte-array (inc (* 20 1024 1024)))))))
+      (testing "the upload route answers 200 with a descriptor (authed)"
+        (let [token (:token (body-json (do-login deck-pass)))
+              res (web/app (req "/api/attachment"
+                                {:request-method :put
+                                 :query-string "name=shot.png&mime=image%2Fpng"
+                                 :headers {"authorization" (str "Bearer " token)}
+                                 :body (java.io.ByteArrayInputStream.
+                                        (.getBytes "PNG2"))}))]
+          (is (= 200 (:status res)))
+          (is (= "photo" (:kind (body-json res)))))))))
+
+(deftest cockpit-chat-commands-answer-through-the-lane
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))
+                  config/load-config (fn [] {:provider :fake})]
+      (let [token (:token (body-json (do-login deck-pass)))
+            res (post-turn token {:session "web-cmd" :text "/usage"})]
+        (is (= 200 (:status res)))
+        (let [job (wait-for-job (:job/id (body-json res)) 20000)]
+          (testing "/usage answers without an LLM turn, same as Telegram"
+            (is (map? job))
+            (is (= :done (:status job)))
+            (is (str/starts-with? (str (:final job)) "📊 Usage:")))
+          (testing "command turns are recorded with :source command"
+            (let [get-res (web/app (req "/api/transcript"
+                                        {:headers {"authorization" (str "Bearer " token)}
+                                         :query-string "id=web-cmd"}))
+                  rows (body-json get-res)]
+              (is (= 200 (:status get-res)))
+              (is (= 1 (count rows)))
+              (is (= "command" (:source (first rows)))))))))))
+
+(deftest login-rate-limits-after-five-failures
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (with-redefs [config/home (fn [] (str home))]
+      (dotimes [_ 5]
+        (is (= 401 (:status (do-login "wrong-pass")))))
+      (testing "the sixth attempt is locked out — even with the right password"
+        (let [res (do-login deck-pass)]
+          (is (= 429 (:status res)))
+          (is (= "rate-limited" (:error (body-json res))))))
+      (testing "the lockout is per-process memory: a reset clears it"
+        (auth/reset-login-failures!)
+        (is (= 200 (:status (do-login deck-pass))))))))

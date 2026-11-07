@@ -30,7 +30,11 @@
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
 
-(defn- attachment-context
+(defn attachment-context
+  "One persisted attachment rendered as bounded turn-input context. Public:
+  the web lane persists its own uploads as the same descriptor shape
+  ({:kind :path :mime-type :bytes}) and reuses this renderer verbatim —
+  one attachment contract, two channels."
   [telegram-cfg saved]
   (when saved
     (let [voice-kind? (contains? #{:voice} (:kind saved))
@@ -78,11 +82,13 @@
       (str "\n[Context: the sender edited earlier messages since your last reply]\n"
            (str/join "\n" (->> taken reverse (take 3) reverse))))))
 
-(defn- chat-command
+(defn chat-command
   "Session-level commands answered without an LLM turn. /goal (with args)
-   also routes here so it never reaches the LLM or the skill matcher.
-   Build-verb messages auto-route to the goal loop too (owner directive
-   2026-09-06) — deterministic, never an LLM judgment."
+  also routes here so it never reaches the LLM or the skill matcher.
+  Build-verb messages auto-route to the goal loop too (owner directive
+  2026-09-06) — deterministic, never an LLM judgment. Public: the web
+  turn lane (bb-agent.web-turn) routes its compose box through the same
+  dispatch so both channels agree on what a command is."
   [text]
   (cond
     (and text (let [t (str/trim text)]
@@ -103,10 +109,11 @@
     nil)
       (when (goal-bridge/build-intent? text) :build-goal))))
 
-(defn- skill-command
-  "If text starts with /<skill-name>, returns composed prompt with skill body or nil.
-   Underscore spellings (the only form the Telegram menu can show for
-   hyphenated skills) resolve via bot-commands/resolve-skill."
+(defn skill-command
+  "If text starts with /<skill-name>, returns composed prompt with skill
+  body or nil. Public: the web compose box resolves skills through the
+  same matcher. Underscore spellings (the only form the Telegram menu can
+  show for hyphenated skills) resolve via bot-commands/resolve-skill."
   [text]
   (when (and text (str/starts-with? (str/trim text) "/"))
     (let [trimmed (str/trim text)
@@ -117,7 +124,10 @@
       (when-let [matched (bot-commands/resolve-skill skills cmd-name)]
         (skill/compose-prompt matched input)))))
 
-(defn- handle-chat-command
+(defn handle-chat-command
+  "Answer a chat command without an LLM turn. Public: shared verbatim
+  with the web turn lane (bb-agent.web-turn) — one implementation of
+  /new /usage /model /goals /skills, two channels."
   [cmd session-id text chat-id thread-id]
   (case cmd
     ;; :goal-request/:build-goal are intercepted in the dispatch before this
@@ -131,7 +141,8 @@
              "🧹 Session reset — fresh context from here.")
     :usage (let [r (usage/report)
                  by-provider (->> (:by-provider r)
-                                  (map (fn [[p v]] (str (name p) ": " (:tokens/total v) " tok")))
+                                  (map (fn [[p v]] (str (some-> p name) ": "
+                                                        (:tokens/total v) " tok")))
                                   (str/join ", "))]
              (str "📊 Usage: " (:usage/events r) " events, "
                   (:tokens/total r) " tokens"

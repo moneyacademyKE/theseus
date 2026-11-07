@@ -12,7 +12,8 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [bb-agent.config :as config]
-            [bb-agent.rsi :as rsi]))
+            [bb-agent.rsi :as rsi]
+            [bb-agent.session :as session]))
 
 ;; ---------- utilities ----------
 
@@ -139,3 +140,29 @@
      :digest-ms    (file-ms (fs/path (home) "state" "rsi" "digest.md"))
      :schedules    (count (or (read-edn (fs/path (home) "state" "schedules.edn")) []))
      :goal-count   (count (goal-rows))}))
+
+;; ---------- cockpit (interactive lane) ----------
+
+(defn session-list
+  "Live session metadata, newest first — the cockpit's session picker.
+  Reads the same metadata files the turn engine touches, so a session
+  created over Telegram appears here and vice versa."
+  []
+  (->> (session/list-metadata)
+       (mapv (fn [m] {:id      (:session/id m)
+                      :updated (:updated/at m)
+                      :model   (:model m)
+                      :cwd     (:cwd m)}))))
+
+(defn transcript
+  "One session's turn history, oldest first, display-bounded. The session
+  file is the durable record both channels append to under the same
+  lock — this reader never writes, it renders."
+  [session-id n]
+  (->> (session/load-turns session-id)
+       (take-last (long (or n 60)))
+       (mapv (fn [t]
+               {:input  (trunc (:user/input t) 6000)
+                :final  (trunc (:assistant/final t) 50000)
+                :source (some-> (:source t) name)
+                :ok     (boolean (:turn/ok t true))}))))

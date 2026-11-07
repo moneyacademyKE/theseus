@@ -1,7 +1,8 @@
-// deck main — clock (EAT, always), column wiring, login overlay.
+// deck main — clock (EAT, always), column wiring, login overlay, cockpit.
 import { getToken, login, poll, setApiState } from './api.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem } from './columns.js';
+import { bootCockpit } from './cockpit.js';
 
 const COLUMNS = [
   { key: 'flow',      render: renderTurns },
@@ -56,6 +57,7 @@ if (!getToken()) {
   setApiState('login required');
 } else {
   setApiState('connecting…');
+  bootCockpit();
   for (const c of COLUMNS) {
     const body = document.querySelector(`[data-body="${c.key}"]`);
     if (!body) continue;

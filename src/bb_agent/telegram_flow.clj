@@ -66,10 +66,12 @@
             tail (- n head 1)]
         (str (subs s 0 head) "…" (subs s (- (count s) tail)))))))
 
-(defn- tool-context
+(defn tool-context
   "The one-line hint for a tool call: the command for shell, the path for
    file tools, a bounded pr-str otherwise. Redacted — args can carry
-   secrets (a token inside a curl command)."
+   secrets (a token inside a curl command). Public: the web turn lane
+   reuses it for its job-event contexts — one redaction policy, two
+   surfaces."
   [tool-name args]
   (let [raw (case tool-name
               "shell" (:cmd args)
