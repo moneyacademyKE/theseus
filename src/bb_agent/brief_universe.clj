@@ -5,7 +5,8 @@
    list into one entry per company a report can actually research, and owns
    venue prices: the equity quote is what the company is worth, the Binance
    price is what the reader can actually trade."
-  (:require [babashka.http-client :as http]
+  (:require [babashka.fs :as fs]
+            [babashka.http-client :as http]
             [cheshire.core :as json]
             [clojure.string :as str]))
 
@@ -107,3 +108,39 @@
    (and (seq (:tokens universe))
         (:fetched-ms universe)
         (<= (- now (:fetched-ms universe)) stale-ms))))
+
+;; ---------- live universe ----------
+
+(def exchange-info-url
+  "Every symbol Binance lists. The universe is derived from this, never
+   hand-maintained."
+  "https://api.binance.com/api/v3/exchangeInfo")
+
+(defn fetch-universe
+  "The live universe from Binance exchangeInfo, or nil. One call, no retry —
+   a failed fetch falls back to recycling, never a failed run."
+  []
+  (try
+    (let [{:keys [status body]}
+          (http/get exchange-info-url {:throw false :timeout 15000})]
+      (when (= 200 status)
+        (let [symbols (:symbols (json/parse-string body true))]
+          (when (seq symbols)
+            {:tokens (binance-equity-tokens symbols)
+             :fetched-ms (System/currentTimeMillis)}))))
+    (catch Exception _ nil)))
+
+(defn load-universe
+  "The universe behind path: serve the cache while fresh, else refetch and
+   rewrite it. Nil when the cache is stale AND the fetch fails — a stale
+   universe is never served."
+  [path now stale-ms]
+  (or (try (let [cached (clojure.edn/read-string (slurp path))]
+             (when (fresh? cached now stale-ms) cached))
+           (catch Exception _ nil))
+      (when-let [u (fetch-universe)]
+        (try
+          (fs/create-dirs (fs/parent path))
+          (spit path (pr-str u))
+          (catch Exception _ nil))
+        u)))

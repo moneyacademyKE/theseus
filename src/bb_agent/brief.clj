@@ -51,6 +51,7 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [babashka.http-client :as http]
+            [bb-agent.brief-universe :as universe]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.outbox :as outbox]
@@ -64,6 +65,9 @@
 (def ^:private max-chunk 3800)            ; Telegram limit is 4096
 (def lock-stale-minutes 60) ; backstop only — a dead pid releases the lock at once
 (def generation-timeout-ms 900000) ; per pass, at the wire; the old top-level 600s never left the config
+(def ^:private universe-stale-ms (* 24 60 60 1000)) ; membership drifts slowly — a day is plenty
+
+(defn- universe-file [] (str (config/home) "/state/ai-brief/universe.edn"))
 
 (defn generation-cfg
   "The brief lane's generation config: the daemon default model with the long
@@ -150,6 +154,19 @@
              (vec (remove #(contains? covered %)
                           (map :underlying (:tokens universe))))))))
 
+(defn select-ticker
+  "The queue-empty decision, as data: the queued ticker first, then a refill
+   from the Binance universe, then recycling the oldest covered entry. Nil
+   only when all three sources are empty."
+  [state universe]
+  (or (when-let [queued (next-ticker state)]
+        {:ticker queued :state state})
+      (let [refilled (refill-queue state universe)]
+        (when-let [queued (next-ticker refilled)]
+          {:ticker queued :state refilled}))
+      (recycle-oldest state)))
+
+;; ---------- pure: chunking ----------
 ;; ---------- pure: chunking ----------
 
 (defn chunk-text
@@ -177,7 +194,7 @@
 
 ;; ---------- impure: data ----------
 
-(defn- tv-fetch
+(defn tv-fetch
   "One TradingView scanner call for `fields`. Returns the parsed map or
    nil (non-200, unparseable, connection error — all just 'no data')."
   [sym fields]
@@ -205,6 +222,40 @@
                   (do (jitter-sleep! 1500)
                       (tv-fetch sym fields)))))
           ["NASDAQ" "NYSE" ""])))
+
+(defn scanner-type
+  "TradingView security type for a ticker across NASDAQ and NYSE, or nil.
+   One no-retry probe per exchange — the caller paces the burst. This is
+   the universe's researchability oracle: a name that answers 'stock' or
+   'dr' here is a name fetch-quote can quote on the same exchange."
+  [ticker]
+  (some (fn [exch]
+          (when-let [row (tv-fetch (str exch ":" ticker) "type")]
+            (str (:type row))))
+        ["NASDAQ" "NYSE"]))
+
+(def ^:private queue-fill-cap 24) ; a day of hourly runs per refill
+
+(defn validated-universe
+  "The universe the queue may fill from: entries enriched with the
+   scanner's security type, kept only when universe/researchable? agrees.
+   The pure Binance filter cannot tell a tokenized equity (NVDAB → NVDA)
+   from a crypto symbol that happens to end in B (BNB → 'BN'), so
+   researchability is confirmed against TradingView before a name ever
+   reaches the queue. Covered names skip the probe — they are known good;
+   probes are paced; the work is capped at queue-fill-cap."
+  [u covered]
+  (if (empty? (:tokens u))
+    u
+    (let [candidates (remove #(contains? covered (:underlying %)) (:tokens u))]
+      {:tokens (loop [cs candidates, out []]
+                 (if (or (empty? cs) (>= (count out) queue-fill-cap))
+                   out
+                   (do
+                     (Thread/sleep 150)
+                     (let [e (assoc (first cs) :type (scanner-type (:underlying (first cs))))]
+                       (recur (rest cs) (if (universe/researchable? e) (conj out e) out))))))
+       :fetched-ms (:fetched-ms u)})))
 
 (defn- fetch-headlines
   "Google News RSS titles for the ticker, newest first, capped."
@@ -540,14 +591,21 @@
 
 (defn run-brief! [{:keys [dry-run?]}]
   (let [today (str (java.time.LocalDate/now))
-        state (parse-state (slurp (state-file)))
-        {:keys [ticker state]}
-        (if-let [queued (next-ticker state)]
-          {:ticker queued :state state}
-          (or (recycle-oldest state)
-              (throw (ex-info "rotation queue is empty — refill state.md" {}))))
+        state0 (parse-state (slurp (state-file)))
+        universe (when-not (next-ticker state0)
+                   (validated-universe
+                    (universe/load-universe (universe-file)
+                                            (System/currentTimeMillis)
+                                            universe-stale-ms)
+                    (set (map first (:covered state0)))))
+        {:keys [ticker state]} (or (select-ticker state0 universe)
+                                   (throw (ex-info "rotation queue is empty — refill state.md" {})))
         _ (when (str/blank? ticker)
             (throw (ex-info "rotation queue is empty — refill state.md" {})))
+        _ (when (and (nil? (next-ticker state0)) (next-ticker state))
+            (log! (str "queue exhausted — refilled "
+                       (count (:queue state))
+                       " tickers from the Binance universe")))
         _ (when-not (next-ticker state)
             (log! (str "queue exhausted — recycling oldest covered: " ticker)))
         _ (log! (str "brief start: " ticker
