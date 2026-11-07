@@ -140,3 +140,29 @@
         (is (str/includes? (:out result) "[WARN] :provider-reachable")))
       (finally
         (fs/delete-tree home)))))
+
+(deftest doctor-errors-on-unknown-config-keys
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-unknown-"})]
+    (try
+      (spit (str (fs/path home "config.edn"))
+            (pr-str (assoc valid-config
+                           :fallback-model-ids ["alicn/qwen3.8-max"])))
+      (let [result (shell! home "config" "doctor")]
+        (is (= 1 (:exit result)) (:out result))
+        (is (str/includes? (:out result) "[ERROR] :config-keys"))
+        (is (str/includes? (:out result) "fallback-model-ids")))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest doctor-accepts-provider-fallbacks-key
+  (let [home (fs/create-temp-dir {:prefix "theseus-doc-fbs-"})]
+    (try
+      (spit (str (fs/path home "config.edn"))
+            (pr-str (assoc valid-config
+                           :provider/fallbacks
+                           [{:provider "openai-compatible" :model "gpt-4.1-mini"}])))
+      (let [result (shell! home "config" "doctor")]
+        (is (= 0 (:exit result)) (:out result))
+        (is (str/includes? (:out result) "[OK] :config-keys")))
+      (finally
+        (fs/delete-tree home)))))

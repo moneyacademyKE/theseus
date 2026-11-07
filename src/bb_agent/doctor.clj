@@ -73,6 +73,29 @@
                    " — fix it or run: bb config restore-last-good")}
     {:status :ok :check :config-parse :message "config.edn parses"}))
 
+(def ^:private known-config-keys
+  "Top-level config.edn keys the application actually reads. Anything
+   outside this set is decoration — no code consumes it. The guard exists
+   because of :fallback-model-ids (2026-11-07): a fallback net that never
+   existed while the owner believed it did; 7 brief runs and 2 RSI turns
+   died on a single-provider path that looked guarded. Keep this list
+   current in the same change that adds a new top-level config key."
+  #{:providers :provider :model :session/id :provider/fallbacks
+    :nudge-final-rounds :nudge-interval :max-tool-rounds
+    :vision-chain :vision-model :goal :goal/max-authoring-rounds
+    :policy :approval/mode :notify :telegram
+    :retry :cwd :max-tokens :max-cost-usd})
+
+(defn- check-unknown-config-keys [cfg]
+  (let [unknown (remove known-config-keys (keys cfg))]
+    (if (seq unknown)
+      {:status :error :check :config-keys
+       :message (str "config.edn carries keys nothing reads: "
+                     (str/join ", " (map name unknown))
+                     " — a key no code consumes is a capability you believe in that does not exist")}
+      {:status :ok :check :config-keys
+       :message "All config.edn keys are consumed by the application"})))
+
 (defn- check-home-dir []
   (let [home (config/home)]
     (if (fs/exists? home)
@@ -152,6 +175,7 @@
       (let [cfg (:cfg result)]
         [(check-config-file)
          (check-config-parses nil)
+         (check-unknown-config-keys cfg)
          (check-telegram-config cfg)
          (check-home-dir)
          (check-home-writable)
