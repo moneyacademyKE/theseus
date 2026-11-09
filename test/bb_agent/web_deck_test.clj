@@ -188,7 +188,8 @@
 (deftest vendor-assets-serve
   (testing "vendored markdown libs serve through the whitelist, banners intact"
     (doseq [[uri banner] [["/vendor/marked.min.js" "marked v15"]
-                          ["/vendor/purify.min.js" "DOMPurify"]]]
+                          ["/vendor/purify.min.js" "DOMPurify"]
+                          ["/vendor/uplot.min.js" "uPlot (v1.6.32)"]]]
       (let [res (web/app {:request-method :get :uri uri :headers {}})]
         (is (= 200 (:status res)) uri)
         (is (str/includes? (:body res) banner) uri))))

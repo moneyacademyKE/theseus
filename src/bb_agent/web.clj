@@ -39,7 +39,9 @@
    "/js/main.js"   ["web/js/main.js"    "text/javascript; charset=utf-8"]
    "/js/md.js"    ["web/js/md.js"      "text/javascript; charset=utf-8"]
    "/vendor/marked.min.js" ["web/vendor/marked.min.js" "text/javascript; charset=utf-8"]
-   "/vendor/purify.min.js" ["web/vendor/purify.min.js" "text/javascript; charset=utf-8"]})
+   "/vendor/purify.min.js" ["web/vendor/purify.min.js" "text/javascript; charset=utf-8"]
+   "/vendor/uplot.min.js"  ["web/vendor/uplot.min.js" "text/javascript; charset=utf-8"]
+   "/vendor/uplot.min.css" ["web/vendor/uplot.min.css" "text/css; charset=utf-8"]})
 
 (defn- bearer [req]
   (some-> (get-in req [:headers "authorization"])
