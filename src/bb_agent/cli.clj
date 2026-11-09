@@ -349,19 +349,62 @@
         (case sub
           "fetch"
           (let [dry-run (boolean (some #{"--dry-run"} args))
-                {:keys [digest-path new already-seen]}
+                {:keys [digest-path new already-seen preserved unanalyzed
+                          seen-coverage id-blind-finds]}
                 (rsi-learn/fetch! {:dry-run? dry-run})]
             (println (str "rsi learn fetch: " new " new repo(s)"
                           " (" already-seen " already seen)"
                           (if dry-run " | dry-run — seen ledger untouched" "")
+                          (when preserved
+                            (str " | earlier digest preserved, not overwritten -> "
+                                 preserved))
+                          (when (seq unanalyzed)
+                            (str " | UNANALYZED earlier digest(s) — fetched and "
+                                 "marked seen, but no -recommendations.md sibling "
+                                 "exists, so those repos are lost to the lane "
+                                 "unless this turn reads them: "
+                                 (str/join ", " (mapv #(fs/file-name (fs/path %))
+                                                      unanalyzed))))
+                          ;; The denominator beside the gate (2026-11-08): a
+                          ;; rename gate can only fire on rows carrying an id, so
+                          ;; say how many of its own rows those are, and name any
+                          ;; find the ledger could NOT identify. Measured when
+                          ;; vicfei/dsh-dot came back renamed as
+                          ;; vicfei/deepseek-bot and slipped through as fresh.
+                          (when seen-coverage
+                            (str " | seen ids: " (:with-id seen-coverage) " of "
+                                 (:rows seen-coverage) " row(s) can settle a rename, "
+                                 (:id-blind seen-coverage) " cannot"))
+                          (when (seq id-blind-finds)
+                            (str " | ID-BLIND find(s) — no seen row could confirm "
+                                 "these are new, so a rename would be invisible: "
+                                 (str/join ", " id-blind-finds)))
                           " | digest -> " digest-path)))
 
           "propose"
           (let [[path] args]
             (if (str/blank? path)
               (usage! "Usage: bb rsi learn propose <recommendations.md>" 2)
-              (let [{:keys [added skipped]} (rsi-learn/propose! path)]
-                (println (str "rsi learn propose: " added " added, " skipped " skipped")))))
+              (let [{:keys [added skipped empty]} (rsi-learn/propose! path)
+                    ;; Ask the gate's coverage directly: propose!'s return carries
+                    ;; the keys only when the gate was UNARMED, so reading them here
+                    ;; would print coverage on one branch and silence on the other.
+                    g (rsi-learn/id-gate-report)]
+                (println (if empty
+                           (str "rsi learn propose: nothing to propose — the file"
+                                " states its own zero (verified, not refused)")
+                           (str "rsi learn propose: " added " added, " skipped
+                                " skipped"
+                                ;; A gate with no input reads as a gate that
+                                ;; passed, so say which one this was.
+                                (when g
+                                  (str " | id-gate: "
+                                       (if (:id-gate-armed g) "armed" "UNARMED")
+                                       " (" (:repo-blocks g) " repo block(s), "
+                                       (:with-id g) " carrying a `- id:` line"
+                                       (when-not (:id-gate-armed g)
+                                         ", so the rename dedupe cannot fire")
+                                       ")"))))))))
 
           (usage! "Usage: bb rsi learn fetch [--dry-run] | bb rsi learn propose <recommendations.md>" 2)))
 
