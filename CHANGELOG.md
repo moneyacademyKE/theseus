@@ -13,6 +13,7 @@
 - **Docs**: `docs/webdeck.md` (the deck's architecture on one page) and `ops/cloudflare-access.md` (edge identity check on the existing tunnel, ~10 minutes, free under 50 users).
 - **Tooling**: `bb release-assets` builds the standalone binary and attaches it + its sha256 to the GitHub release (verified live on v1.2.0); `bb lint` now covers the test tree too (six private-call errors fixed with var-quotes); the e2e web suite (14 tests, a real turn through the engine) is wired into `test:e2e:web` and `test:e2e:all` — it existed but nothing ran it.
 - **CI fixed for real**: every run since Nov 7 was red on environment, not code — unpinned giant-asset downloads and `curl -sL` without `-f` saved error pages as zips and exited 0. Babashka is pinned to the dev version (1.13.222) with install retries, downloads are `curl -fsSL --retry 4`, and `web/**` changes now trigger the suite. The go-sqlite3 pod rides the actions cache after its first successful download (`c95fe6b`) — the release CDN's 504 bursts (two hours of red, Nov 9) no longer reach the suite, and `bb lint` passes one target per `--lint` invocation (`c3de5c0`).
+- **Host-portable rsi-tools e2e**: the funnel test executed a real `git_status` with a hardcoded `/Users/moe` cwd — `:ok` on the dev machine, `:error` on the CI runner (run 42602535756). It now runs in a throwaway `git init` repo: same execution path, zero host assumptions.
 
 ## v1.2.0 - 2026-11-09
 

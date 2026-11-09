@@ -5,6 +5,7 @@
   the per-tool table and the tool-failures opportunity. Fixture isolation
   mirrors e2e.rsi-test: temp home via config/home redef."
   (:require [babashka.fs :as fs]
+            [babashka.process :as p]
             [bb-agent.rsi :as rsi]
             [bb-agent.tool :as tool]
             [bb-agent.usage :as usage]
@@ -16,6 +17,14 @@
     (fs/create-dirs (fs/path dir "state"))
     dir))
 
+(defn- temp-git-repo!
+  "A throwaway git repo: hermetic, host-portable cwd for the real git_status
+   execution (a hardcoded /Users/moe path 404s on the CI runner)."
+  []
+  (let [dir (str (fs/create-temp-dir))]
+    (p/shell {:dir dir} "git init -q .")
+    dir))
+
 (defn- tool-call!
   "One tool call inside `home`'s ledger. Defaults to a real git_status
   execution (auto-safe: read-only tools execute without approval)."
@@ -23,7 +32,7 @@
   (with-redefs [bb-agent.config/home (constantly home)]
     (tool/handle-tool-request (merge {:tool/name "git_status"
                                       :approval/policy :auto-safe
-                                      :tool/args {:cwd "/Users/moe/theseus/theseus"}
+                                      :tool/args {:cwd (temp-git-repo!)}
                                       :session/id "funnel-test"}
                                      request)
                               {})))
@@ -53,7 +62,7 @@
     (with-redefs [bb-agent.config/home (constantly home)]
       (tool/handle-tool-request {:tool/name "git_status"
                                  :approval/policy :auto-safe
-                                 :tool/args {:cwd "/Users/moe/theseus/theseus"}}
+                                 :tool/args {:cwd (temp-git-repo!)}}
                                 {})
       (is (= [] (usage/load-events))
           "no session id anywhere — a fixture, not signal; the live ledger
