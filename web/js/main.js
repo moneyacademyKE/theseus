@@ -108,20 +108,37 @@ if (!getToken()) {
     last[key] = sig;
     return true;
   };
+  const applyState = (st) => {
+    for (const [key, render] of RENDER) {
+      if (changed(key, st[key])) {
+        try { render(st[key]); } catch (_) { /* one column, one bad frame */ }
+        // the sparkline and the turns column read the same ledger —
+        // a changed turns payload means the ledger grew
+        if (key === 'turns') refreshUsage();
+      }
+    }
+    if (changed('status', st.status)) {
+      try { renderSystem(st.status); } catch (_) { /* ditto */ }
+    }
+    if (cockpit) { try { cockpit.onState(st); } catch (_) { /* ditto */ } }
+  };
+  // Instant paint: the last snapshot is cached locally, so a reload
+  // shows the deck immediately instead of a blank flash. The stream
+  // corrects it — a fresh channel gets current state within a second
+  // (per-channel fingerprints), so the cache only has to be close.
+  const SNAP_KEY = 'theseus-deck-snapshot';
+  try {
+    const cached = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null');
+    if (cached && typeof cached === 'object') {
+      setApiState('cached');
+      applyState(cached);
+    }
+  } catch (_) { /* corrupt cache — the stream paints anyway */ }
   stream({
     onState: (st) => {
-      for (const [key, render] of RENDER) {
-        if (changed(key, st[key])) {
-          try { render(st[key]); } catch (_) { /* one column, one bad frame */ }
-          // the sparkline and the turns column read the same ledger —
-          // a changed turns payload means the ledger grew
-          if (key === 'turns') refreshUsage();
-        }
-      }
-      if (changed('status', st.status)) {
-        try { renderSystem(st.status); } catch (_) { /* ditto */ }
-      }
-      if (cockpit) { try { cockpit.onState(st); } catch (_) { /* ditto */ } }
+      applyState(st);
+      // remember it for the next instant paint; quota loss is fine
+      try { localStorage.setItem(SNAP_KEY, JSON.stringify(st)); } catch (_) { /* stale cache, no crime */ }
     },
   });
   bootUsage();
