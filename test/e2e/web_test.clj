@@ -232,6 +232,9 @@
           (is (= 200 (:status html)))
           (is (str/includes? (:body html) "THESEUS"))
           (is (str/includes? (:body html) "master password"))
+          (is (str/includes? (:body html) "role=\"status\""))
+          (is (str/includes? (:body html) "aria-live=\"polite\""))
+          (is (str/includes? (:body html) "aria-label=\"push stream offline\""))
           (is (str/includes? (get-in html [:headers "Content-Type"]) "text/html")))
         (doseq [uri ["/css/deck.css" "/css/content.css" "/css/login.css"
                      "/css/cockpit.css" "/js/main.js"]]

@@ -30,17 +30,33 @@ export function showLogin() {
   if (el) el.hidden = false;
 }
 
+const LIVE_STATES = new Set(['live · push', 'live · poll']);
+
+function setDeckTitle(stateText) {
+  document.title = stateText && !LIVE_STATES.has(stateText)
+    ? 'THESEUS · deck — ' + stateText
+    : 'THESEUS · deck';
+}
+
 export function setApiState(text) {
   const el = document.getElementById('api-state');
   if (el) el.textContent = text;
+  setDeckTitle(text);
 }
 
 export function setLed(state) {
   const el = document.getElementById('live');
   if (!el) return;
   el.classList.remove('on', 'err');
-  if (state === 'on') el.classList.add('on');
-  if (state === 'err') el.classList.add('err');
+  if (state === 'on') {
+    el.classList.add('on');
+    el.setAttribute('aria-label', 'push stream live');
+  } else if (state === 'err') {
+    el.classList.add('err');
+    el.setAttribute('aria-label', 'push stream error');
+  } else {
+    el.setAttribute('aria-label', 'push stream offline');
+  }
 }
 
 export async function get(path) {
