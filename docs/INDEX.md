@@ -19,6 +19,9 @@
 - §19. Port proposal: OpenCrabs RSI + RTK (2026-08-30, investigation) — Analysis of token filters and self-improvement loop ports
 - 20. V5 execution record — RTK filters + RSI v1 (2026-08-30) — Both ports shipped; five defects self-caught
 - 21. v0.7.0 release + jar defect — 2026-08-30 — Release shipped; broken jar caught only by cold-run smoke
+- §22. Real work: tool advertisement (v0.8.0 arc) — Real model exposed unadvertised tools; registry shipped and pinned
+- 23. Telegram gateway — parity tier 1 (2026-08-30) — HTML rendering, fail-closed allowlist, poll loop, five defects
+- 24. Telegram group and forum-topic parity (2026-08-31) — Actor identity replaces chat identity; topic-scoped sessions
 - Telegram delivery integrity — bounded Retry-After, HTML-to-plain fallback, and authorized inert attachments (`TELEGRAM_DELIVERY_INTEGRITY_PARITY.md`)
 - Product-readiness audit + R1–R5 roadmap (2026-09-09) — durable outbox, graceful shutdown, boot health, log cap, stats, state hygiene gate; v0.9.0 (`docs/audits/product-readiness-audit-2026-09-09.md`)
 - Dogfood v0.9.0 (2026-09-09) — real goal over Telegram topic; authoring-stall watchdog recalibrated (progress-based fuse) (`docs/dogfood-v0.9.0-report.md`)
