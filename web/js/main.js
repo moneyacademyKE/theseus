@@ -60,12 +60,28 @@ if (!getToken()) {
 } else {
   setApiState('connecting…');
   const cockpit = bootCockpit();
+  // Per-column change detection: a push carries the WHOLE snapshot, so
+  // without this one changed file re-renders all seven columns. The
+  // server's per-second :now is excluded — the deck's clock is local.
+  const last = {};
+  const changed = (key, payload) => {
+    const sig = JSON.stringify(key === 'status'
+      ? { ...payload, now: undefined }
+      : payload);
+    if (last[key] === sig) return false;
+    last[key] = sig;
+    return true;
+  };
   stream({
     onState: (st) => {
       for (const [key, render] of RENDER) {
-        try { render(st[key]); } catch (_) { /* one column, one bad frame */ }
+        if (changed(key, st[key])) {
+          try { render(st[key]); } catch (_) { /* one column, one bad frame */ }
+        }
       }
-      try { renderSystem(st.status); } catch (_) { /* ditto */ }
+      if (changed('status', st.status)) {
+        try { renderSystem(st.status); } catch (_) { /* ditto */ }
+      }
       if (cockpit) { try { cockpit.onState(st); } catch (_) { /* ditto */ } }
     },
   });
