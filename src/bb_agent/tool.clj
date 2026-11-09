@@ -17,8 +17,21 @@
 (def ^:private handlers
   (merge file/handlers process/handlers telegram/handlers goal/handlers))
 
-(defn execute-tool-request [request]
+(defn execute-tool-request
+  "Run one tool request. The argument heal happens HERE as well as in
+   normalize-request, on purpose: this is the execution seam, so any caller that
+   reaches a handler without going through handle-tool-request — tests, the goal
+   runner, a future dispatch path — still cannot hand a handler a truthy string
+   where the schema declares a boolean. TYSA states the rule as: no tool can
+   ship unwrapped. The second pass is harmless because heals are idempotent.
+
+   Measured before this existed: write_file with :append? as the string false
+   APPENDED (any non-nil string is truthy in Clojure), so a model that asked to
+   overwrite got the old bytes kept plus the new ones — on the seam that writes
+   brain/."
+  [request]
   (let [{:tool/keys [name args]} request
+        args (common/heal-args (str name) args)
         handler (get handlers name)]
     (if handler
       (try
