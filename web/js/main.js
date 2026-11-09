@@ -1,5 +1,5 @@
 // deck main — clock (EAT, always), login overlay, the single push stream.
-import { getToken, login, stream, setApiState } from './api.js';
+import { getToken, login, stream, setApiState, showLogin } from './api.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem } from './columns.js';
 import { bootCockpit } from './cockpit.js';
@@ -31,6 +31,24 @@ tickClock();
 setInterval(tickClock, 1000);
 
 // ---- login overlay: the master password buys a session token ----
+const loginDialog = document.getElementById('login');
+if (loginDialog) {
+  loginDialog.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const focusables = [...loginDialog.querySelectorAll('input, button')]
+      .filter((el) => !el.disabled);
+    if (focusables.length < 2) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+}
 const form = document.getElementById('login-form');
 if (form) {
   form.addEventListener('submit', async (e) => {
@@ -56,7 +74,7 @@ if (form) {
 
 // ---- boot the deck: one push channel, everything rides it ----
 if (!getToken()) {
-  document.getElementById('login').hidden = false;
+  showLogin();
   setApiState('login required');
 } else {
   setApiState('connecting…');

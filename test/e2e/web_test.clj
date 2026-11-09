@@ -235,6 +235,11 @@
           (is (str/includes? (:body html) "role=\"status\""))
           (is (str/includes? (:body html) "aria-live=\"polite\""))
           (is (str/includes? (:body html) "aria-label=\"push stream offline\""))
+          (is (str/includes? (:body html) "role=\"dialog\""))
+          (is (str/includes? (:body html) "aria-modal=\"true\""))
+          (is (str/includes? (:body html) "aria-labelledby=\"login-title\""))
+          (is (str/includes? (:body html) "for=\"login-pass\""))
+          (is (str/includes? (:body html) "role=\"alert\""))
           (is (str/includes? (get-in html [:headers "Content-Type"]) "text/html")))
         (doseq [uri ["/css/deck.css" "/css/content.css" "/css/login.css"
                      "/css/cockpit.css" "/js/main.js"]]

@@ -27,7 +27,10 @@ export async function login(password) {
 
 export function showLogin() {
   const el = document.getElementById('login');
-  if (el) el.hidden = false;
+  if (!el) return;
+  el.hidden = false;
+  const pass = document.getElementById('login-pass');
+  if (pass) pass.focus();
 }
 
 const LIVE_STATES = new Set(['live · push', 'live · poll']);

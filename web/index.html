@@ -78,14 +78,15 @@
   </section>
 </main>
 
-<div id="login" hidden>
+<div id="login" hidden role="dialog" aria-modal="true" aria-labelledby="login-title">
   <form id="login-form">
-    <div class="login-title"><span class="glyph">◉</span>theseus deck</div>
+    <div class="login-title" id="login-title"><span class="glyph">◉</span>theseus deck</div>
     <p class="login-hint">Theseus deck, master-password gated.<br>
     One-time on the host: <code>bb scripts/set_web_password.bb</code></p>
-    <input id="login-pass" type="password" placeholder="master password" autocomplete="current-password" autofocus>
+    <label class="sr-only" for="login-pass">master password</label>
+    <input id="login-pass" type="password" placeholder="master password" autocomplete="current-password" aria-describedby="login-error" autofocus>
     <button type="submit">unlock</button>
-    <div id="login-error" class="login-error" hidden>wrong password</div>
+    <div id="login-error" class="login-error" role="alert" aria-live="assertive" hidden>wrong password</div>
   </form>
 </div>
 
