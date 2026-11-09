@@ -41,15 +41,6 @@
    "/vendor/marked.min.js" ["web/vendor/marked.min.js" "text/javascript; charset=utf-8"]
    "/vendor/purify.min.js" ["web/vendor/purify.min.js" "text/javascript; charset=utf-8"]})
 
-(def ^:private api-routes
-  {"/api/status"    data/status
-   "/api/turns"     #(data/recent-turns 60)
-   "/api/tools"     data/tool-rows
-   "/api/rsi"       data/rsi-snapshot
-   "/api/sessions"  data/session-rows
-   "/api/goals"     data/goal-rows
-   "/api/schedules" #(data/schedule-rows 40)})
-
 (defn- bearer [req]
   (some-> (get-in req [:headers "authorization"])
           (str/split #"\s+" 2)
@@ -186,6 +177,19 @@
                                     [(str (:job/id j)) v]))
                                 (snapshot-jobs)))})
 
+(def ^:private api-routes
+  "Read-only JSON surface. /api/state is the full snapshot the stream
+  pushes — the poll fallback rides it when EventSource can't hold a
+  pipe (proxy interference, ancient browser)."
+  {"/api/status"    data/status
+   "/api/state"     deck-snapshot
+   "/api/turns"     #(data/recent-turns 60)
+   "/api/tools"     data/tool-rows
+   "/api/rsi"       data/rsi-snapshot
+   "/api/sessions"  data/session-rows
+   "/api/goals"     data/goal-rows
+   "/api/schedules" #(data/schedule-rows 40)})
+
 (defn- fingerprint
   "Change detector: the snapshot minus the per-second clock."
   [snap]
@@ -235,9 +239,12 @@
                  "Cache-Control" "no-cache"
                  "X-Accel-Buffering" "no"}
         live?   (auth/session-live? (sse-token req))]
-    (server/with-channel req ch
-      (server/send! ch {:status 200 :headers headers} false)
-      (if-not live?
+  (server/with-channel req ch
+    (server/send! ch {:status 200 :headers headers} false)
+    ;; pin the browser's reconnect delay: the cross-origin default can
+    ;; stretch to minutes; 2s keeps a dropped tunnel from feeling dead.
+    (sse-write! ch "retry: 2000\n\n")
+    (if-not live?
         (do (sse-write! ch (sse-frame "unauthorized" "{}"))
             (sse-close! ch))
         (do (swap! sse-clients conj ch)

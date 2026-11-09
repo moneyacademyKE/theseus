@@ -128,6 +128,19 @@
       (is (= 401 (:status res)))
       (is (= "unauthorized" (get (json/parse-string (:body res) false) "error"))))))
 
+(deftest state-route-serves-the-full-snapshot
+  (testing "/api/state — the poll-fallback surface, token-gated"
+    (let [res (web/app {:request-method :get :uri "/api/state"
+                        :headers {"authorization" (str "Bearer " @token)}})
+          st  (json/parse-string (:body res) false)]
+      (is (= 200 (:status res)))
+      (doseq [k ["status" "turns" "tools" "rsi" "sessions" "goals"
+                 "schedules" "session-list" "jobs"]]
+        (is (contains? st k) (str "missing " k)))))
+  (testing "same gate as the rest of the API"
+    (let [res (web/app {:request-method :get :uri "/api/state" :headers {}})]
+      (is (= 401 (:status res))))))
+
 (deftest static-shell-serves
   (let [res (web/app {:request-method :get :uri "/" :headers {}})]
     (is (= 200 (:status res)))
