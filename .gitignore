@@ -9,3 +9,6 @@ bin/
 .tools/
 .axiom-state/
 .babashka/
+*.bak*
+*.pre-*
+scratch/
