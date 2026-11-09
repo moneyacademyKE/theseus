@@ -81,8 +81,8 @@
   </section>
 </main>
 
-<div id="login" hidden role="dialog" aria-modal="true" aria-labelledby="login-title">
-  <form id="login-form">
+<dialog id="login" aria-labelledby="login-title">
+  <form id="login-form" method="dialog">
     <div class="login-title" id="login-title"><span class="glyph">◉</span>theseus deck</div>
     <p class="login-hint">Theseus deck, master-password gated.<br>
     One-time on the host: <code>bb scripts/set_web_password.bb</code></p>
@@ -91,7 +91,7 @@
     <button type="submit">unlock</button>
     <div id="login-error" class="login-error" role="alert" aria-live="assertive" hidden>wrong password</div>
   </form>
-</div>
+</dialog>
 
 <!-- vendored, no CDN: markdown rendering (marked) + its sanitizer
      (DOMPurify). UMD builds exposing window.marked / window.DOMPurify;

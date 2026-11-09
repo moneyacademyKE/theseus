@@ -29,9 +29,9 @@ export async function login(password) {
 export function showLogin() {
   const el = document.getElementById('login');
   if (!el) return;
-  el.hidden = false;
-  const pass = document.getElementById('login-pass');
-  if (pass) pass.focus();
+  // Native <dialog>: showModal owns the focus trap, Esc, inert
+  // background, and centers the box. No-op if already open.
+  el.showModal();
 }
 
 const LIVE_STATES = new Set(['live · push', 'live · poll']);

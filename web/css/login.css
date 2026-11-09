@@ -1,17 +1,25 @@
-/* ---------- login overlay ---------- */
+/* ---------- login dialog ---------- */
+/* Native <dialog> + ::backdrop: the browser owns centering, the focus
+   trap, Esc, and making the rest of the page inert. */
 
 #login {
+  /* deck.css's universal reset zeroes margin, which kills the UA's
+     dialog:centering — restate it: fixed, inset 0, margin auto,
+     fit-content = centered both axes. */
   position: fixed;
   inset: 0;
-  background: rgba(6, 8, 12, 0.94);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10;
-  backdrop-filter: blur(3px);
+  width: fit-content;
+  height: fit-content;
+  margin: auto;
+  background: none;
+  border: 0;
+  padding: 0;
 }
 
-#login[hidden] { display: none; }
+#login::backdrop {
+  background: rgba(6, 8, 12, 0.94);
+  backdrop-filter: blur(3px);
+}
 
 #login-form {
   width: 320px;

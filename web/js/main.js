@@ -27,23 +27,16 @@ tickClock();
 setInterval(tickClock, 1000);
 setInterval(refreshTimes, 30000);
 
-// ---- login overlay: the master password buys a session token ----
+// ---- login dialog: the master password buys a session token ----
+// The focus trap used to live here — showModal() owns it now. What's
+// left is the one thing the native element changes: Esc closes the
+// dialog, so a locked deck needs a way back in that isn't an
+// instant-reopen loop. Any click re-arms it, once.
 const loginDialog = document.getElementById('login');
 if (loginDialog) {
-  loginDialog.addEventListener('keydown', (e) => {
-    if (e.key !== 'Tab') return;
-    const focusables = [...loginDialog.querySelectorAll('input, button')]
-      .filter((el) => !el.disabled);
-    if (focusables.length < 2) return;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
+  loginDialog.addEventListener('close', () => {
+    if (getToken()) return;
+    document.body.addEventListener('click', () => showLogin(), { once: true });
   });
 }
 const form = document.getElementById('login-form');
