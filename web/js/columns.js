@@ -34,9 +34,19 @@ function clearInto(colKey) {
   return { body, count };
 }
 
-function done(colKey, n) {
+function done(colKey, n, shown) {
   const count = document.querySelector(`[data-count="${colKey}"]`);
-  if (count) count.textContent = n != null ? String(n) : '';
+  if (count) {
+    const total = n != null ? n : 0;
+    const label = typeof n === 'number'
+      ? colKey + ': ' + total + (total === 1 ? ' item' : ' items')
+      : (n ? colKey + ': ' + n : colKey);
+    count.textContent = shown != null && shown < total
+      ? shown + '+'
+      : (n != null ? String(n) : '');
+    count.title = label;
+    count.setAttribute('aria-label', label);
+  }
   const col = document.getElementById('col-' + colKey);
   if (col) {
     col.classList.remove('flash');
@@ -63,7 +73,7 @@ function empty(body, text) {
 // ---- flow: recent LLM turns ----
 export function renderTurns(turns) {
   const { body } = clearInto('flow');
-  if (!Array.isArray(turns) || !turns.length) return empty(body), done('flow', 0);
+  if (!Array.isArray(turns) || !turns.length) return empty(body, 'no turns yet — the ledger starts with the first LLM call'), done('flow', 0);
   for (const t of turns.slice(0, 60)) {
     card(body, {
       ts: relTime(t.ts),
@@ -72,7 +82,7 @@ export function renderTurns(turns) {
       sub: `${t.session || ''} · ${t.tokens ?? '–'} tok`,
     });
   }
-  done('flow', turns.length);
+  done('flow', turns.length, Math.min(turns.length, 60));
 }
 
 // ---- tools: the funnel table ----
@@ -99,7 +109,7 @@ export function renderTools(rows) {
 
 export function renderRsi(snap) {
   const { body } = clearInto('rsi');
-  if (!snap || !snap.md) return empty(body, 'no digest yet'), done('rsi', '');
+  if (!snap || !snap.md) return empty(body, 'no digest yet — RSI writes the first one'), done('rsi', '');
   body.append(mdToNode(snap.md, 'digest'));
   const when = el('div', 'sub', snap.ms ? 'written ' + relTime(snap.ms) + ' ago' : '');
   when.style.padding = '8px 14px';
@@ -110,7 +120,7 @@ export function renderRsi(snap) {
 // ---- sessions ----
 export function renderSessions(rows) {
   const { body } = clearInto('sessions');
-  if (!Array.isArray(rows) || !rows.length) return empty(body), done('sessions', 0);
+  if (!Array.isArray(rows) || !rows.length) return empty(body, 'no sessions yet — say something in the cockpit'), done('sessions', 0);
   for (const s of rows.slice(0, 30)) {
     card(body, {
       ts: relTime(s.updated),
@@ -118,13 +128,13 @@ export function renderSessions(rows) {
       sub: s.summary || '',
     });
   }
-  done('sessions', rows.length);
+  done('sessions', rows.length, Math.min(rows.length, 30));
 }
 
 // ---- goals ----
 export function renderGoals(rows) {
   const { body } = clearInto('goals');
-  if (!Array.isArray(rows) || !rows.length) return empty(body), done('goals', 0);
+  if (!Array.isArray(rows) || !rows.length) return empty(body, 'no goal workspaces yet'), done('goals', 0);
   for (const g of rows) {
     card(body, {
       ts: g.updated ? relTime(g.updated) : '',
@@ -139,7 +149,7 @@ export function renderGoals(rows) {
 // ---- schedules ----
 export function renderSchedules(rows) {
   const { body } = clearInto('schedules');
-  if (!Array.isArray(rows) || !rows.length) return empty(body), done('schedules', 0);
+  if (!Array.isArray(rows) || !rows.length) return empty(body, 'no schedule runs yet'), done('schedules', 0);
   for (const r of rows.slice(0, 40)) {
     card(body, {
       ts: relTime(r.at),
@@ -148,13 +158,13 @@ export function renderSchedules(rows) {
       sub: r.final || '',
     });
   }
-  done('schedules', rows.length);
+  done('schedules', rows.length, Math.min(rows.length, 40));
 }
 
 // ---- system ----
 export function renderSystem(st) {
   const { body } = clearInto('system');
-  if (!st) return empty(body, 'no status'), done('system', '');
+  if (!st) return empty(body, 'no status snapshot'), done('system', '');
   const kv = (k, v, cls) => {
     const row = el('div', 'kv');
     row.append(el('span', 'k', k), el('span', 'v' + (cls ? ' ' + cls : ''), v));
