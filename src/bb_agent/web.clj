@@ -16,9 +16,9 @@
 
   Push: GET /api/events streams the whole deck as Server-Sent Events —
   one channel replaces every client poller. The broadcaster re-reads
-  the same readers the JSON routes use and pushes on change; a comment
-  ping every 15s keeps the cloudflared tunnel from closing a silent
-  pipe."
+  the same readers the JSON routes use and pushes on change; a named
+  ping event every 15s keeps the cloudflared tunnel from closing a
+  silent pipe AND gives the client a heartbeat it can watchdog."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
@@ -224,7 +224,12 @@
         (let [now (System/currentTimeMillis)]
           (when (> (- now (:last-ping @broadcaster)) sse-keepalive-ms)
             (swap! broadcaster assoc :last-ping now)
-            (doseq [ch @sse-clients] (sse-write! ch ": ping\n\n"))))
+            ;; a NAMED ping, not a comment: comments keep tunnels open but
+            ;; are invisible to EventSource, so the client cannot tell a
+            ;; quiet deck from a dead pipe. A ping event is a heartbeat
+            ;; the browser can watchdog.
+            (doseq [ch @sse-clients]
+              (sse-write! ch (sse-frame "ping" "{}")))))
         (catch Exception _ nil))
       (Thread/sleep sse-pulse-ms)
       (recur))))

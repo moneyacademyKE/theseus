@@ -42,7 +42,7 @@
       rdr)))
 
 (defn- read-event!
-  "The next data-carrying SSE frame; comment pings are skipped.
+  "The next data-carrying SSE frame; ping heartbeats are skipped.
   {:event name :data string}, or nil at EOF/timeout."
   [rdr]
   (loop [event nil data nil]
@@ -52,7 +52,9 @@
         (str/starts-with? line "event:") (recur (str/trim (subs line 6)) data)
         (str/starts-with? line "data:")  (recur event (str/trim (subs line 5)))
         (str/blank? line) (if (and event data)
-                            {:event event :data data}
+                            (if (= event "ping")
+                              (recur nil nil)
+                              {:event event :data data})
                             (recur nil nil))
         :else (recur event data)))))
 
