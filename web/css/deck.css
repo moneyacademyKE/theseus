@@ -110,10 +110,14 @@ body {
   border-top: 2px solid transparent;
 }
 
-.col.flash { animation: topflash 0.9s ease-out; }
+.col.flash { animation: topflash 0.45s ease-out; }
 @keyframes topflash {
   0%   { border-top-color: var(--accent); }
   100% { border-top-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .col.flash { animation: none; border-top-color: var(--accent); }
+  .led { transition: none; }
 }
 
 .col > header {
