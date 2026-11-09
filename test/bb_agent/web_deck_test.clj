@@ -158,6 +158,28 @@
     (let [res (web/app {:request-method :get :uri "/api/state" :headers {}})]
       (is (= 401 (:status res))))))
 
+(deftest usage-endpoint-buckets-the-ledger
+  (testing "/api/usage — 30 zero-filled daily buckets, newest last"
+    (let [today  (str (java.time.LocalDate/now))
+          yday   (str (.minusDays (java.time.LocalDate/now) 1))
+          ev     (fn [d tokens] {:usage/event :turn :created/at (str d "T12:00:00Z")
+                                 :tokens/total tokens :cost/estimate-usd 0.0 :ok true})]
+      (spit (str (fs/path (str (config/home)) "state" "usage.edn"))
+            (pr-str [(ev yday 100) (ev yday 50) (ev today 42)]))
+      (let [res (web/app {:request-method :get :uri "/api/usage"
+                          :headers {"authorization" (str "Bearer " @token)}})
+            rows (json/parse-string (:body res) false)]
+        (is (= 200 (:status res)))
+        (is (= 30 (count rows)))
+        (is (= today (get (nth rows 29) "date")) "newest last — time flows right")
+        (is (= 42 (get (nth rows 29) "tokens")))
+        (is (= 1 (get (nth rows 29) "turns")))
+        (is (= 150 (get (nth rows 28) "tokens")) "yesterday's two turns summed")
+        (is (= 0 (get (nth rows 0) "tokens")) "ancient days zero-filled"))))
+  (testing "same gate as the rest of the API"
+    (let [res (web/app {:request-method :get :uri "/api/usage" :headers {}})]
+      (is (= 401 (:status res))))))
+
 (deftest static-shell-serves
   (let [res (web/app {:request-method :get :uri "/" :headers {}})]
     (is (= 200 (:status res)))

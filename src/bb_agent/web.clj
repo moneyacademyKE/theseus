@@ -200,6 +200,7 @@
   pipe (proxy interference, ancient browser)."
   {"/api/status"    data/status
    "/api/state"     deck-snapshot
+   "/api/usage"     data/usage-series
    "/api/turns"     #(data/recent-turns 60)
    "/api/tools"     data/tool-rows
    "/api/rsi"       data/rsi-snapshot

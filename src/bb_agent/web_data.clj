@@ -141,6 +141,26 @@
      :schedules    (count (or (read-edn (fs/path (home) "state" "schedules.edn")) []))
      :goal-count   (count (goal-rows))}))
 
+(defn usage-series
+  "Daily turn/token/cost buckets for the deck sparkline, zero-filled —
+  a day with no turns is a zero bar, not a gap that lies about the
+  past. Newest last, so time flows right on the chart. Unpriced turns
+  contribute 0.0 cost, the honest number for them."
+  ([] (usage-series 30))
+  ([days]
+   (let [by-day (->> (events)
+                     (filter #(= :turn (:usage/event %)))
+                     (group-by (fn [e] (subs (str (:created/at e)) 0 10))))
+         today  (java.time.LocalDate/now)
+         bucket (fn [i]
+                  (let [d  (str (.minusDays today i))
+                        es (get by-day d)]
+                    {:date   d
+                     :turns  (count es)
+                     :tokens (reduce + 0 (keep :tokens/total es))
+                     :cost   (reduce + 0.0 (keep :cost/estimate-usd es))}))]
+     (mapv bucket (range (dec days) -1 -1)))))
+
 ;; ---------- cockpit (interactive lane) ----------
 
 (defn session-list
