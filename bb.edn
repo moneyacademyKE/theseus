@@ -119,6 +119,8 @@
      release {:doc "Cut a release: date the Unreleased changelog, bump version, commit + tag. Usage: bb release vX.Y.Z [--dry-run]"
               :requires ([bb-agent.release :as release])
               :task (release/run! *command-line-args*)}
+     binary {:doc "Build standalone executable from a tag (bb app archive + ad-hoc codesign). Usage: bb binary [tag] [out-dir]"
+             :task (shell "bash" "script/build-binary.sh" (or (first *command-line-args*) "") (or (second *command-line-args*) ""))}
      usage:index {:doc "Rebuild the sqlite usage index from state/usage.edn."
                   :requires ([bb-agent.store :as store])
                   :task (println "indexed" (store/index-usage!) "events")}
