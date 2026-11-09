@@ -1,6 +1,6 @@
 /* ---------- cockpit (interactive column) ---------- */
 
-.col-wide { width: 460px; }
+.col-wide { width: min(460px, 100%); }
 
 .cockpit {
   display: flex;
@@ -163,5 +163,5 @@
 .cockpit-row textarea:focus { border-color: var(--accent); }
 
 @media (max-width: 640px) {
-  .col-wide { width: 100vw; }
+  .col-wide { width: 100%; }
 }

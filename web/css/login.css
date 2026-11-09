@@ -56,5 +56,5 @@
 .login-error { color: var(--fail); font-size: 13px; }
 
 @media (max-width: 640px) {
-  .col { width: 100vw; min-width: 260px; }
+  #login-form { width: min(320px, calc(100vw - 32px)); }
 }

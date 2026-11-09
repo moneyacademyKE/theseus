@@ -100,6 +100,23 @@ body {
   background: var(--hair);
 }
 
+/* responsive: below 900px the deck becomes a vertical grid, so phone
+   users scroll down through columns instead of hunting horizontally. */
+@media (max-width: 900px) {
+  #topbar { flex-wrap: wrap; row-gap: 6px; }
+  #deck {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .col { width: auto; min-width: 0; min-height: 70vh; }
+}
+@media (max-width: 640px) {
+  #deck { grid-template-columns: 1fr; }
+  .col { min-height: 75vh; }
+}
+
 .col {
   width: 340px;
   min-width: 300px;
