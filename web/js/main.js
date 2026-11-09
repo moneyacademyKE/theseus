@@ -1,5 +1,6 @@
 // deck main — clock (EAT, always), login overlay, the single push stream.
-import { getToken, login, stream, setApiState, showLogin } from './api.js';
+import { getToken, login, stream, showLogin } from './api.js';
+import { setConn } from './state.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem, refreshTimes } from './columns.js';
 import { bootCockpit } from './cockpit.js';
@@ -94,9 +95,9 @@ if (form) {
 // ---- boot the deck: one push channel, everything rides it ----
 if (!getToken()) {
   showLogin();
-  setApiState('login required');
+  setConn('login required');
 } else {
-  setApiState('connecting…');
+  setConn('connecting…');
   const cockpit = bootCockpit();
   // Per-column change detection: a push carries the WHOLE snapshot, so
   // without this one changed file re-renders all seven columns. The
@@ -133,7 +134,7 @@ if (!getToken()) {
   try {
     const cached = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null');
     if (cached && typeof cached === 'object') {
-      setApiState('cached');
+      setConn('cached');
       applyState(cached);
     }
   } catch (_) { /* corrupt cache — the stream paints anyway */ }

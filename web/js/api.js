@@ -1,6 +1,10 @@
 // deck api — session-gated fetch, login, and the single push stream.
 // The stored credential is a session token minted by POST /api/login
 // (master password); it never equals the password itself.
+// Status surfaces (text, led, title, data-conn) live in state.js —
+// the connection machine's single source of truth.
+import { setConn, setLed } from './state.js';
+
 const TOKEN_KEY = 'theseus-deck-token';
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
@@ -34,35 +38,6 @@ export function showLogin() {
   el.showModal();
 }
 
-const LIVE_STATES = new Set(['live · push', 'live · poll']);
-
-function setDeckTitle(stateText) {
-  document.title = stateText && !LIVE_STATES.has(stateText)
-    ? 'THESEUS · deck — ' + stateText
-    : 'THESEUS · deck';
-}
-
-export function setApiState(text) {
-  const el = document.getElementById('api-state');
-  if (el) el.textContent = text;
-  setDeckTitle(text);
-}
-
-export function setLed(state) {
-  const el = document.getElementById('live');
-  if (!el) return;
-  el.classList.remove('on', 'err');
-  if (state === 'on') {
-    el.classList.add('on');
-    el.setAttribute('aria-label', 'push stream live');
-  } else if (state === 'err') {
-    el.classList.add('err');
-    el.setAttribute('aria-label', 'push stream error');
-  } else {
-    el.setAttribute('aria-label', 'push stream offline');
-  }
-}
-
 export async function get(path) {
   const res = await fetch(path, {
     headers: { Authorization: 'Bearer ' + getToken() },
@@ -87,9 +62,18 @@ export async function get(path) {
 // ?token= on this one route.
 const FALLBACK_AFTER_MS = 20000;
 const POLL_MS = 5000;
+// The server pings every 15s exactly so the client can tell a quiet
+// deck from a dead pipe. EventSource fires onerror when the OS
+// delivers the close — but a half-open pipe (partition, sleep, a
+// tunnel dying without FIN) delivers nothing at all, and `live` would
+// be a lie forever. So the client watchdogs the heartbeat: three
+// missed pings and the stream degrades to poll, which finds out the
+// truth within one POLL_MS.
+const HEARTBEAT_STALE_MS = 45000;
 
 export function stream({ onState }) {
   let pollTimer = null;
+  let watchdogTimer = null;
   let fellBack = false;
   let dead = false;
   let lastOk = Date.now();
@@ -99,31 +83,41 @@ export function stream({ onState }) {
   function stop() {
     dead = true;
     if (pollTimer) clearInterval(pollTimer);
+    if (watchdogTimer) clearInterval(watchdogTimer);
     pollTimer = null;
+    watchdogTimer = null;
   }
 
   function startPoll() {
     fellBack = true;
-    setApiState('live · poll');
+    setConn('live · poll');
     setLed('on');
     pollTimer = setInterval(async () => {
       try {
         const st = await get('/api/state');
         markOk();
-        setApiState('live · poll');
+        setConn('live · poll');
         try { onState(st); } catch (_) { /* renderer isolation, same as push */ }
       } catch (ex) {
-        if (ex && ex.unauthorized) { stop(); }
-        else { setLed('err'); setApiState('offline'); }
+        if (ex && ex.unauthorized) { stop(); setConn('login required'); }
+        else { setConn('offline'); }
       }
     }, POLL_MS);
   }
 
   const es = new EventSource('/api/events?token=' + encodeURIComponent(getToken()));
+  watchdogTimer = setInterval(() => {
+    if (dead || fellBack) return;
+    if (Date.now() - lastOk > HEARTBEAT_STALE_MS) {
+      es.close();
+      dead = true;
+      startPoll();
+    }
+  }, 5000);
   es.onopen = markOk;
   es.addEventListener('state', (e) => {
     markOk();
-    setApiState('live · push');
+    setConn('live · push');
     try { onState(JSON.parse(e.data)); } catch (_) { /* one bad frame never kills the deck */ }
   });
   es.addEventListener('ping', markOk);
@@ -131,8 +125,7 @@ export function stream({ onState }) {
     stop();
     es.close();
     showLogin();
-    setApiState('login required');
-    setLed('err');
+    setConn('login required');
   });
   es.onerror = () => {
     if (dead || fellBack) return;
@@ -142,8 +135,7 @@ export function stream({ onState }) {
       startPoll();
       return;
     }
-    setLed('err');
-    setApiState('reconnecting…');
+    setConn('reconnecting…');
   };
   return { stop };
 }

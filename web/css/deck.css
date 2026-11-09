@@ -87,6 +87,7 @@ body {
   transition: background 0.4s;
 }
 .led.on  { background: var(--ok); box-shadow: 0 0 6px rgba(67, 178, 111, 0.7); }
+.led.warn { background: var(--warn); box-shadow: 0 0 6px rgba(217, 160, 60, 0.7); }
 .led.err { background: var(--fail); box-shadow: 0 0 6px rgba(229, 72, 77, 0.7); }
 
 /* ---- mini cockpit (Document Picture-in-Picture) ---- */

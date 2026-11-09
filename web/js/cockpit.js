@@ -2,7 +2,7 @@
 // run (live tool flow), answer approvals, read the transcript. The same
 // engine Telegram rides; the session file is the shared history, so a
 // session continued here is a session continued there.
-import { get, getToken, setApiState } from './api.js';
+import { get, getToken } from './api.js';
 import { mdToNode } from './md.js';
 import { relTime } from './time.js';
 
@@ -190,7 +190,13 @@ async function decide(id, decision) {
   try {
     await post('/api/approval', { id, decision });
   } catch (e) {
-    setApiState('approval failed: ' + e.message);
+    // errors belong to the action that caused them, not the connection
+    // line — the alert element the shell already reserves for this
+    const error = el('cockpit-error');
+    if (error) {
+      error.textContent = 'approval failed — ' + e.message;
+      error.hidden = false;
+    }
   }
 }
 
@@ -304,7 +310,6 @@ async function send() {
     watchJob(job['job/id']);
   } catch (e) {
     el('cockpit-status').textContent = 'send failed';
-    setApiState('turn submit failed: ' + e.message);
     if (error) {
       error.textContent = 'send failed — ' + e.message;
       error.hidden = false;
