@@ -146,6 +146,10 @@
   font-family: var(--mono);
   cursor: pointer;
 }
+.chip:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
 
 .cockpit-row { display: flex; gap: 6px; align-items: flex-end; }
 

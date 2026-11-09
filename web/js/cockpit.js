@@ -116,6 +116,9 @@ async function loadTranscript() {
 // ---------- attachments ----------
 
 async function uploadFiles(files) {
+  state.uploading = true;
+  const attachButton = el('cockpit-attach');
+  if (attachButton) attachButton.disabled = true;
   for (const f of files) {
     try {
       const buf = await f.arrayBuffer();
@@ -124,21 +127,29 @@ async function uploadFiles(files) {
       const desc = await put('/api/attachment' + q, buf);
       state.attachments.push({ id: desc['upload/id'], name: f.name });
     } catch (e) {
-      setApiState('upload failed: ' + e.message);
+      const error = el('cockpit-error');
+      if (error) {
+        error.textContent = 'upload failed — ' + e.message;
+        error.hidden = false;
+      }
     }
   }
+  state.uploading = false;
+  if (attachButton) attachButton.disabled = false;
   renderAttachments();
 }
 
 function renderAttachments() {
   const box = el('cockpit-attached');
   if (!box) return;
-  box.innerHTML = '';
+  box.replaceChildren();
   for (const a of state.attachments) {
-    const chip = document.createElement('span');
+    const chip = document.createElement('button');
+    chip.type = 'button';
     chip.className = 'chip';
     chip.textContent = a.name;
     chip.title = 'click to remove';
+    chip.setAttribute('aria-label', 'remove attachment ' + a.name);
     chip.onclick = () => {
       state.attachments = state.attachments.filter((x) => x.id !== a.id);
       renderAttachments();
