@@ -179,6 +179,21 @@ body {
   border-bottom: 1px solid var(--hair);
 }
 
+.session-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.session-card:hover, .session-card:focus-visible {
+  background: rgba(57, 197, 207, 0.06);
+}
+
 .card .row1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 
 .ts {

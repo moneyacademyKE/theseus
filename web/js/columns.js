@@ -138,16 +138,25 @@ export function renderRsi(snap) {
 }
 
 // ---- sessions ----
+function sessionCard(body, s) {
+  const c = el('button', 'card session-card');
+  c.type = 'button';
+  c.setAttribute('aria-label', 'open session ' + (s.id || 'session') + ' in the cockpit');
+  const r1 = el('div', 'row1');
+  if (s.updated) r1.append(timeNode(s.updated));
+  c.append(r1);
+  c.append(el('div', 'title', s.id || 'session'));
+  if (s.summary) c.append(el('div', 'sub', s.summary));
+  c.addEventListener('click', () => {
+    window.dispatchEvent(new CustomEvent('theseus:open-session', {detail: s.id}));
+  });
+  body.append(c);
+}
+
 export function renderSessions(rows) {
   const { body } = clearInto('sessions');
   if (!Array.isArray(rows) || !rows.length) return empty(body, 'no sessions yet — say something in the cockpit'), done('sessions', 0);
-  for (const s of rows.slice(0, 30)) {
-    card(body, {
-      ts: s.updated,
-      title: s.id || 'session',
-      sub: s.summary || '',
-    });
-  }
+  for (const s of rows.slice(0, 30)) sessionCard(body, s);
   done('sessions', rows.length, Math.min(rows.length, 30));
 }
 

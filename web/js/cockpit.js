@@ -41,10 +41,16 @@ async function put(path, body) {
 
 // The picker rides the push: the stream carries session-list with
 // every state event, so there is nothing left to poll.
+let lastSessionRows = [];
+
 function refreshSessions(rows) {
   const sel = el('cockpit-session');
-  if (!sel || !Array.isArray(rows)) return;
-  sel.innerHTML = '';
+  if (!sel) return;
+  if (Array.isArray(rows)) lastSessionRows = rows;
+  const list = Array.isArray(rows)
+    ? rows
+    : (lastSessionRows.length ? lastSessionRows : [{id: state.session}]);
+  sel.replaceChildren();
   const opt = (id, label) => {
     const o = document.createElement('option');
     o.value = id;
@@ -52,9 +58,9 @@ function refreshSessions(rows) {
     if (id === state.session) o.selected = true;
     sel.appendChild(o);
   };
-  const known = new Set(rows.map((r) => r.id));
+  const known = new Set(list.map((r) => r.id));
   opt(state.session, state.session + (known.has(state.session) ? '' : '  (new)'));
-  for (const r of rows) if (r.id !== state.session) opt(r.id, r.id);
+  for (const r of list) if (r.id !== state.session) opt(r.id, r.id);
 }
 
 function pickSession(id) {
@@ -250,6 +256,9 @@ export function bootCockpit() {
   el('cockpit-file').addEventListener('change', (e) => {
     if (e.target.files && e.target.files.length) uploadFiles([...e.target.files]);
     e.target.value = '';
+  });
+  window.addEventListener('theseus:open-session', (e) => {
+    if (e.detail && e.detail !== state.session) pickSession(e.detail);
   });
   loadTranscript();
   // Everything else rides the push: the session list arrives in every
