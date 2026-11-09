@@ -506,3 +506,15 @@ body {
   padding: 3px 8px;
   text-align: left;
 }
+
+/* ---- usage sparkline (system column) ---- */
+
+.usage {
+  flex: 0 0 auto;
+  padding: 6px 10px 2px;
+  border-bottom: 1px solid var(--hair);
+}
+
+.usage:empty { padding: 0; border-bottom: 0; }
+
+.usage canvas { display: block; }

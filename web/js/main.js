@@ -3,6 +3,7 @@ import { getToken, login, stream, setApiState } from './api.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem } from './columns.js';
 import { bootCockpit } from './cockpit.js';
+import { bootUsage, refreshUsage } from './usage.js';
 
 // One renderer per snapshot field. A throwing renderer skips its own
 // frame and never kills the others — the same isolation the old
@@ -77,6 +78,9 @@ if (!getToken()) {
       for (const [key, render] of RENDER) {
         if (changed(key, st[key])) {
           try { render(st[key]); } catch (_) { /* one column, one bad frame */ }
+          // the sparkline and the turns column read the same ledger —
+          // a changed turns payload means the ledger grew
+          if (key === 'turns') refreshUsage();
         }
       }
       if (changed('status', st.status)) {
@@ -85,4 +89,5 @@ if (!getToken()) {
       if (cockpit) { try { cockpit.onState(st); } catch (_) { /* ditto */ } }
     },
   });
+  bootUsage();
 }
