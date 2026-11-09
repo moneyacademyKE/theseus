@@ -3,6 +3,7 @@ import { getToken, login, stream, setApiState, showLogin } from './api.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem, refreshTimes } from './columns.js';
 import { bootCockpit } from './cockpit.js';
+import { bootSearch } from './search.js';
 import { bootUsage, refreshUsage } from './usage.js';
 import { eatClock } from './time.js';
 
@@ -141,5 +142,6 @@ if (!getToken()) {
       try { localStorage.setItem(SNAP_KEY, JSON.stringify(st)); } catch (_) { /* stale cache, no crime */ }
     },
   });
+  bootSearch();
   bootUsage();
 }

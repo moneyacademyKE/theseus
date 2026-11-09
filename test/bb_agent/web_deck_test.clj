@@ -180,6 +180,37 @@
     (let [res (web/app {:request-method :get :uri "/api/usage" :headers {}})]
       (is (= 401 (:status res))))))
 
+(deftest search-endpoint-runs-fts-over-sessions
+  (fs/create-dirs (fs/path (str (config/home)) "state" "sessions"))
+  (spit (str (fs/path (str (config/home)) "state" "sessions" "search-fixture.edn"))
+        (pr-str [{:user/input "route fixture query"
+                  :assistant/final "the kanarphrase hides here"
+                  :source :web :turn/ok true}]))
+  (testing "auth'd query returns the hit with snippet markers"
+    (let [res (web/app {:request-method :get
+                        :uri "/api/search"
+                        :query-string "q=kanarphrase"
+                        :headers {"authorization" (str "Bearer " @token)}})
+          body (json/parse-string (:body res) true)]
+      (is (= 200 (:status res)))
+      (is (= 1 (count body)))
+      (is (= "search-fixture" (:id (first body))))
+      (is (str/includes? (str (:snippet (first body))) "kanarphrase"))))
+  (testing "same gate as the rest of the API"
+    (let [res (web/app {:request-method :get
+                        :uri "/api/search" :query-string "q=kanarphrase"
+                        :headers {}})]
+      (is (= 401 (:status res)))))
+  (testing "missing query is a 400, not a crash"
+    (let [res (web/app {:request-method :get :uri "/api/search"
+                        :headers {"authorization" (str "Bearer " @token)}})]
+      (is (= 400 (:status res)))))
+  (testing "garbage queries reduce to nothing rather than FTS syntax errors"
+    (let [res (web/app {:request-method :get
+                        :uri "/api/search" :query-string "q=%22%28AND%29%22"
+                        :headers {"authorization" (str "Bearer " @token)}})]
+      (is (= 200 (:status res))))))
+
 (deftest static-shell-serves
   (let [res (web/app {:request-method :get :uri "/" :headers {}})]
     (is (= 200 (:status res)))

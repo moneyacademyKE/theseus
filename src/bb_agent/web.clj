@@ -25,6 +25,7 @@
             [org.httpkit.server :as server]
             [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]
+            [bb-agent.web-search :as search]
             [bb-agent.web-turn :as turn]))
 
 (def ^:private static-files
@@ -41,6 +42,7 @@
    "/js/cockpit.js" ["web/js/cockpit.js" "text/javascript; charset=utf-8"]
    "/js/main.js"   ["web/js/main.js"    "text/javascript; charset=utf-8"]
    "/js/md.js"    ["web/js/md.js"      "text/javascript; charset=utf-8"]
+   "/js/search.js" ["web/js/search.js" "text/javascript; charset=utf-8"]
    "/js/time.js"  ["web/js/time.js"    "text/javascript; charset=utf-8"]
    "/js/usage.js" ["web/js/usage.js"   "text/javascript; charset=utf-8"]
    "/vendor/marked.min.js" ["web/vendor/marked.min.js" "text/javascript; charset=utf-8"]
@@ -349,6 +351,12 @@
 
     (and (= :get request-method) (= "/api/session-list" uri))
     (guarded req data/session-list)
+
+    (and (= :get request-method) (= "/api/search" uri))
+    (let [q (get (query-params req) :q)]
+      (if-not (not-empty q)
+        (json-res 400 {:error "missing-query"})
+        (guarded req #(search/search q))))
 
     (and (= :get request-method) (= "/api/transcript" uri))
     (let [sid (get (query-params req) :id)]

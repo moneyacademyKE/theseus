@@ -32,8 +32,15 @@
       <div class="cockpit-sessions">
         <label class="sr-only" for="cockpit-session">session</label>
         <select id="cockpit-session" title="session — the same files Telegram turns append to"></select>
+        <button type="button" id="cockpit-search" title="search sessions (FTS over every transcript)" aria-label="search sessions">⌕</button>
         <button type="button" id="cockpit-new" title="fresh session" aria-label="start a fresh session">+ new</button>
       </div>
+      <div class="cockpit-searchbar" id="cockpit-searchbar" hidden>
+        <label class="sr-only" for="cockpit-search-input">search sessions</label>
+        <input id="cockpit-search-input" type="search" placeholder="search all sessions — Enter to run" autocomplete="off">
+        <button type="button" id="cockpit-search-close" title="close search" aria-label="close search">×</button>
+      </div>
+      <div class="cockpit-search-results" id="cockpit-search-results" hidden aria-label="search results"></div>
       <div class="cockpit-transcript" id="cockpit-transcript" role="log" aria-live="polite" aria-label="cockpit transcript"></div>
       <div class="cockpit-job" id="cockpit-job" hidden></div>
       <form class="cockpit-compose" id="cockpit-form">

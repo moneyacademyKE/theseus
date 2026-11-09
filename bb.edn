@@ -65,7 +65,8 @@
                                [bb-agent.coordinates-externals-test]
                                [bb-agent.goal-liveness-test]
                                [bb-agent.tool-heal-test]
-                               [bb-agent.web-deck-test])
+                               [bb-agent.web-deck-test]
+                               [bb-agent.web-search-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -90,7 +91,8 @@
                                              'bb-agent.coordinates-externals-test
                                              'bb-agent.goal-liveness-test
                                              'bb-agent.tool-heal-test
-                                             'bb-agent.web-deck-test)]
+                                             'bb-agent.web-deck-test
+                                             'bb-agent.web-search-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
