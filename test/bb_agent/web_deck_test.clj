@@ -157,4 +157,10 @@
         (is (str/includes? (:body res) banner) uri))))
   (testing "a path outside the whitelist still 404s"
     (let [res (web/app {:request-method :get :uri "/vendor/evil.js" :headers {}})]
-      (is (= 404 (:status res))))))
+      (is (= 404 (:status res)))))
+  (testing "cache policy: vendors immutable for a year, our modules revalidate"
+    (let [vendor (web/app {:request-method :get :uri "/vendor/marked.min.js" :headers {}})
+          own    (web/app {:request-method :get :uri "/js/main.js" :headers {}})]
+      (is (= "public, max-age=31536000, immutable"
+             (get-in vendor [:headers "Cache-Control"])))
+      (is (= "no-cache" (get-in own [:headers "Cache-Control"]))))))

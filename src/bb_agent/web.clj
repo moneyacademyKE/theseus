@@ -59,11 +59,22 @@
 (defn- json-res [code obj]
   (respond code (json/generate-string obj) "application/json; charset=utf-8"))
 
+(defn- static-cache-control
+  "Vendored libraries are content-stable and fat (~100KB): cache them
+  immutably for a year, keyed by the ?v= query index.html pins. Our own
+  modules are small and change freely — no-cache revalidates on every
+  load so a deck refresh always runs fresh code."
+  [uri]
+  (if (str/starts-with? uri "/vendor/")
+    "public, max-age=31536000, immutable"
+    "no-cache"))
+
 (defn- static-res [uri]
   (let [[rel type] (static-files uri)
         path (fs/path (System/getProperty "user.dir") rel)]
     (if (fs/regular-file? path)
-      (respond 200 (slurp (str path)) type)
+      (-> (respond 200 (slurp (str path)) type)
+          (assoc-in [:headers "Cache-Control"] (static-cache-control uri)))
       (respond 404 "not found" "text/plain; charset=utf-8"))))
 
 (defn- handle-login
