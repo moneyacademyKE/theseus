@@ -204,23 +204,33 @@ body {
 .pill.warn { color: var(--warn); background: rgba(217, 160, 60, 0.12); }
 .pill.idle { color: var(--dim);  background: rgba(121, 130, 142, 0.12); }
 
-/* tools column: stat rows */
-.statrow {
-  display: grid;
-  grid-template-columns: 1fr repeat(4, 38px);
-  gap: 6px;
-  padding: 7px 14px;
-  border-bottom: 1px solid var(--hair);
+/* tools column: the funnel table */
+.stat-table {
+  width: 100%;
+  border-collapse: collapse;
   font-family: var(--mono);
   font-size: 12px;
-  align-items: baseline;
 }
-.statrow.head { color: var(--faint); font-size: 10px; letter-spacing: 0.1em; }
-.statrow .tool { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.statrow .n    { text-align: right; color: var(--dim); }
-.statrow .n.bad  { color: var(--fail); }
-.statrow .n.warn { color: var(--warn); }
-.statrow .n.good { color: var(--ok); }
+.stat-table th, .stat-table td {
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--hair);
+  text-align: right;
+  color: var(--dim);
+}
+.stat-table th:first-child, .stat-table td:first-child {
+  text-align: left;
+  color: var(--text);
+}
+.stat-table thead th {
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.stat-table .tool { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-table .n.bad  { color: var(--fail); }
+.stat-table .n.warn { color: var(--warn); }
+.stat-table .n.good { color: var(--ok); }
 /* system column: key/value */
 .kv {
   display: flex;

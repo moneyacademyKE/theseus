@@ -98,19 +98,30 @@ export function renderTurns(turns) {
 export function renderTools(rows) {
   const { body } = clearInto('tools');
   if (!Array.isArray(rows) || !rows.length) return empty(body, 'no tool events yet'), done('tools', 0);
-  const head = el('div', 'statrow head');
-  head.append(el('span', 'tool', 'tool'), el('span', 'n', 'call'), el('span', 'n', 'ok'),
-              el('span', 'n', 'fail'), el('span', 'n', 'deny'));
-  body.append(head);
-  for (const r of rows) {
-    const row = el('div', 'statrow');
-    row.append(el('span', 'tool', r.tool));
-    row.append(el('span', 'n', String(r.calls)));
-    row.append(el('span', 'n good', String(r.ok)));
-    row.append(el('span', 'n ' + (r.fail > 0 ? 'bad' : ''), String(r.fail)));
-    row.append(el('span', 'n ' + (r.denied > 0 ? 'warn' : ''), String(r.denied)));
-    body.append(row);
+  const table = el('table', 'stat-table');
+  const caption = el('caption', 'sr-only', 'tool call outcomes');
+  table.append(caption);
+  const headRow = el('tr');
+  for (const label of ['tool', 'call', 'ok', 'fail', 'deny']) {
+    const th = el('th', label === 'tool' ? 'tool' : 'n', label);
+    th.scope = 'col';
+    headRow.append(th);
   }
+  const thead = el('thead');
+  thead.append(headRow);
+  table.append(thead);
+  const tbody = el('tbody');
+  for (const r of rows) {
+    const row = el('tr');
+    row.append(el('td', 'tool', r.tool));
+    row.append(el('td', 'n', String(r.calls)));
+    row.append(el('td', 'n good', String(r.ok)));
+    row.append(el('td', 'n ' + (r.fail > 0 ? 'bad' : ''), String(r.fail)));
+    row.append(el('td', 'n ' + (r.denied > 0 ? 'warn' : ''), String(r.denied)));
+    tbody.append(row);
+  }
+  table.append(tbody);
+  body.append(table);
   done('tools', rows.length);
 }
 
