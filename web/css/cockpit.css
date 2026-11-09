@@ -24,7 +24,7 @@
   border-radius: 4px;
   padding: 5px 8px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   outline: none;
 }
 .cockpit-sessions select:focus { border-color: var(--accent); }
@@ -35,7 +35,7 @@
   border: 1px solid var(--hair);
   border-radius: 4px;
   padding: 5px 10px;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 .cockpit-sessions button:hover { border-color: var(--accent); }
@@ -79,21 +79,21 @@
   overflow-y: auto;
 }
 
-.job-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--warn); }
+.job-head { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--warn); }
 .job-head.done { color: var(--ok); }
 .job-head.failed { color: var(--fail); }
 
-.job-flow .flow { font-family: var(--mono); font-size: 11.5px; color: var(--dim); padding: 1px 0; }
+.job-flow .flow { font-family: var(--mono); font-size: 12px; color: var(--dim); padding: 1px 0; }
 .job-flow .flow.done { color: var(--text); }
 
-.job-error { color: var(--fail); font-size: 12px; margin-top: 6px; }
+.job-error { color: var(--fail); font-size: 13px; margin-top: 6px; }
 
 .approval {
   margin-top: 8px;
   padding: 8px;
   border: 1px solid var(--warn);
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .approval-bar { display: flex; gap: 6px; margin-top: 8px; }
 .approval-bar button {
@@ -101,7 +101,7 @@
   border: 0;
   border-radius: 4px;
   padding: 6px 4px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -123,7 +123,7 @@
   color: var(--accent);
   border-radius: 10px;
   padding: 2px 9px;
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--mono);
   cursor: pointer;
 }
