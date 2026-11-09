@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Web deck — Theseus over HTTP** (`597c579`, `6135479`, `a44b615`, `900f2ac`, `da4b9f0`): a read-only JSON deck API over live state, a TweetDeck-style column UI, launchd services for the deck and its Cloudflare tunnel, master-password login replacing the gui token, and the interactive cockpit — Telegram parity over HTTP.
+- **Preflight content guard** (`d89c5f4`): pattern table as data, findings masked (a guard that echoes the credential it caught leaks it), wired at EVERY door a file leaves through — `telegram-upload/send-file!`, `scripts/send_document.bb`, `goal_watch.bb upload!`. A credential in a text deliverable is refused before any HTTP call, and the refusal never echoes the secret.
+- **Knowledge ns** (`8e589b4`): six scout recommendations as one ns — staleness marks, wins ledger, protection tiers, pre-write snapshots, curator dry-run, no-regression promotion gate.
+- **RSI learn scout + identity gate** (`a49b324`, `120f0e6`): daily GitHub self-learning digest, propose-gated. Identity is the repo id, never the casing of its name — the seen ledger becomes rows `{:name :id}`, and fetch/propose print the id-blind denominator beside the gate (measured live: 177 of 221 ledger rows could not settle a rename).
+- **Coordinates audit** (`c4506b0`): do the `file:LINE` cites in `brain/*.md` resolve? DANGLING / OUT-OF-RANGE / UNSUPPORTED rows are named, never blocked; external cites are counted as unverified, not broken. Report-only.
+- **Goal dispatch liveness** (`7bc9b83`): `spawn-launch!`/`spawn-resume!` stamp the authoring pid they spawn; `bb goal-liveness` audits it and the ops screen (`bb stats`) carries the liveness line whose buckets sum to the denominator.
+- **Schedule command lane** (`ca7e935`, `36e6d05`): `:schedule/command` entries execute directly — no LLM between cron and stdout — and failures post terse notices instead of raw crash boxes.
+- **RSI tool-outcome funnel** (`2ffa248`): one recording site in `tool.clj`, a digest tool table, tool-failure opportunities; `:fake` provider turns stay out of the live ledger.
+- **`/goal watch <name>`** (`835cb11`): attach live progress to any running goal.
+- **Onboarding** (`9dead4c`): `config.example.edn` template + Telegram setup walkthrough, doctor as Quick Start step 2.
+- **Decoupled from OpenCrabs** (`34ba974`): `THESEUS_HOME` + an owned launchd fleet.
+- **CLI utilities** (`f8e3c2f`, `3ad24f5`): `dispatch_goal.bb` (goal-spec dispatch as a CLI, replacing the nested-quote one-liner) and `send_document.bb` (Bot API document delivery as a CLI).
+
+### Fixed
+
+- **Unpriced is not zero** (`7bc9b83`): 773 events over 34.5M tokens printed `$0.0000 est` because no catalog entry priced them — usage now splits priced from unpriced, withholds the dollar figure entirely when nothing is priced, and the digest says `cost unpriced` and names the providers.
+- **String booleans stop inverting flags** (`4b92122`): `write_file {:append? "false"}` APPENDED, because every non-nil string is truthy — the model asked to overwrite and got the old bytes kept. The argument heal runs at the one seam every tool request passes through, derived from the provider-advertised schemas, idempotent, and leaves unhealable values for validation to reject honestly.
+- **write_file protection tiers** (`ec78763`): classify and snapshot BEFORE the bytes move — a `:forbidden` path is refused with nothing written, a `:strict` (brain/) file keeps its pre-write copy.
+- **Brief lane hardening** (`623ee27`, `ddcdc45`, `84c99fa`, `2a1379f`, `e522155`, `d70ecfa`, `f635703`): the generation budget rides the wire with the lock released on death, a 600s provider timeout, the dossier file written before it is sent, three generation passes each logged as it completes, the lane rides the daemon default model, and the exhausted queue refills from the scanner-validated Binance universe.
+- **Goal runner** (`31b9a1a`, `8fea105`, `9367e82`): the logs dir is created before run state resets (fresh workspaces died at launch), a fresh launch clears stale run state (old iter ledgers outranked the new run's world), and declared deliverables ship on ALREADY SATISFIED too.
+- **Doctor** (`ebc0306`): flags config keys nothing reads.
+- **Release tooling** (`27745f0`): cuts annotated tags — `--follow-tags` silently skips lightweight ones.
+
+### Changed
+
+- Deep-dossier briefs: fundamentals in the prompt, `.md` documents as the delivery (`1f4f139`); reruns inject prior coverage — new takes only, never a rewrite (`bc3bb07`).
+- Authoring total-budget ceiling raised 45min → 2h and made optional (`0b1c54b`, `fd92959`).
+- Skill-economy baseline measured: 43 indexed, 1 ever read — no prune until a claims-era fleet exists (`196142b`).
+- RSI review receipts and mandate relaunch documented (`e69a74c`); README brought current (`377bcdc`, `2cabac7`); new suites wired into their e2e tasks (`e3e8270`, `870c6b8`).
+
 ## v1.1.0 - 2026-09-12
 
 ### Added
