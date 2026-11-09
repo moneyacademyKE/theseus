@@ -116,6 +116,7 @@
 }
 .approval-bar button.approve { background: var(--ok); color: #06130b; }
 .approval-bar button.deny { background: var(--fail); color: #1a0708; }
+.approval-bar button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .cockpit-compose {
   border-top: 1px solid var(--hair);

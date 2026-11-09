@@ -12,6 +12,7 @@ const state = {
   session: localStorage.getItem('theseus-cockpit-session') || 'web',
   attachments: [],
   jobId: null,
+  lastApprovalId: null,
 };
 
 // ---------- authed non-GET helpers ----------
@@ -209,6 +210,8 @@ function renderJob(job) {
   for (const ev of (job.events || [])) flow.appendChild(flowLine(ev));
   box.appendChild(flow);
   if (job.approval) {
+    const isNewApproval = state.lastApprovalId !== job.approval.id;
+    if (isNewApproval) state.lastApprovalId = job.approval.id;
     const ap = document.createElement('div');
     ap.className = 'approval';
     const txt = document.createElement('div');
@@ -222,11 +225,22 @@ function renderJob(job) {
       const b = document.createElement('button');
       b.textContent = label;
       b.className = dec === 'deny' ? 'deny' : 'approve';
-      b.onclick = () => decide(job.approval.id, dec);
+      b.setAttribute('aria-label', dec + ' ' + job.approval.tool +
+        (job.approval.context ? ' — ' + job.approval.context : ''));
+      b.onclick = () => {
+        [...bar.querySelectorAll('button')].forEach((btn) => { btn.disabled = true; });
+        decide(job.approval.id, dec);
+      };
       bar.appendChild(b);
+    }
+    if (isNewApproval) {
+      const first = bar.querySelector('button');
+      if (first) first.focus();
     }
     ap.appendChild(bar);
     box.appendChild(ap);
+  } else {
+    state.lastApprovalId = null;
   }
   if (job.status === 'failed') {
     const err = document.createElement('div');
