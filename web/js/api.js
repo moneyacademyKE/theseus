@@ -60,21 +60,70 @@ export async function get(path) {
 // EventSource reconnects on its own after a drop; a dead token gets an
 // explicit `unauthorized` event from the server before the close, so
 // the login overlay takes over instead of a blind retry loop.
+// If the pipe stays dead ~20s across EventSource's own retries, the
+// stream degrades to a 5s poll of GET /api/state — the same snapshot,
+// one request — and stays there until reload (which re-tries push).
 // EventSource cannot set headers, so the session token rides as
 // ?token= on this one route.
+const FALLBACK_AFTER_MS = 20000;
+const POLL_MS = 5000;
+
 export function stream({ onState }) {
-  const es = new EventSource('/api/events?token=' + encodeURIComponent(getToken()));
-  es.addEventListener('state', (e) => {
-    try { onState(JSON.parse(e.data)); } catch (_) { /* one bad frame never kills the deck */ }
+  let pollTimer = null;
+  let fellBack = false;
+  let dead = false;
+  let lastOk = Date.now();
+
+  const markOk = () => { lastOk = Date.now(); setLed('on'); };
+
+  function stop() {
+    dead = true;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  function startPoll() {
+    fellBack = true;
+    setApiState('live · poll');
     setLed('on');
+    pollTimer = setInterval(async () => {
+      try {
+        const st = await get('/api/state');
+        markOk();
+        setApiState('live · poll');
+        try { onState(st); } catch (_) { /* renderer isolation, same as push */ }
+      } catch (ex) {
+        if (ex && ex.unauthorized) { stop(); }
+        else { setLed('err'); setApiState('offline'); }
+      }
+    }, POLL_MS);
+  }
+
+  const es = new EventSource('/api/events?token=' + encodeURIComponent(getToken()));
+  es.onopen = markOk;
+  es.addEventListener('state', (e) => {
+    markOk();
     setApiState('live · push');
+    try { onState(JSON.parse(e.data)); } catch (_) { /* one bad frame never kills the deck */ }
   });
+  es.addEventListener('ping', markOk);
   es.addEventListener('unauthorized', () => {
+    stop();
     es.close();
     showLogin();
     setApiState('login required');
     setLed('err');
   });
-  es.onerror = () => { setLed('err'); setApiState('reconnecting…'); };
-  return es;
+  es.onerror = () => {
+    if (dead || fellBack) return;
+    if (Date.now() - lastOk > FALLBACK_AFTER_MS) {
+      es.close();
+      dead = true;
+      startPoll();
+      return;
+    }
+    setLed('err');
+    setApiState('reconnecting…');
+  };
+  return { stop };
 }
