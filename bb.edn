@@ -9,13 +9,13 @@
      goal {:doc "Goal runner. Usage: bb goal <config.edn> [--max-iters N] [--once] | bb goal status|pause|resume|stop <config.edn>"
            :requires ([bb-agent.goal.main :as goal-main])
            :task (apply goal-main/-main *command-line-args*)}
-     lint {:doc "clj-kondo static analysis. Usage: bb lint <file-or-dir> (default: src)"
+     lint {:doc "clj-kondo static analysis over src AND test. Usage: bb lint <file-or-dir>... (default: both trees)"
            :task (let [bin (or (System/getenv "KONDO_BIN") "../.tools/bin/clj-kondo")
-                       target (or (first *command-line-args*) "src")]
+                       targets (if (seq *command-line-args*) *command-line-args* ["src" "test"])]
                    (when-not (.exists (java.io.File. bin))
                      (println "clj-kondo binary missing:" bin)
                      (System/exit 2))
-                   (shell bin "--lint" target "--fail-level" "error"))}
+                   (apply shell bin "--lint" targets "--fail-level" "error"))}
      preflight {:doc "Content guard for files leaving the repo. Usage: bb preflight [--strict] <file>..."
                  :requires ([bb-agent.preflight :as pf])
                  :task (System/exit (pf/-main *command-line-args*))}
