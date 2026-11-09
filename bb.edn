@@ -16,12 +16,24 @@
                      (println "clj-kondo binary missing:" bin)
                      (System/exit 2))
                    (shell bin "--lint" target "--fail-level" "error"))}
+     preflight {:doc "Content guard for files leaving the repo. Usage: bb preflight [--strict] <file>..."
+                 :requires ([bb-agent.preflight :as pf])
+                 :task (System/exit (pf/-main *command-line-args*))}
+     knowledge {:doc "Knowledge-corpus measurement. Usage: bb knowledge prune [dir] [ledger...] | bb knowledge curator [dir] | bb knowledge guards [dir] [--index dir]... | bb knowledge routing | bb knowledge tiers [home]"
+                 :requires ([bb-agent.knowledge :as k])
+                 :task (System/exit (k/-main *command-line-args*))}
      notify-listen {:doc "Goal-runner halt->Telegram listener. Usage: bb notify-listen [--port N]"
                     :requires ([bb-agent.notify-listen :as nl])
                     :task (apply nl/-main *command-line-args*)}
      autonomy {:doc "Autonomy tier status + outcome ledger. Usage: bb autonomy | bb autonomy applied|reverted <file> [note]"
                :requires ([bb-agent.autonomy :as au])
                :task (apply au/-main *command-line-args*)}
+     coords {:doc "Coordinate audit: do the file:line cites in brain/*.md resolve? Usage: bb coords [brain-dir] [--index dir]... | bb coords externals [brain-dir] [--fetch]"
+             :requires ([bb-agent.coordinates :as coord])
+             :task (System/exit (coord/-main *command-line-args*))}
+     goal-liveness {:doc "Dispatch liveness: did a goal's authoring leave a receipt? Usage: bb goal-liveness [goals-root]"
+                    :requires ([bb-agent.goal-liveness :as gl])
+                    :task (System/exit (gl/-main *command-line-args*))}
      test:goal {:doc "Run goal-runner unit tests."
                  :task (shell "bb" "-m" "bb-agent.goal.run-tests")}
      test:bb-agent {:doc "Run bb_agent unit tests (notify listener, brain, autonomy)."
@@ -44,7 +56,12 @@
                                [bb-agent.telegram-lifecycle-test]
                                [bb-agent.goal.author-progress-test]
                                [bb-agent.brief-test]
-                               [bb-agent.knowledge-test])
+                               [bb-agent.knowledge-test]
+                               [bb-agent.preflight-test]
+                               [bb-agent.coordinates-test]
+                               [bb-agent.coordinates-externals-test]
+                               [bb-agent.goal-liveness-test]
+                               [bb-agent.tool-heal-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -63,7 +80,12 @@
                                              'bb-agent.boot-health-test
                                              'bb-agent.goal.author-progress-test
                                              'bb-agent.brief-test
-                                             'bb-agent.knowledge-test)]
+                                             'bb-agent.knowledge-test
+                                             'bb-agent.preflight-test
+                                             'bb-agent.coordinates-test
+                                             'bb-agent.coordinates-externals-test
+                                             'bb-agent.goal-liveness-test
+                                             'bb-agent.tool-heal-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
@@ -475,9 +497,14 @@
    test:e2e:rsi-learn {:doc "Run RSI learn (GitHub self-learning scout) e2e tests."
                  :extra-paths ["test"]
                  :requires ([clojure.test :as t]
-                            [e2e.rsi-learn-test])
+                            [e2e.rsi-learn-test]
+                            ;; registered in BOTH requires and the run-tests
+                            ;; vector: a test no task runs is a test nobody runs
+                            ;; (the 2026-10-12 lesson).
+                            [e2e.rsi-learn-idgate-test])
                  :task (let [{:keys [fail error]}
-                             (t/run-tests 'e2e.rsi-learn-test)]
+                             (t/run-tests 'e2e.rsi-learn-test
+                                          'e2e.rsi-learn-idgate-test)]
                           (when (pos? (+ fail error))
                             (System/exit 1)))}
    test:e2e:tool-advertisement {:doc "Run tool advertisement e2e tests."
