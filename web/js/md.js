@@ -25,6 +25,16 @@ function wrapTables(container) {
   });
 }
 
+function highlightCode(container) {
+  // highlight.js is a vendored global like marked/DOMPurify; absent
+  // vendor means uncolored code, never a broken render.
+  const hljs = globalThis.hljs;
+  if (!hljs || typeof hljs.highlightElement !== 'function') return;
+  container.querySelectorAll('pre > code').forEach((block) => {
+    try { hljs.highlightElement(block); } catch (_) { /* leave plain */ }
+  });
+}
+
 export function mdToNode(text, cls) {
   const wrap = document.createElement('div');
   if (cls) wrap.className = cls;
@@ -37,6 +47,7 @@ export function mdToNode(text, cls) {
       ensurePurifyHook(purify);
       wrap.innerHTML = purify.sanitize(marked.parse(src));
       wrapTables(wrap);
+      highlightCode(wrap);
       return wrap;
     } catch (_) { /* fall through to text */ }
   }

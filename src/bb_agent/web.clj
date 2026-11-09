@@ -45,6 +45,8 @@
    "/js/usage.js" ["web/js/usage.js"   "text/javascript; charset=utf-8"]
    "/vendor/marked.min.js" ["web/vendor/marked.min.js" "text/javascript; charset=utf-8"]
    "/vendor/purify.min.js" ["web/vendor/purify.min.js" "text/javascript; charset=utf-8"]
+   "/vendor/highlight.min.js" ["web/vendor/highlight.min.js" "text/javascript; charset=utf-8"]
+   "/vendor/highlight-clojure.min.js" ["web/vendor/highlight-clojure.min.js" "text/javascript; charset=utf-8"]
    "/vendor/uplot.min.js"  ["web/vendor/uplot.min.js" "text/javascript; charset=utf-8"]
    "/vendor/uplot.min.css" ["web/vendor/uplot.min.css" "text/css; charset=utf-8"]})
 

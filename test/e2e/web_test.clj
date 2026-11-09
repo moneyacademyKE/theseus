@@ -259,7 +259,8 @@
         (doseq [uri ["/js/api.js" "/js/columns.js" "/js/cockpit.js"
                      "/js/md.js" "/js/time.js" "/js/usage.js" "/js/main.js"
                      "/vendor/marked.min.js" "/vendor/purify.min.js"
-                     "/vendor/uplot.min.js" "/vendor/uplot.min.css"]]
+                     "/vendor/uplot.min.js" "/vendor/uplot.min.css"
+                     "/vendor/highlight.min.js" "/vendor/highlight-clojure.min.js"]]
           (let [res (web/app (req uri))]
             (is (= 200 (:status res)) uri)
             (is (not (str/blank? (:body res))) uri))))

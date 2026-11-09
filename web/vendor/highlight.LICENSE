@@ -1,0 +1,4 @@
+highlight.js 11.11.1 — BSD-3-Clause
+Copyright (c) 2006-2024 Josh Goebel and other contributors
+Core (common languages bundle) + compiled Clojure grammar
+(clj/edn aliases), both from cdnjs.

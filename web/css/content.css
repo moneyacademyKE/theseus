@@ -54,6 +54,22 @@
   font-size: inherit;
 }
 
+/* ---- code fence syntax colors (highlight.js tokens) ---- */
+/* Hand-tuned to the deck palette instead of a vendored theme file:
+   keywords carry the accent, strings stay green, numbers amber,
+   comments dim. One extra hue (violet) for builtins. */
+.hljs-comment, .hljs-quote { color: var(--dim); font-style: italic; }
+.hljs-keyword, .hljs-meta { color: var(--accent); }
+.hljs-built_in, .hljs-type, .hljs-name { color: #b8a1e3; }
+.hljs-string, .hljs-regexp { color: var(--ok); }
+.hljs-number, .hljs-literal { color: var(--warn); }
+.hljs-title, .hljs-symbol, .hljs-selector-tag { color: #e6c07b; }
+.hljs-attr, .hljs-variable, .hljs-template-variable { color: #9ab8d4; }
+.hljs-section, .hljs-emphasis { font-weight: 600; }
+.hljs-strong { font-weight: 700; }
+.hljs-deletion { color: var(--fail); }
+.hljs-addition { color: var(--ok); }
+
 .digest blockquote, .bubble blockquote {
   border-left: 2px solid var(--hair);
   padding-left: 10px;

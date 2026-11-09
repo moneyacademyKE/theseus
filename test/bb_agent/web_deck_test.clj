@@ -189,7 +189,9 @@
   (testing "vendored markdown libs serve through the whitelist, banners intact"
     (doseq [[uri banner] [["/vendor/marked.min.js" "marked v15"]
                           ["/vendor/purify.min.js" "DOMPurify"]
-                          ["/vendor/uplot.min.js" "uPlot (v1.6.32)"]]]
+                          ["/vendor/uplot.min.js" "uPlot (v1.6.32)"]
+                          ["/vendor/highlight.min.js" "Highlight.js v11.11.1"]
+                          ["/vendor/highlight-clojure.min.js" "clojure` grammar"]]]
       (let [res (web/app {:request-method :get :uri uri :headers {}})]
         (is (= 200 (:status res)) uri)
         (is (str/includes? (:body res) banner) uri))))
