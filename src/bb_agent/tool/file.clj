@@ -1,6 +1,7 @@
 (ns bb-agent.tool.file
   (:require [babashka.fs :as fs]
             [bb-agent.tool.common :as common]
+            [bb-agent.knowledge :as knowledge]
             [bb-agent.tool.path :as path]
             [clojure.string :as str]))
 
@@ -27,6 +28,31 @@
                            :content content
                            :bytes (count (.getBytes content "UTF-8"))})))))
 
+(defn- write-file-unguarded
+  "The actual write, split out so write-file! can run the protection-tier guard
+   first. `snapshot` is the pre-write backup the guard already took (nil when the
+   path is not :strict), surfaced on the ok-result so a caller can see it.
+
+   Takes no `path` argument on purpose: it shadows the bb-agent.tool.path alias
+   and would be unused — clj-kondo flagged exactly that at 35:25 on the first
+   version of this split."
+  [target content bytes append? create-dirs? snapshot]
+  (when-let [parent (fs/parent target)]
+    (when (or create-dirs? append?)
+      (fs/create-dirs parent)))
+  (if append?
+    (spit (str target) content :append true)
+    (do
+      (when-let [parent (fs/parent target)]
+        (when create-dirs?
+          (fs/create-dirs parent)))
+      (spit (str target) content)))
+  (merge (common/ok-result "write_file"
+                           {:path (str target)
+                            :bytes bytes
+                            :append? (boolean append?)})
+         (when snapshot {:snapshot snapshot})))
+
 (defn- write-file! [{:keys [path content append? create-dirs?]}]
   (let [target (path/checked-write-path "write_file" path)
         content (or content "")
@@ -40,21 +66,18 @@
                            {:path path :max/bytes common/max-write-bytes :bytes bytes})
 
       :else
-      (do
-        (when-let [parent (fs/parent target)]
-          (when (or create-dirs? append?)
-            (fs/create-dirs parent)))
-        (if append?
-          (spit (str target) content :append true)
-          (do
-            (when-let [parent (fs/parent target)]
-              (when create-dirs?
-                (fs/create-dirs parent)))
-            (spit (str target) content)))
-        (common/ok-result "write_file"
-                          {:path (str target)
-                           :bytes bytes
-                           :append? (boolean append?)})))))
+      ;; The write seam (2026-10-20, from miketako3/dsh-fracture src/guard.ts):
+      ;; classify + snapshot BEFORE the bytes move, so a :forbidden path is
+      ;; refused with nothing written and a :strict (brain/) file keeps its
+      ;; pre-write copy. guard-write! never throws — it returns a verdict.
+      (let [guard (knowledge/guard-write! path)]
+        (if (= :refused (:verdict guard))
+          (common/error-result "write_file"
+                               (str "write refused by protection tier ("
+                                    (name (:tier guard)) "): " path)
+                               {:path path :tier (:tier guard)})
+          (write-file-unguarded target content bytes append? create-dirs?
+                                (:snapshot guard)))))))
 
 (defn- grep-line [query line-number line]
   {:line/number line-number
