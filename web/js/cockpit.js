@@ -149,6 +149,13 @@ async function decide(id, decision) {
 function renderJob(job) {
   const box = el('cockpit-job');
   if (!box) return;
+  // Scroll pinning across the rebuild: a turn re-renders this box on
+  // every push (roughly per second). If the user was pinned near the
+  // bottom, follow the new content; if they scrolled up to read an
+  // earlier tool call, keep their exact offset instead of yanking
+  // them back down.
+  const pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const offset = box.scrollTop;
   box.hidden = false;
   box.innerHTML = '';
   const head = document.createElement('div');
@@ -187,6 +194,7 @@ function renderJob(job) {
     err.textContent = job.error || 'failed';
     box.appendChild(err);
   }
+  box.scrollTop = pinned ? box.scrollHeight : offset;
 }
 
 // The job rides the push stream: the state event carries the job map,
