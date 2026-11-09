@@ -490,18 +490,30 @@
 (deftest guards-cli-accepts-index-without-a-brain-dir
   (with-guards-corpus
     (fn [root kdir]
-      (testing "the documented invocation works with no dir in front of the flag"
-        (let [out (with-out-str (is (= 0 (k/-main ["guards" "--index" root])))
-                  "--index alone must not be read as the corpus path")]
-          (is (str/includes? out "G = ")
-              "it printed the metric, not a missing-path error")
-          (is (not (str/includes? out "no such path")))))
-      (testing "and a real dir in front still works — no regression"
-        (is (= 0 (k/-main ["guards" kdir "--index" root])))
-        (let [out (with-out-str (k/-main ["guards" kdir "--index" root]))]
-          (is (str/includes? out "G = 1/2"))))
-      (testing "a genuinely missing index dir still exits 2 and names it"
-        (is (= 2 (k/-main ["guards" "--index" "/tmp/definitely-not-here-xyz"])))))))
+      ;; No positional dir means the DEFAULT brain dir — (config/home)/brain
+      ;; — which exists on the dev box and not on a CI runner, so local green
+      ;; hid runner red (same class as rsi-tools' hardcoded cwd, fixed
+      ;; 2026-11-09: the third). The invocation under test is argv PARSING,
+      ;; not the default's existence, so the default gets a sandbox home
+      ;; carrying the same two pages the corpus fixture writes.
+      (let [home (str (fs/create-temp-dir {:prefix "guards-home"}))
+            bdir (str home "/brain/knowledge")]
+        (fs/create-dirs bdir)
+        (doseq [p ["backed.md" "wording.md"]]
+          (fs/copy (fs/path (str kdir "/" p)) (fs/path (str bdir "/" p))))
+        (with-redefs [config/home (constantly home)]
+          (testing "the documented invocation works with no dir in front of the flag"
+            (let [out (with-out-str (is (= 0 (k/-main ["guards" "--index" root])))
+                       "--index alone must not be read as the corpus path")]
+              (is (str/includes? out "G = ")
+                  "it printed the metric, not a missing-path error")
+              (is (not (str/includes? out "no such path")))))
+          (testing "and a real dir in front still works — no regression"
+            (is (= 0 (k/-main ["guards" kdir "--index" root])))
+            (let [out (with-out-str (k/-main ["guards" kdir "--index" root]))]
+              (is (str/includes? out "G = 1/2"))))
+          (testing "a genuinely missing index dir still exits 2 and names it"
+            (is (= 2 (k/-main ["guards" "--index" "/tmp/definitely-not-here-xyz"])))))))))
 
 ;; ---------- 2026-11-01: the gate's unit is an independent event, not a line ----------
 ;; Stolen from phense/agentic-rag `docs/pattern-synthesis.md`: a pattern needs "at least
