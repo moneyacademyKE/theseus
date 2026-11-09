@@ -19,7 +19,7 @@ Turns "impossible" into angles. Classifies the wall, runs the right lateral-thin
 
 | Wall type | What "impossible" actually means | Lead techniques (see `references/techniques.md`) |
 |---|---|---|
-| **Assumption** | An inherited belief nobody re-verified | T1 assumption autopsy, T3 first principles |
+| **Assumption** | An inherited belief nobody re-verified | T1 assumption autopsy, first principles |
 | **Framing** | The goal is stated in a way that excludes the answer | T4 altitude shift, T2 inversion, T5 work backwards |
 | **Gatekeeper** | A person/org said no | T10 interrogate the no, T6 analogical transfer |
 | **Tool/tech** | "X doesn't support Y" | T9 SCAMPER (substitute the primitive), T6 analogical transfer |
