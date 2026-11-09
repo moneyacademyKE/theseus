@@ -30,8 +30,9 @@
     <header><h2>cockpit</h2><span class="count" id="cockpit-status">idle</span></header>
     <div class="cockpit">
       <div class="cockpit-sessions">
+        <label class="sr-only" for="cockpit-session">session</label>
         <select id="cockpit-session" title="session — the same files Telegram turns append to"></select>
-        <button type="button" id="cockpit-new" title="fresh session">+ new</button>
+        <button type="button" id="cockpit-new" title="fresh session" aria-label="start a fresh session">+ new</button>
       </div>
       <div class="cockpit-transcript" id="cockpit-transcript"></div>
       <div class="cockpit-job" id="cockpit-job" hidden></div>

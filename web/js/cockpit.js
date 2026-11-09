@@ -4,6 +4,7 @@
 // session continued here is a session continued there.
 import { get, getToken, setApiState } from './api.js';
 import { mdToNode } from './md.js';
+import { relTime } from './time.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -59,8 +60,15 @@ function refreshSessions(rows) {
     sel.appendChild(o);
   };
   const known = new Set(list.map((r) => r.id));
-  opt(state.session, state.session + (known.has(state.session) ? '' : '  (new)'));
-  for (const r of list) if (r.id !== state.session) opt(r.id, r.id);
+  const sessionLabel = (r) => {
+    const bits = [r.id];
+    if (r.model) bits.push(r.model);
+    if (r.updated) bits.push(relTime(r.updated));
+    return bits.join(' · ');
+  };
+  const current = list.find((r) => r.id === state.session) || {id: state.session};
+  opt(state.session, sessionLabel(current) + (known.has(state.session) ? '' : '  (new)'));
+  for (const r of list) if (r.id !== state.session) opt(r.id, sessionLabel(r));
 }
 
 function pickSession(id) {
