@@ -7,6 +7,7 @@
   (:require [babashka.fs :as fs]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [bb-agent.preflight :as preflight]
             [bb-agent.telegram-delivery :as delivery]))
 
 (def document-max-bytes 52428800)
@@ -16,6 +17,26 @@
 (def ^:private kind-caps {:document document-max-bytes :photo photo-max-bytes})
 (def ^:private kind-endpoints {:document "sendDocument" :photo "sendPhoto"})
 (def ^:private kind-fields {:document "document" :photo "photo"})
+
+
+(def preflight-extensions
+  "Alias for bb-agent.preflight/text-extensions — kept so this file's callers do
+   not move. The list itself moved to the namespace that owns the guard on
+   2026-10-19: a guard that lives privately inside one transport can only ever be
+   called by that transport, which is exactly how the curl send paths in
+   scripts/ went uninspected for seven days after the guard landed (see
+   bb-agent.preflight/outbound-sites, and IRIS's deterministic-path parity)."
+  preflight/text-extensions)
+
+(def preflight-max-bytes
+  "Alias for bb-agent.preflight/max-inspect-bytes."
+  preflight/max-inspect-bytes)
+
+(defn- inspect-outbound!
+  "One door. Delegates to bb-agent.preflight/inspect-outbound! and tags the
+   refusal as this transport's, so a caller still sees {:telegram/send-file? true}."
+  [file]
+  (preflight/inspect-outbound! file {:telegram/send-file? true}))
 
 (defn- validate-local-file
   [path kind max-bytes]
@@ -53,6 +74,7 @@
                      {:telegram/send-file? true
                       :caption-chars (count caption)})))
    (let [file (validate-local-file path kind max-bytes)
+         _ (inspect-outbound! file)
          runtime (merge delivery/default-runtime (select-keys opts [:transport :sleep-fn]))
          parts (cond-> [{:name "chat_id" :content (str chat-id)}]
                  caption (conj {:name "caption" :content caption})

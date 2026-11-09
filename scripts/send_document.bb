@@ -8,7 +8,10 @@
 
 (require '[babashka.process :as p]
          '[cheshire.core :as json]
-         '[bb-agent.config :as config])
+         '[bb-agent.config :as config]
+         ;; PARITY 2026-10-19: this script is a second door onto the same wire
+         ;; bb-agent.telegram-upload/send-file! uses, so it meets the same guard.
+         '[bb-agent.preflight :as preflight])
 
 (defn base-url []
   (or (get-in (config/load-config) [:telegram :base-url])
@@ -20,6 +23,15 @@
         (System/exit 2))
     (let [token   (get-in (config/load-config) [:telegram :token])
           thread* (when (and thread (not= thread "-")) (parse-long thread))
+          ;; The unit of work is "a file leaves for Telegram", not "send-file!
+          ;; was called" (IRIS deterministic-path parity). A refusal exits 1 with
+          ;; the reason and curl never sees the file.
+          _       (try (preflight/inspect-outbound! path)
+                       (catch Exception e
+                         (when-not (:preflight/blocked (ex-data e)) (throw e))
+                         (println (str (java.util.Date.) " sendDocument REFUSED by preflight "
+                                       path " — " (ex-message e)))
+                         (System/exit 1)))
           args    (cond-> ["curl" "-s" "-X" "POST"
                            (str (base-url) "/bot" token "/sendDocument")
                            "-F" (str "chat_id=" chat)

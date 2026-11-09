@@ -15,7 +15,10 @@
          '[bb-agent.goal-bridge :as gb]
          '[bb-agent.goal.outcomes :as outcomes]
          '[bb-agent.goal.progress :as progress]
-         '[bb-agent.goal.registry :as registry])
+         '[bb-agent.goal.registry :as registry]
+         ;; PARITY 2026-10-19: upload! below is a second door onto the same
+         ;; wire send-file! uses, so it meets the same guard.
+         '[bb-agent.preflight :as preflight])
 
 (def max-polls 480)          ; 480 * 5s = 40 min ceiling
 (def poll-ms 5000)
@@ -74,9 +77,25 @@
 
 (defn upload!
   "sendDocument — a FILE UPLOAD is multipart, not a JSON body. Receipted to
-   watch.log like every other Bot API call this watcher makes."
+   watch.log like every other Bot API call this watcher makes.
+
+   PARITY (2026-10-19): this path meets bb-agent.preflight/inspect-outbound!
+   before curl — the same guard bb-agent.telegram-upload/send-file! meets. Until
+   now the guard was attached to one call path while the unit of work (a file
+   leaving for Telegram) had two, so a goal's deliverables shipped uninspected.
+   A refusal is receipted to watch.log and rethrown; ship-deliverables! turns it
+   into a topic message, because a file that silently fails to arrive looks
+   exactly like a file nobody built."
   [token chat-id thread-id path caption ws]
-  (let [args (cond-> ["curl" "-s" "-X" "POST"
+  (let [_    (try (preflight/inspect-outbound! path)
+                  (catch Exception e
+                    (when-not (:preflight/blocked (ex-data e)) (throw e))
+                    (spit (str ws "/watch.log")
+                          (str (java.util.Date.) " sendDocument REFUSED by preflight " path
+                               " — " (ex-message e) "\n")
+                          :append true)
+                    (throw e)))
+        args (cond-> ["curl" "-s" "-X" "POST"
                       (str (base-url) "/bot" token "/sendDocument")
                       "-F" (str "chat_id=" chat-id)
                       "-F" (str "caption=" caption)
@@ -96,12 +115,18 @@
   "V2 (bk-7496): on fulfillment, the goal's declared artifacts go to the
    topic as documents — goals build files; topics shouldn't get paragraphs."
   [token chat-id thread-id ws name]
-  (doseq [path (deliverables ws)]
-    (try (upload! token chat-id thread-id path
-                  (str "📦 `" name "` deliverable — " (.getName (io/file path))) ws)
-         (catch Exception e
-           (spit (str ws "/watch.err") (str "deliverable: " (.getMessage e) "\n")
-                 :append true)))))
+  (->> (deliverables ws)
+       (map (fn [path]
+              (try (upload! token chat-id thread-id path
+                            (str "📦 `" name "` deliverable — " (.getName (io/file path))) ws)
+                   nil
+                   (catch Exception e
+                     (spit (str ws "/watch.err") (str "deliverable: " (.getMessage e) "\n")
+                           :append true)
+                     (when (:preflight/blocked (ex-data e))
+                       (.getName (io/file path)))))))
+       (remove nil?)
+       vec))
 
 (defn pid-alive? [pid]
   (try (zero? (:exit (p/shell {:continue true :out :string :err :string} "kill" "-0" pid)))
@@ -126,6 +151,24 @@
                              (pr-str (subs (str (:out res)) 0 (min 120 (count (str (:out res))))))) "\n")
             :append true)
       r)))
+
+(defn ship-deliverables-and-announce!
+  "ship-deliverables! plus the refusal the topic must see. Defined after api! on
+   purpose: a bb script analyses top to bottom, so a defn body cannot call a
+   defn that has not been read yet."
+  [token chat-id thread-id ws name]
+  (let [refused (ship-deliverables! token chat-id thread-id ws name)]
+    (when (seq refused)
+      (api! token "sendMessage"
+            (cond-> {:chat_id chat-id
+                     :text (str "🛑 deliverable refused by preflight, NOT sent: "
+                                (str/join ", " refused)
+                                " — a credential pattern matched. Receipt in watch.log;"
+                                " run `bb preflight <file>` to locate it.")}
+              (parse-long (str thread-id))
+              (assoc :message_thread_id (parse-long (str thread-id))))
+            ws))
+    refused))
 
 (defn post!
   "Send the first progress message; returns its message_id for later edits."
@@ -216,7 +259,7 @@
               ;; and none in the topic (2026-09-30).
               (when (or (str/includes? text "GOAL FULFILLED")
                         (str/includes? text "GOAL ALREADY SATISFIED"))
-                (ship-deliverables! token chat-id thread-id ws name)))
+                (ship-deliverables-and-announce! token chat-id thread-id ws name)))
             ;; V5: a slot just freed — launch the oldest queued goal, if any
             (try (gb/launch-next-queued!) (catch Exception _ nil)))))
       ;; topic-scoped registry: drop ONLY this goal's entry — a raw file delete

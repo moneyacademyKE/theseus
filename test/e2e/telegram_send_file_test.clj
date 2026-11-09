@@ -225,3 +225,60 @@
                   tools/definitions)]
     (is (some? def) "telegram_send_file must be advertised to providers")
     (is (= ["path"] (get-in def [:function :parameters :required])))))
+
+(deftest send-file-preflights-text-deliverables
+  (testing "a credential in a text deliverable is refused before any HTTP call"
+    (let [home (fs/create-temp-dir {:prefix "theseus-send-leak-"})
+          path (fs/path home "report.md")
+          _ (spit (str path) "# Report\n\nexport KEY=sk-abcdefghijklmnop1234\n")
+          calls (atom [])]
+      (try
+        (upload/send-file!
+         telegram-config 42 (str path) :document
+         {:transport (scripted-transport (atom []) calls)})
+        (is false "a credential-bearing deliverable must not leave the repo")
+        (catch Exception error
+          (let [data (ex-data error)]
+            (is (:preflight/blocked data) "the failure must name itself as preflight")
+            (is (= ["anthropic-or-openai-key"] (:preflight/rules data)))
+            (is (not (str/includes? (ex-message error) "sk-abcdefghijklmnop1234"))
+                "the refusal must not echo the secret it caught"))))
+      (is (empty? @calls) "the wire must never see a blocked file")
+      (fs/delete-tree home)))
+
+  (testing "a clean text deliverable still ships"
+    (let [home (fs/create-temp-dir {:prefix "theseus-send-clean-"})
+          path (fs/path home "report.md")
+          _ (spit (str path) "# Report\n\nAll green, no secrets.\n")
+          responses (atom [(response 200 {:ok true :result {:message_id 12}})])
+          calls (atom [])
+          result (upload/send-file!
+                  telegram-config 42 (str path) :document
+                  {:transport (scripted-transport responses calls)})]
+      (is (= {:attempts 1 :message-id 12} result))
+      (is (= 1 (count @calls)))
+      (fs/delete-tree home)))
+
+  (testing "personal-data warnings never block - our own reports carry /Users paths by design"
+    (let [home (fs/create-temp-dir {:prefix "theseus-send-warn-"})
+          path (fs/path home "notes.md")
+          _ (spit (str path) "built at /Users/moe/theseus/theseus today\n")
+          responses (atom [(response 200 {:ok true :result {:message_id 13}})])
+          calls (atom [])
+          result (upload/send-file!
+                  telegram-config 42 (str path) :document
+                  {:transport (scripted-transport responses calls)})]
+      (is (= 13 (:message-id result)))
+      (fs/delete-tree home)))
+
+  (testing "a binary payload is skipped, not slurped - grep is not image inspection"
+    (let [home (fs/create-temp-dir {:prefix "theseus-send-bin-"})
+          path (fs/path home "chart.png")
+          _ (spit (str path) "sk-abcdefghijklmnop1234")
+          responses (atom [(response 200 {:ok true :result {:message_id 14}})])
+          calls (atom [])
+          result (upload/send-file!
+                  telegram-config 42 (str path) :photo
+                  {:transport (scripted-transport responses calls)})]
+      (is (= 14 (:message-id result)))
+      (fs/delete-tree home))))
