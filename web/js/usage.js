@@ -7,17 +7,25 @@
 import { get } from './api.js';
 
 let plot = null;
+let lastRows = [];
 
 function fmtK(n) {
   return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n);
 }
 
+function summaryText(rows) {
+  const total = rows.reduce((acc, row) => acc + (row.tokens || 0), 0);
+  return rows.length + 'd · ' + fmtK(total) + ' tokens';
+}
+
 function render(rows) {
   const root = document.getElementById('usage');
   if (!root || typeof uPlot === 'undefined') return;
+  lastRows = rows;
+  root.replaceChildren();
   const data = [
-    rows.map((r) => Date.parse(r.date + 'T00:00:00Z') / 1000),
-    rows.map((r) => r.tokens),
+    rows.map((row) => Date.parse(row.date + 'T00:00:00Z') / 1000),
+    rows.map((row) => row.tokens),
   ];
   const opts = {
     width: root.clientWidth || 260,
@@ -39,8 +47,13 @@ function render(rows) {
   };
   if (plot) plot.destroy();
   plot = new uPlot(opts, data, root);
-  const total = data[1].reduce((a, b) => a + b, 0);
-  root.title = 'tokens/day · last 30d · total ' + fmtK(total);
+  const summary = document.createElement('p');
+  summary.className = 'usage-summary';
+  summary.textContent = summaryText(rows);
+  root.appendChild(summary);
+  root.setAttribute('role', 'img');
+  root.setAttribute('aria-label', 'token usage sparkline, ' + summaryText(rows));
+  root.title = 'tokens/day · ' + summaryText(rows);
 }
 
 export async function refreshUsage() {
@@ -53,6 +66,11 @@ export async function refreshUsage() {
 
 export function bootUsage() {
   const root = document.getElementById('usage');
-  if (root) root.title = 'tokens/day · last 30d';
+  if (!root) return;
+  root.title = 'tokens/day · last 30d';
   refreshUsage();
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(() => render(lastRows));
+    observer.observe(root);
+  }
 }
