@@ -36,7 +36,10 @@
    "/js/api.js"    ["web/js/api.js"     "text/javascript; charset=utf-8"]
    "/js/columns.js" ["web/js/columns.js" "text/javascript; charset=utf-8"]
    "/js/cockpit.js" ["web/js/cockpit.js" "text/javascript; charset=utf-8"]
-   "/js/main.js"   ["web/js/main.js"    "text/javascript; charset=utf-8"]})
+   "/js/main.js"   ["web/js/main.js"    "text/javascript; charset=utf-8"]
+   "/js/md.js"    ["web/js/md.js"      "text/javascript; charset=utf-8"]
+   "/vendor/marked.min.js" ["web/vendor/marked.min.js" "text/javascript; charset=utf-8"]
+   "/vendor/purify.min.js" ["web/vendor/purify.min.js" "text/javascript; charset=utf-8"]})
 
 (def ^:private api-routes
   {"/api/status"    data/status

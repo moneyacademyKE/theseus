@@ -189,12 +189,10 @@ body {
 .statrow .n.warn { color: var(--warn); }
 .statrow .n.good { color: var(--ok); }
 
-/* rsi digest: raw markdown as pre */
+/* rsi digest: rendered markdown (marked + DOMPurify via md.js) */
 .digest {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.5;
   padding: 10px 14px;
   color: var(--text);
 }
@@ -442,4 +440,69 @@ body {
 
 @media (max-width: 640px) {
   .col-wide { width: 100vw; }
+}
+
+/* ---------- markdown content ---------- */
+/* Shared by the rsi digest and the cockpit transcript bubbles — the
+   only two surfaces md.js renders. Everything else stays textContent. */
+
+.digest :where(p, ul, ol, dl, blockquote, table),
+.bubble :where(p, ul, ol, dl, blockquote, table) { margin: 0 0 7px; }
+
+.digest > :last-child, .bubble > :last-child { margin-bottom: 0; }
+
+.digest ul, .bubble ul { padding-left: 18px; list-style: disc; }
+.digest ol, .bubble ol { padding-left: 20px; }
+
+.digest :where(h1, h2, h3, h4, h5, h6),
+.bubble :where(h1, h2, h3, h4, h5, h6) {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dim);
+  margin: 12px 0 6px;
+}
+
+.digest :where(code):not(pre code),
+.bubble :where(code):not(pre code) {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: rgba(255 255 255 / 4%);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.digest pre, .bubble pre {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  background: rgba(255 255 255 / 4%);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.digest pre code, .bubble pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.digest blockquote, .bubble blockquote {
+  border-left: 2px solid var(--hair);
+  padding-left: 10px;
+  color: var(--dim);
+}
+
+.digest a, .bubble a { color: var(--accent); }
+
+.digest hr, .bubble hr { border: 0; border-top: 1px solid var(--hair); margin: 10px 0; }
+
+.digest :where(table), .bubble :where(table) { border-collapse: collapse; font-size: 10.5px; }
+
+.digest :where(th, td), .bubble :where(th, td) {
+  border: 1px solid var(--hair);
+  padding: 3px 8px;
+  text-align: left;
 }

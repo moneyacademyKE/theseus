@@ -3,6 +3,7 @@
 // engine Telegram rides; the session file is the shared history, so a
 // session continued here is a session continued there.
 import { get, getToken, setApiState } from './api.js';
+import { mdToNode } from './md.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -69,11 +70,11 @@ function newSession() {
 
 // ---------- transcript ----------
 
+// Transcripts are markdown on the wire (assistant finals especially) —
+// mdToNode runs marked + DOMPurify, and degrades to plain text if the
+// vendored libs somehow failed to load.
 function bubble(text, cls) {
-  const div = document.createElement('div');
-  div.className = 'bubble ' + cls;
-  div.textContent = text || '';
-  return div;
+  return mdToNode(text, 'bubble ' + cls);
 }
 
 async function loadTranscript() {

@@ -132,3 +132,14 @@
   (let [res (web/app {:request-method :get :uri "/" :headers {}})]
     (is (= 200 (:status res)))
     (is (str/includes? (:body res) "THESEUS"))))
+
+(deftest vendor-assets-serve
+  (testing "vendored markdown libs serve through the whitelist, banners intact"
+    (doseq [[uri banner] [["/vendor/marked.min.js" "marked v15"]
+                          ["/vendor/purify.min.js" "DOMPurify"]]]
+      (let [res (web/app {:request-method :get :uri uri :headers {}})]
+        (is (= 200 (:status res)) uri)
+        (is (str/includes? (:body res) banner) uri))))
+  (testing "a path outside the whitelist still 404s"
+    (let [res (web/app {:request-method :get :uri "/vendor/evil.js" :headers {}})]
+      (is (= 404 (:status res))))))

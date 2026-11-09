@@ -5,6 +5,7 @@
 ### Added
 
 - **Web deck — SSE push channel**: `GET /api/events` streams the whole deck as Server-Sent Events — one push replaces all nine client pollers (seven columns, the cockpit job ticker, the session refresh). The broadcaster re-reads the same readers the JSON routes use and pushes on change (fingerprint minus the per-second clock), with a 15s comment ping that keeps the cloudflared tunnel from closing a silent pipe. EventSource cannot set headers, so the stream accepts the session token as `?token=` on that one route only; a dead token gets an `unauthorized` event and a close, so the login overlay takes over instead of a blind retry loop. Deck e2e tests ride a real socket (`bb-agent.web-deck-test`, registered in `bb test:bb-agent`).
+- **Web deck — safe markdown rendering**: the RSI digest and the cockpit transcripts render as markdown instead of walls of asterisks — vendored marked + DOMPurify (UMD, local, no CDN, no build step) behind a tiny `web/js/md.js`; the sanitized result is the only innerHTML-with-data on the deck, and a missing lib degrades to plain text, never to unsanitized HTML. Verified in a real browser: login, live push, rendered digest, and a digest file swap arriving unprompted.
 
 ## v1.2.0 - 2026-11-09
 

@@ -80,6 +80,11 @@
   </form>
 </div>
 
+<!-- vendored, no CDN: markdown rendering (marked) + its sanitizer
+     (DOMPurify). UMD builds exposing window.marked / window.DOMPurify;
+     md.js degrades to plain text if either fails to load. -->
+<script defer src="/vendor/marked.min.js"></script>
+<script defer src="/vendor/purify.min.js"></script>
 <script type="module" src="/js/main.js"></script>
 </body>
 </html>

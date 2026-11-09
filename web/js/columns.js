@@ -1,6 +1,9 @@
 // deck columns — one renderer per column. All content goes through
-// textContent (el()); no innerHTML with data, ever: the ledger and the
-// session summaries contain user text, and user text is not markup.
+// textContent (el()); the two markdown surfaces (rsi digest, cockpit
+// transcript) go through md.js — marked + DOMPurify, never raw
+// innerHTML with data.
+
+import { mdToNode } from './md.js';
 
 export function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -92,12 +95,12 @@ export function renderTools(rows) {
   done('tools', rows.length);
 }
 
-// ---- rsi: raw digest markdown ----
+// ---- rsi: the digest, rendered as sanitized markdown ----
+
 export function renderRsi(snap) {
   const { body } = clearInto('rsi');
   if (!snap || !snap.md) return empty(body, 'no digest yet'), done('rsi', '');
-  const pre = el('div', 'digest', snap.md);
-  body.append(pre);
+  body.append(mdToNode(snap.md, 'digest'));
   const when = el('div', 'sub', snap.ms ? 'written ' + relTime(snap.ms) + ' ago' : '');
   when.style.padding = '8px 14px';
   body.append(when);
