@@ -111,7 +111,17 @@ async function loadTranscript() {
   } catch (e) {
     box.appendChild(bubble('transcript unavailable', 'dim'));
   }
-  box.scrollTop = box.scrollHeight;
+  // content-visibility: bubbles report estimated heights until the
+  // browser realizes them near the viewport, so scrollTop math lands
+  // short and scroll anchoring drags it mid-list. scrollIntoView on the
+  // last bubble is the primitive the browser resolves through cv; chained
+  // over a few frames it converges as heights materialize.
+  let frames = 0;
+  const settle = () => {
+    if (box.lastElementChild) box.lastElementChild.scrollIntoView({block: 'end', behavior: 'instant'});
+    if (++frames < 5) requestAnimationFrame(settle);
+  };
+  requestAnimationFrame(settle);
 }
 
 // ---------- attachments ----------

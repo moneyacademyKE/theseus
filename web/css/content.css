@@ -77,6 +77,14 @@
   text-align: left;
 }
 
+/* ---------- render budget ---------- */
+/* Off-screen content skips layout+paint until near the viewport
+   (content-visibility: auto, baseline 2024). contain-intrinsic-size
+   keeps the scrollbar stable: 'auto' remembers each element's
+   last-rendered height, so transcript pinning survives. */
+.bubble { content-visibility: auto; contain-intrinsic-size: auto 56px; }
+.digest { content-visibility: auto; contain-intrinsic-size: auto 400px; }
+
 /* ---- usage sparkline (system column) ---- */
 
 .usage {
