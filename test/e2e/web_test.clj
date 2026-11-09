@@ -457,7 +457,8 @@
       (testing "the sixth attempt is locked out — even with the right password"
         (let [res (do-login deck-pass)]
           (is (= 429 (:status res)))
-          (is (= "rate-limited" (:error (body-json res))))))
+          (is (= "rate-limited" (:error (body-json res))))
+          (is (pos? (long (:retry-ms (body-json res)))))))
       (testing "the lockout is per-process memory: a reset clears it"
         (auth/reset-login-failures!)
         (is (= 200 (:status (do-login deck-pass))))))))

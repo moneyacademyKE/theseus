@@ -55,18 +55,45 @@ if (form) {
     e.preventDefault();
     const input = document.getElementById('login-pass');
     const err = document.getElementById('login-error');
+    const button = form.querySelector('button[type="submit"]');
     err.hidden = true;
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'unlocking…';
+    }
     try {
       await login(input.value);
       location.reload();
     } catch (ex) {
-      err.textContent =
-        ex.code === 'not-set'
-          ? 'No master password set yet — on the host: bb scripts/set_web_password.bb'
-          : ex.code === 'bad-password'
-            ? 'wrong password'
-            : 'login failed';
-      err.hidden = false;
+      if (ex.code === 'rate-limited') {
+        const waitMs = Math.max(0, Number(ex.retryMs) || 0);
+        const waitSec = Math.ceil(waitMs / 1000);
+        err.textContent = waitSec > 0
+          ? 'too many attempts — try again in ' + waitSec + 's'
+          : 'too many attempts — try again later';
+        err.hidden = false;
+        if (button && waitMs > 0) {
+          setTimeout(() => {
+            button.disabled = false;
+            button.textContent = 'unlock';
+          }, waitMs);
+        } else if (button) {
+          button.disabled = false;
+          button.textContent = 'unlock';
+        }
+      } else {
+        err.textContent =
+          ex.code === 'not-set'
+            ? 'No master password set yet — on the host: bb scripts/set_web_password.bb'
+            : ex.code === 'bad-password'
+              ? 'wrong password'
+              : 'login failed';
+        err.hidden = false;
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'unlock';
+        }
+      }
       input.select();
     }
   });

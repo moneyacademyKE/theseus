@@ -22,6 +22,7 @@ export async function login(password) {
   throw Object.assign(new Error('login failed'), {
     code: err.error || 'unknown',
     hint: err.hint || '',
+    retryMs: typeof err['retry-ms'] === 'number' ? err['retry-ms'] : 0,
   });
 }
 
