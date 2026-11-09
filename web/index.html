@@ -37,13 +37,15 @@
       <div class="cockpit-transcript" id="cockpit-transcript" role="log" aria-live="polite" aria-label="cockpit transcript"></div>
       <div class="cockpit-job" id="cockpit-job" hidden></div>
       <form class="cockpit-compose" id="cockpit-form">
-        <input type="file" id="cockpit-file" hidden multiple>
+        <input type="file" id="cockpit-file" hidden multiple aria-label="attach files">
         <div id="cockpit-attached" class="cockpit-attached"></div>
+        <div id="cockpit-error" class="cockpit-error" role="alert" aria-live="assertive" hidden></div>
         <div class="cockpit-row">
-          <button type="button" id="cockpit-attach" title="attach files, images, voice">📎</button>
-          <textarea id="cockpit-text" rows="2"
+          <button type="button" id="cockpit-attach" title="attach files, images, voice" aria-label="attach files, images, or voice">📎</button>
+          <label class="sr-only" for="cockpit-text">message theseus</label>
+          <textarea id="cockpit-text" rows="2" aria-describedby="cockpit-error"
             placeholder="message theseus…  (commands work: /new /usage /model /goals /skills /goal …)"></textarea>
-          <button type="submit" id="cockpit-send">send</button>
+          <button type="submit" id="cockpit-send" aria-label="send message">send</button>
         </div>
       </form>
     </div>

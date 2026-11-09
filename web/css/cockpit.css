@@ -125,6 +125,16 @@
   gap: 6px;
 }
 
+.cockpit-error {
+  color: var(--fail);
+  font-size: 12px;
+}
+
+.cockpit-row #cockpit-send:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .cockpit-attached { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
   background: #182231;

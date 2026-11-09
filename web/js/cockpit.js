@@ -235,8 +235,12 @@ function jobFinished(job) {
 
 async function send() {
   const input = el('cockpit-text');
+  const button = el('cockpit-send');
+  const error = el('cockpit-error');
   const text = (input.value || '').trim();
   if (!text && state.attachments.length === 0) return;
+  if (error) error.hidden = true;
+  if (button) button.disabled = true;
   input.value = '';
   const attachments = state.attachments.map((a) => a.id);
   state.attachments = [];
@@ -249,7 +253,13 @@ async function send() {
   } catch (e) {
     el('cockpit-status').textContent = 'send failed';
     setApiState('turn submit failed: ' + e.message);
+    if (error) {
+      error.textContent = 'send failed — ' + e.message;
+      error.hidden = false;
+    }
     input.value = text;
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -262,6 +272,10 @@ export function bootCockpit() {
   const input = el('cockpit-text');
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
   });
   el('cockpit-new').addEventListener('click', newSession);
   el('cockpit-session').addEventListener('change', (e) => pickSession(e.target.value));
