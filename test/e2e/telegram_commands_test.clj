@@ -96,7 +96,21 @@
 (deftest usage-reports-tokens
   (testing "/usage answers with token totals without an LLM turn"
     (let [{:keys [home calls]} (run-poll [(dm-message 1 20 "hello")
-                                          (dm-message 2 21 "/usage")])
+                                          (dm-message 2 21 "/usage")]
+                                          (fn [home]
+                                            (fs/create-dirs (fs/path home "state"))
+                                            (spit (str (fs/path home "state" "usage.edn"))
+                                                 (pr-str [{:usage/event :turn
+                                                           :session/id "usage-test"
+                                                           :provider :fake
+                                                           :model "fake-deterministic"
+                                                           :tokens/input 1
+                                                           :tokens/output 1
+                                                           :tokens/cache-read 0
+                                                           :tokens/cache-write 0
+                                                           :tokens/total 2
+                                                           :cost/estimate-usd 0.0
+                                                           :created/at "2026-11-09T00:00:00Z"}]))))
           replies (replies calls)
           usage-reply (last replies)]
       (try
