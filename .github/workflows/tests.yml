@@ -54,20 +54,32 @@ jobs:
       - name: Install pods and clj-kondo (linux)
         run: |
           # -f: an HTTP error is a FAILURE, not an error-page saved as
-          # the file (the disease behind every red run so far: unzip
-          # then died with "End-of-central-directory signature not
-          # found"). --retry: release-asset fetches are flaky.
+          # the file (the disease behind every red run so far). The
+          # release CDN throws 504 bursts that outlast curl's own
+          # retries, so the whole install retries in rounds with real
+          # backoff. GITHUB_TOKEN auth keeps asset fetches off the
+          # anonymous path.
           set -euo pipefail
-          fetch() { curl -fsSL --retry 4 --retry-delay 3 "$1" -o "$2"; }
-          mkdir -p "${GITHUB_WORKSPACE}/../.pods"
-          fetch https://github.com/babashka/pod-babashka-go-sqlite3/releases/download/v0.3.13/pod-babashka-go-sqlite3-0.3.13-linux-amd64.zip /tmp/go-sqlite3.zip
-          unzip -o /tmp/go-sqlite3.zip -d /tmp/go-sqlite3
-          find /tmp/go-sqlite3 -name 'pod-babashka-go-sqlite3' -exec mv {} "${GITHUB_WORKSPACE}/../.pods/pod-babashka-go-sqlite3" \;
-          chmod +x "${GITHUB_WORKSPACE}/../.pods/pod-babashka-go-sqlite3"
-          fetch https://github.com/clj-kondo/clj-kondo/releases/download/v2026.08.04/clj-kondo-2026.08.04-linux-static-amd64.zip /tmp/kondo.zip
-          unzip -o /tmp/kondo.zip -d /tmp/kondo
-          sudo mv /tmp/kondo/clj-kondo /usr/local/bin/clj-kondo
-          echo "KONDO_BIN=/usr/local/bin/clj-kondo" >> "$GITHUB_ENV"
+          fetch() { curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors \
+                       -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "$1" -o "$2"; }
+          install_deps() {
+            mkdir -p "${GITHUB_WORKSPACE}/../.pods"
+            fetch https://github.com/babashka/pod-babashka-go-sqlite3/releases/download/v0.3.13/pod-babashka-go-sqlite3-0.3.13-linux-amd64.zip /tmp/go-sqlite3.zip
+            unzip -o /tmp/go-sqlite3.zip -d /tmp/go-sqlite3
+            find /tmp/go-sqlite3 -name 'pod-babashka-go-sqlite3' -exec mv {} "${GITHUB_WORKSPACE}/../.pods/pod-babashka-go-sqlite3" \;
+            chmod +x "${GITHUB_WORKSPACE}/../.pods/pod-babashka-go-sqlite3"
+            fetch https://github.com/clj-kondo/clj-kondo/releases/download/v2026.08.04/clj-kondo-2026.08.04-linux-static-amd64.zip /tmp/kondo.zip
+            unzip -o /tmp/kondo.zip -d /tmp/kondo
+            sudo mv /tmp/kondo/clj-kondo /usr/local/bin/clj-kondo
+            echo "KONDO_BIN=/usr/local/bin/clj-kondo" >> "$GITHUB_ENV"
+          }
+          ok=0
+          for round in 1 2 3; do
+            if install_deps; then ok=1; break; fi
+            echo "dep install round $round failed; backoff 30s"
+            sleep 30
+          done
+          [ "$ok" = 1 ] || { echo "FATAL: dep install failed after 3 rounds"; exit 1; }
 
       - name: Run e2e test suite
         run: bb test:e2e:all
