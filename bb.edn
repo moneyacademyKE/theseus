@@ -123,6 +123,16 @@
               :task (release/run! *command-line-args*)}
      binary {:doc "Build standalone executable from a tag (bb app archive + ad-hoc codesign). Usage: bb binary [tag] [out-dir]"
              :task (shell "bash" "script/build-binary.sh" (or (first *command-line-args*) "") (or (second *command-line-args*) ""))}
+     release-assets {:doc "Build the standalone binary and attach it + its sha256 to the GitHub release. Usage: bb release-assets [tag] (default: current version)"
+             :requires ([bb-agent.version :as version]
+                        [babashka.fs :as fs])
+             :task (let [tag (or (first *command-line-args*) (str "v" version/v))
+                         out (str (System/getenv "HOME") "/Theseus/build")]
+                     (shell "bash" "script/build-binary.sh" tag "")
+                     (let [files (map str (fs/glob out (str "theseus-" tag "-macos-*")))]
+                       (assert (seq files) (str "no binary built for " tag))
+                       (apply shell "gh" "release" "upload" tag (concat files ["--clobber"]))
+                       (println "uploaded" (count files) "assets to release" tag)))}
      usage:index {:doc "Rebuild the sqlite usage index from state/usage.edn."
                   :requires ([bb-agent.store :as store])
                   :task (println "indexed" (store/index-usage!) "events")}
