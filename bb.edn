@@ -15,7 +15,10 @@
                    (when-not (.exists (java.io.File. bin))
                      (println "clj-kondo binary missing:" bin)
                      (System/exit 2))
-                   (apply shell bin "--lint" targets "--fail-level" "error"))}
+                   (let [args (concat (mapcat (fn [target] ["--lint" target]) targets)
+                                      ["--fail-level" "error"])
+                         result (apply shell bin args)]
+                     (System/exit (:exit result))))}
      preflight {:doc "Content guard for files leaving the repo. Usage: bb preflight [--strict] <file>..."
                  :requires ([bb-agent.preflight :as pf])
                  :task (System/exit (pf/-main *command-line-args*))}
