@@ -176,6 +176,14 @@ async function decide(id, decision) {
   }
 }
 
+function elapsedLabel(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return total + 's';
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return minutes + 'm ' + (total % 60) + 's';
+  return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+}
+
 function renderJob(job) {
   const box = el('cockpit-job');
   if (!box) return;
@@ -190,9 +198,11 @@ function renderJob(job) {
   box.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'job-head ' + job.status;
-  head.textContent = job.status === 'queued'
-    ? 'queued — one turn at a time on this lane'
-    : job.status;
+  const started = job['started-at'] || job['submitted-at'];
+  const ended = job['finished-at'] || Date.now();
+  const elapsed = started ? Math.max(0, ended - started) : 0;
+  const steps = (job.events || []).length;
+  head.textContent = job.status + ' · ' + elapsedLabel(elapsed) + ' · ' + steps + (steps === 1 ? ' step' : ' steps');
   box.appendChild(head);
   const flow = document.createElement('div');
   flow.className = 'job-flow';
