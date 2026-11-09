@@ -207,7 +207,21 @@
           (is (false? (get-in st [:poller :alive])))
           (is (= 3 (:events st)))
           (is (= 1 (:tool-events st)))
-          (is (= "2026-11-07T10:02:00Z" (:last-event st))))))))
+          (is (= "2026-11-07T10:02:00Z" (:last-event st)))))
+      (testing "state: the whole deck in one payload — poll-fallback surface"
+        (let [st (body-json (web/app (authed "/api/state")))]
+          (doseq [k [:status :turns :tools :rsi :sessions :goals
+                     :schedules :session-list :jobs]]
+            (is (contains? st k) (str "missing " k)))))
+      (testing "usage: zero-filled daily buckets over the fixture ledger"
+        (let [rows (body-json (web/app (authed "/api/usage")))]
+          (is (= 30 (count rows)))
+          (is (zero? (get-in rows [29 :turns] 0))
+              "today has no fixture turns — zero bar")
+          (is (= 2 (reduce + (map :turns rows)))
+              "the two fixture turns (Nov 7) land inside the 30-day window")
+          (is (every? #(re-matches #"\d{4}-\d{2}-\d{2}" (:date %)) rows)
+              "dates are yyyy-mm-dd"))))))
 
 (deftest static-serves-from-whitelist-only
   (let [home (fixture-home!)]
@@ -227,7 +241,19 @@
         (is (= 404 (:status (web/app (req "/api/nope")))))
         (is (= 404 (:status (web/app (req "/logs/usage.edn")))))
         (is (= 404 (:status (web/app (req "/api/login"
-                                          {:request-method :get})))))))))
+                                          {:request-method :get})))))))
+      (testing "every module the shell imports serves — the md.js 404 lesson"
+        (doseq [uri ["/js/api.js" "/js/columns.js" "/js/cockpit.js"
+                     "/js/md.js" "/js/usage.js" "/js/main.js"
+                     "/vendor/marked.min.js" "/vendor/purify.min.js"
+                     "/vendor/uplot.min.js" "/vendor/uplot.min.css"]]
+          (let [res (web/app (req uri))]
+            (is (= 200 (:status res)) uri)
+            (is (not (str/blank? (:body res))) uri))))
+      (testing "vendor assets carry the immutable cache contract"
+        (is (= "public, max-age=31536000, immutable"
+               (get-in (web/app (req "/vendor/uplot.min.js"))
+                       [:headers "Cache-Control"]))))))
 
 ;; ---------- cockpit: the interactive lane ----------
 
