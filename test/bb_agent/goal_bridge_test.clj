@@ -635,3 +635,44 @@
 (deftest authoring-default-ceiling-test
   (testing "total-budget ceiling defaults to 2h — 45 min amputated authoring runs that were still progressing (2026-09-25)"
     (is (= 7200000 (deref #'bridge/default-authoring-timeout-ms)))))
+
+
+(deftest dispatch-stamps-the-authoring-pid-test
+  (testing "a dispatch records the authoring pid it spawned. This is the seam
+            the 2026-10-09 corpse proved missing: spawn-launch! had the pid in
+            hand and discarded it, so a goal that died DURING authoring was
+            invisible to every boundary (recover-interrupted! walks active.edn,
+            which only ever gets the RUNNER pid). bb goal-liveness reads the
+            stamp; a dead pid with no receipt is FAILED, not silently old."
+    (with-redefs [bridge/scaffold! (fn [name]
+                                     (let [d (str *tmp* "/" name)]
+                                       (fs/create-dirs d)
+                                       d))
+                  bridge/spawn-detached! (fn [_dir _cmd _log] "4242")
+                  config/home (constantly *tmp*)
+                  config/load-config (constantly {})]
+      (let [reply (bridge/dispatch-spec! "build a stamped thing" 11 22)
+            name (second (re-find #"Goal `([^`]+)`" reply))
+            ws (str *tmp* "/" name)
+            stamp (some-> (str ws "/dispatch.edn") slurp edn/read-string)]
+        (is (str/includes? reply "authoring started"))
+        (is (some? name) (str "no goal name in reply: " reply))
+        (is (some? stamp) (str "no dispatch.edn written in " ws))
+        (is (= 4242 (:authoring-pid stamp))
+            "the stamped pid is the one spawn-detached! returned")
+        (is (= [11 22] [(:chat-id stamp) (:thread-id stamp)]))
+        (is (= (count "build a stamped thing") (:spec-chars stamp)))))))
+
+(deftest resume-stamps-the-authoring-pid-test
+  (testing "a detached RESUME stamps too — it is the same authoring failure
+            mode on the second path. An unstamped resume dies as invisibly as
+            the 2026-10-09 dispatch did, so bb goal-liveness could not see it."
+    (with-redefs [bridge/spawn-detached! (fn [_dir _cmd _log] "777")
+                  config/home (constantly *tmp*)
+                  config/load-config (constantly {})]
+      (bridge/resume-detached! "resume-me" 31 41)
+      (let [stamp (some-> (str *tmp* "/resume-me/dispatch.edn") slurp edn/read-string)]
+        (is (some? stamp) "no dispatch.edn written by resume-detached!")
+        (is (= 777 (:authoring-pid stamp)))
+        (is (= "resume-me" (:name stamp)))
+        (is (= [31 41] [(:chat-id stamp) (:thread-id stamp)]))))))

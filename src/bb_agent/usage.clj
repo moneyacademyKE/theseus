@@ -53,7 +53,24 @@
       ("qwen-3.6-plus" "qwen3.6-plus" "coder-model") "qwen3.6-plus"
       base)))
 
-(defn- price-entry [provider model]
+(defn price-entry
+  "The catalog entry that prices one provider+model, or nil.
+
+   Public on purpose: nil here is the measured difference between a dollar
+   figure and the word `unpriced`, so any caller that sums costs must be able
+   to ask. Live before this existed (2026-11-03): every event in
+   state/usage.edn carried provider `:openai-compatible` across 7 models,
+   `default-pricing` has keys :openai :anthropic :qwen :opencode, and
+   $THESEUS_HOME/usage_pricing.edn does not exist — so this returned nil for
+   all 773 events and the report printed `$0.0000 est` over 34,499,877 tokens:
+   a confident zero for a number nobody could compute.
+
+   Source of the rule: Akas333/TYSA
+   https://github.com/Akas333/TYSA/blob/main/docs/compaction-accounting.md —
+   missing models or required usage stay unpriced; no catalog limit means no
+   invented denominator; records whose detail is lost are not reconstructed
+   from totals."
+  [provider model]
   (let [provider* (keyword (name provider))
         model* (str/lower-case (or model ""))]
     (some #(when (str/includes? model* (str/lower-case (:prefix %))) %)
@@ -131,12 +148,38 @@
      :rate (if (pos? total) (double (/ (count hits) total)) 0.0)
      :by-served (frequencies (map :fallback/served hits))}))
 
+(defn cost-coverage
+  "Split turn events into priced and unpriced by whether the catalog has a rate.
+
+   Two rules, both from TYSA's compaction-accounting.md:
+   * an unpriced event contributes NOTHING to the total — never 0.0, because a
+     sum of zeros over unexamined events reads as a measured zero (the live
+     defect: `$0.0000 est` over 773 events, 34.5M tokens);
+   * nil for the total when nothing could be priced at all — not-found is not
+     zero. Tokens and event counts still report; only the dollar figure is
+     withheld."
+  [events]
+  (let [priceable? #(price-entry (:provider %) (:model %))
+        priced (filterv priceable? events)
+        unpriced (filterv (complement priceable?) events)]
+    {:priced priced
+     :unpriced unpriced
+     :estimate (when (seq priced)
+                 (reduce + 0.0 (map :cost/estimate-usd priced)))
+     :unpriced-providers (->> unpriced
+                              (map (comp str name :provider))
+                              distinct sort vec)}))
+
 (defn report []
   (let [events (turn-events (load-events))
-        total (reduce + 0 (map :tokens/total events))]
+        total (reduce + 0 (map :tokens/total events))
+        cov (cost-coverage events)]
     {:usage/events (count events)
      :tokens/total total
-     :cost/estimate-usd (reduce + 0.0 (map :cost/estimate-usd events))
+     :cost/estimate-usd (:estimate cov)
+     :cost/priced-events (count (:priced cov))
+     :cost/unpriced-events (count (:unpriced cov))
+     :cost/unpriced-providers (:unpriced-providers cov)
      :by-provider (->> events
                        (group-by :provider)
                        (map (fn [[provider xs]]

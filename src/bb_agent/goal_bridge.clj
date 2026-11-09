@@ -14,6 +14,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [bb-agent.goal-liveness :as liveness]
             [bb-agent.goal.config :as goal-config]
             [bb-agent.goal.observe :as observe]
             [bb-agent.goal.outcomes :as outcomes]
@@ -598,10 +599,19 @@ Do NOT run the goal. Write files only.")
     (spit (str ws "/launch-args.edn")
           (pr-str {:name name :spec spec :home (str (config/home))
                    :chat-id chat-id :thread-id thread-id}))
-    (spawn-detached! (str (fs/cwd))
-                     (str "bb scripts/goal_launch.bb "
-                          (str ws "/launch-args.edn"))
-                     (str ws "/launch.log"))))
+    (let [pid (spawn-detached! (str (fs/cwd))
+                               (str "bb scripts/goal_launch.bb "
+                                    (str ws "/launch-args.edn"))
+                               (str ws "/launch.log"))]
+      ;; STAMP the authoring pid. It was discarded here, which is why a goal
+      ;; that died DURING authoring was invisible to every boundary:
+      ;; recover-interrupted! walks active.edn, and only the RUNNER pid is ever
+      ;; registered there (launch!). 2026-10-09: propose-must-fail-closed-260708.
+      (when-let [p (parse-long (str pid))]
+        (liveness/stamp-dispatch! ws name p
+                                  :chat-id chat-id :thread-id thread-id
+                                  :spec-chars (count spec)))
+      pid)))
 
 (defn launch-next-queued!
   "Free slot + free topic? Launch the OLDEST queued goal by SPAWNING
@@ -703,9 +713,17 @@ Do NOT run the goal. Write files only.")
     ;; the SAME home that dispatched it (see dispatch-spec!).
     (spit args-file (pr-str {:name name :home (str (config/home))
                              :chat-id chat-id :thread-id thread-id}))
-    (spawn-detached! (str (fs/cwd))
-                     (str "bb scripts/goal_resume.bb " args-file)
-                     (str ws "/resume.log"))))
+    (let [pid (spawn-detached! (str (fs/cwd))
+                               (str "bb scripts/goal_resume.bb " args-file)
+                               (str ws "/resume.log"))]
+      ;; Same stamp as spawn-launch!: a resume IS an authoring, and an
+      ;; unstamped resume dies as invisibly as the 2026-10-09 dispatch did.
+      ;; Overwrites dispatch.edn on purpose — the newest attempt is the one
+      ;; whose liveness matters.
+      (when-let [p (parse-long (str pid))]
+        (liveness/stamp-dispatch! ws name p
+                                  :chat-id chat-id :thread-id thread-id))
+      pid)))
 
 (defn recover-interrupted!
   "Poller-boot recovery for goals (amnesia class, 2026-09-08: a daemon

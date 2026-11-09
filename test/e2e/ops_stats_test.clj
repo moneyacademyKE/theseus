@@ -79,3 +79,79 @@
     (is (str/includes? out "2 pending, 1 dead-lettered"))
     (is (str/includes? out "fulfilled 1, stalled 1"))
     (is (empty? err))))
+
+;; ---------- 2026-11-04: the second door of the delivery-blind finding ----------
+;; Red first. `bb goal-liveness` learned :delivery-blind on 2026-11-04 and the
+;; ops screen did not, so a measurement only one command reports stayed a
+;; measurement nobody runs (the 2026-10-12 lesson). Worse: this summary was
+;; missing TWO buckets goal-liveness already carried — :errored (2026-11-03) and
+;; :delivery-blind — so the line printed 20 of 24 workspaces and read as healthy
+;; while four dispatches had each died on a provider timeout with their ack
+;; refused by the wire. A partition that does not sum is a false-clean, the
+;; eighth in this lane; so the line now prints its own denominator and says so
+;; when the sum is short. The correction to this file's own history: an earlier
+;; turn claimed this wiring landed and it had been REVERTED by a balance guard
+;; (improvements.md, 2026-11-04 correction). A wins entry is a receipt, so it is
+;; written after the read-back, never before it.
+(deftest liveness-summary-carries-errored-and-delivery-blind
+  (seed-ledgers!)
+  (let [ws (fs/path *home* "goals" "ws-blind")]
+    (fs/create-dirs ws)
+    (spit (str (fs/path ws "dispatch.edn"))
+          (pr-str {:name "ws-blind" :authoring-pid 999999
+                   :dispatched-at "2026-11-04T07:56:50Z"}))
+    (spit (str (fs/path ws "authoring.edn"))
+          (pr-str {:model "m" :rounds 3 :duration-ms 900000 :result :error
+                   :error "java.net.http.HttpTimeoutException: request timed out"}))
+    (spit (str (fs/path ws "launch.log"))
+          "Wed Nov 04 10:56:51 EAT 2026 sendMessage ok=false res=Bad Request: chat not found\n")
+    (let [s (stats/liveness-summary)]
+      (is (= 1 (:goal/errored s)) "an authoring that returned an error is its own bucket")
+      (is (= ["ws-blind"] (:goal/errored-names s)))
+      (is (= 1 (:goal/delivery-blind s)) "and its refused ack is annotated")
+      (is (= ["ws-blind"] (:goal/blind-names s)) "named, not just counted")
+      (is (= 4 (:goal/workspaces-audited s)) "the denominator, so the sum is checkable")
+      ;; SUPERSEDED 2026-11-04, corrected against the fixture rather than my
+      ;; intention: this asserted (zero? (:goal/receipted s)), which is false by
+      ;; design — seed-ledgers! creates ws-fulfilled and ws-stalled, both with a
+      ;; run.log, so 2 rows ARE receipted. What the rule says is that an authoring
+      ;; which returned an error is not AMONG them, and that the buckets sum to
+      ;; the denominator the line prints.
+      (is (= 2 (:goal/receipted s)) "the two seeded run.log workspaces, not the errored one")
+      (is (= 4 (+ (:goal/live s) (:goal/receipted s) (:goal/dead-authoring s)
+                  (:goal/errored s) (:goal/abandoned s) (:goal/unstamped s)))
+          "the partition sums to :goal/workspaces-audited"))))
+
+(deftest print-liveness-renders-the-new-buckets-and-names
+  (seed-ledgers!)
+  (let [ws (fs/path *home* "goals" "ws-blind")]
+    (fs/create-dirs ws)
+    (spit (str (fs/path ws "dispatch.edn")) (pr-str {:name "ws-blind" :authoring-pid 999999}))
+    (spit (str (fs/path ws "authoring.edn")) (pr-str {:result :error :error "timeout"}))
+    (spit (str (fs/path ws "launch.log"))
+          "Wed Nov 04 10:56:51 EAT 2026 sendMessage ok=false res=Bad Request: chat not found\n")
+    (let [out (with-out-str (stats/print-liveness! (stats/liveness-summary)))]
+      (is (str/includes? out "1 errored") "the count is on the ops line itself")
+      (is (str/includes? out "1 delivery-blind"))
+      (is (str/includes? out "delivery-blind: ws-blind")
+          "and so is the name — a count with no subject is armory's PASS-28555")
+      (is (not (str/includes? out "PARTITION"))
+          "4 workspaces: 3 no-receipt + 1 errored; the buckets sum, so no warning"))))
+
+(deftest partition-warning-fires-when-a-bucket-is-missing
+  ;; Not a hypothetical: this is exactly how :errored and :delivery-blind went
+  ;; missing from the ops line on 2026-11-03/04 while goal-liveness carried both.
+  (seed-ledgers!)
+  (let [out (with-out-str (stats/print-liveness!
+                           (assoc (stats/liveness-summary) :goal/workspaces-audited 9)))]
+    (is (str/includes? out "PARTITION DOES NOT SUM"))
+    (is (str/includes? out "9 workspace(s) audited") "names the denominator it disagreed with")))
+
+(deftest liveness-absent-root-reports-no-count
+  (let [s (stats/liveness-summary)]
+    (is (= {:goal/liveness-status :missing} s)
+        "not-found is not zero: no counts are invented for a root that was not read")
+    (is (nil? (:goal/delivery-blind s)))
+    (is (nil? (:goal/errored s)))
+    (let [out (with-out-str (stats/print-liveness! s))]
+      (is (str/includes? out "not-found, not zero")))))

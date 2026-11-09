@@ -36,7 +36,10 @@
   (str "📊 Theseus daily digest\n"
        "tokens: " (or (:tokens/total usage) 0)
        " · events: " (or (:usage/events usage) 0)
-       " · ~$" (format "%.2f" (or (:cost/estimate-usd usage) 0.0)) "\n"
+       " · " (if-let [est (:cost/estimate-usd usage)]
+                 (str "~$" (format "%.2f" est))
+                 (str "cost unpriced (" (or (:cost/unpriced-events usage) 0)
+                      " event(s) have no catalog entry)")) "\n"
        "outbox: " (or (:outbox/pending outbox) 0) " pending, "
        (or (:outbox/dead outbox) 0) " dead\n"
        "goals: " (or (:goal/workspaces goals) 0) " workspaces · "
