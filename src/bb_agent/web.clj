@@ -127,7 +127,13 @@
 
 ;; ---------- server-sent events: one push channel, no client pollers ----------
 
-(def ^:private sse-clients "Live SSE channels." (atom #{}))
+(def ^:private sse-clients
+  "Live SSE channels → fingerprint of the last frame each one received.
+  A channel that just joined (or reconnected) has no fingerprint, so
+  the very next tick sends it the current state: no client ever waits
+  for a change to see data. Unchanged clients skip unchanged frames
+  for free."
+  (atom {}))
 
 (def ^:private sse-pulse-ms
   "How often the broadcaster re-reads the deck looking for a change."
@@ -143,8 +149,8 @@
   30000)
 
 (def ^:private broadcaster
-  "Broadcaster state: run flag, last-pushed fingerprint, last ping."
-  (atom {:running false :last-fp ::none :last-ping 0}))
+  "Broadcaster state: run flag, last ping."
+  (atom {:running false :last-ping 0}))
 
 (defn- sse-token
   "EventSource cannot set headers, so the stream route accepts the
@@ -210,28 +216,30 @@
   (str "event: " event "\ndata: " payload "\n\n"))
 
 (defn- push-snapshot!
-  "One `state` event to every live channel."
+  "One `state` event to every channel whose fingerprint is stale. New
+  channels (nil fingerprint) always get the current state — joining
+  late is the same as reconnecting: the newest snapshot is the whole
+  truth, so there is nothing to replay."
   [snap]
-  (let [frame (sse-frame "state" (json/generate-string snap))]
-    (doseq [ch @sse-clients] (sse-write! ch frame))))
+  (let [fp    (fingerprint snap)
+        frame (sse-frame "state" (json/generate-string snap))]
+    (doseq [[ch sent] @sse-clients]
+      (when (not= sent fp)
+        (sse-write! ch frame)
+        (swap! sse-clients assoc ch fp)))))
 
 (defn- broadcaster-loop!
-  "The push engine: re-read the deck every pulse, push when the
-  fingerprint moved, ping on the keepalive cadence. Subscribers get
-  their first frame on the next tick after joining (the fingerprint
-  starts as ::none), so no snapshot is ever computed on a request
-  thread — only here, where the home redefs tests rely on can reach.
-  Exits within one pulse of :running going false."
+  "The push engine: re-read the deck every pulse and deliver to every
+  channel whose fingerprint moved. Subscribers get their first frame
+  on the next tick after joining — snapshots are only ever computed
+  here, never on a request thread, so the home redefs the tests rely
+  on reach the reads. Exits within one pulse of :running going false."
   []
   (loop []
     (when (:running @broadcaster)
       (try
         (when (seq @sse-clients)
-          (let [snap (deck-snapshot)
-                fp   (fingerprint snap)]
-            (when (not= (:last-fp @broadcaster) fp)
-              (swap! broadcaster assoc :last-fp fp)
-              (push-snapshot! snap))))
+          (push-snapshot! (deck-snapshot)))
         (let [now (System/currentTimeMillis)]
           (when (> (- now (:last-ping @broadcaster)) sse-keepalive-ms)
             (swap! broadcaster assoc :last-ping now)
@@ -239,7 +247,7 @@
             ;; are invisible to EventSource, so the client cannot tell a
             ;; quiet deck from a dead pipe. A ping event is a heartbeat
             ;; the browser can watchdog.
-            (doseq [ch @sse-clients]
+            (doseq [ch (keys @sse-clients)]
               (sse-write! ch (sse-frame "ping" "{}")))))
         (catch Exception _ nil))
       (Thread/sleep sse-pulse-ms)
@@ -263,8 +271,8 @@
     (if-not live?
         (do (sse-write! ch (sse-frame "unauthorized" "{}"))
             (sse-close! ch))
-        (do (swap! sse-clients conj ch)
-            (server/on-close ch (fn [_] (swap! sse-clients disj ch))))))))
+        (do (swap! sse-clients assoc ch nil)
+            (server/on-close ch (fn [_] (swap! sse-clients dissoc ch))))))))
 
 (defn- guarded
   "The auth + error envelope every cockpit handler rides: 401 without a
@@ -371,13 +379,12 @@
                                  "theseus-sse-broadcast")
                     (.setDaemon true))]
     (reset! broadcaster {:running true
-                         :last-fp ::none
                          :last-ping (System/currentTimeMillis)})
     (.start thread)
     (fn []
       (swap! broadcaster assoc :running false)
-      (doseq [ch @sse-clients] (sse-close! ch))
-      (reset! sse-clients #{})
+      (doseq [ch (keys @sse-clients)] (sse-close! ch))
+      (reset! sse-clients {})
       (stop-http))))
 
 (defn -main

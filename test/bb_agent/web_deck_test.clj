@@ -117,6 +117,21 @@
         (is (= "changed digest\n"
                (get-in (json/parse-string (:data ev2) false) ["rsi" "md"])))))))
 
+(deftest late-joining-client-gets-current-state
+  (testing "a client connecting after the deck settled gets the current
+             snapshot within one pulse — never a blank wait for change"
+    (spit (str (fs/path (str (config/home)) "state" "rsi" "digest.md"))
+          "late-join digest\n")
+    ;; first client rides the change; the deck state is now settled
+    (let [r1 (open-stream! @deck-port (str "?token=" @token))]
+      (is (= "state" (:event (read-event! r1)))))
+    ;; second client joins while nothing changes
+    (let [r2 (open-stream! @deck-port (str "?token=" @token))
+          ev (read-event! r2)]
+      (is (= "state" (:event ev)))
+      (is (= "late-join digest\n"
+             (get-in (json/parse-string (:data ev) false) ["rsi" "md"]))))))
+
 ;; ---------- the routes the push composes over (regression) ----------
 
 (deftest json-routes-keep-answering
