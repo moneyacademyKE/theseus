@@ -1,0 +1,7 @@
+;; clj-kondo project config.
+;; org.httpkit.server/with-channel is an async-binding macro: its second
+;; argument (`ch`, by our convention) is bound by the macro itself, so
+;; kondo needs to be told or every SSE handler reads as an unresolved
+;; symbol.
+{:config-in-call {org.httpkit.server/with-channel
+                  {:linters {:unresolved-symbol {:exclude [ch]}}}}}

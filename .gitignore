@@ -12,3 +12,4 @@ bin/
 *.bak*
 *.pre-*
 scratch/
+.clj-kondo/.cache/

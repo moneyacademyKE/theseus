@@ -12,7 +12,13 @@
   The cockpit is WRITE surface, deliberately: POST /api/turn queues a
   real turn on the same engine Telegram rides, POST /api/approval
   resolves pending tool approvals, PUT /api/attachment uploads media.
-  One auth gate, one engine, two transports."
+  One auth gate, one engine, two transports.
+
+  Push: GET /api/events streams the whole deck as Server-Sent Events —
+  one channel replaces every client poller. The broadcaster re-reads
+  the same readers the JSON routes use and pushes on change; a comment
+  ping every 15s keeps the cloudflared tunnel from closing a silent
+  pipe."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
@@ -114,6 +120,126 @@
       (when (map? v) v))
     (catch Exception _ nil)))
 
+;; ---------- server-sent events: one push channel, no client pollers ----------
+
+(def ^:private sse-clients "Live SSE channels." (atom #{}))
+
+(def ^:private sse-pulse-ms
+  "How often the broadcaster re-reads the deck looking for a change."
+  1000)
+
+(def ^:private sse-keepalive-ms
+  "Comment ping interval: tunnels close pipes that stay silent."
+  15000)
+
+(def ^:private job-grace-ms
+  "How long a finished job stays in the push so the cockpit sees its
+  terminal status before it ages out."
+  30000)
+
+(def ^:private broadcaster
+  "Broadcaster state: run flag, last-pushed fingerprint, last ping."
+  (atom {:running false :last-fp ::none :last-ping 0}))
+
+(defn- sse-token
+  "EventSource cannot set headers, so the stream route accepts the
+  session token as ?token= — this route only, never the whole API."
+  [req]
+  (or (bearer req)
+      (some-> (query-params req) :token not-empty)))
+
+(defn- sse-write! [ch chunk]
+  (try (server/send! ch chunk false) (catch Exception _ nil)))
+
+(defn- sse-close! [ch]
+  (try (server/close ch) (catch Exception _ nil)))
+
+(defn- snapshot-jobs
+  "Jobs worth pushing: queued/running, or finished inside the grace
+  window so the cockpit sees the terminal status."
+  []
+  (let [now (System/currentTimeMillis)]
+    (->> (vals @turn/jobs)
+         (filter (fn [j]
+                   (or (not (contains? #{:done :failed} (:status j)))
+                       (> (+ (or (:finished-at j) 0) job-grace-ms) now)))))))
+
+(defn deck-snapshot
+  "The whole deck in one map — the same readers the JSON routes use,
+  assembled for push instead of per-request. The per-second :now clock
+  is shipped in the payload but excluded from change detection, so the
+  deck pushes on real change, not on the clock ticking."
+  []
+  {:status       (data/status)
+   :turns        (data/recent-turns 60)
+   :tools        (data/tool-rows)
+   :rsi          (data/rsi-snapshot)
+   :sessions     (data/session-rows)
+   :goals        (data/goal-rows)
+   :schedules    (data/schedule-rows 40)
+   :session-list (data/session-list)
+   :jobs         (into {} (keep (fn [j]
+                                  (when-let [v (turn/job-view (:job/id j))]
+                                    [(str (:job/id j)) v]))
+                                (snapshot-jobs)))})
+
+(defn- fingerprint
+  "Change detector: the snapshot minus the per-second clock."
+  [snap]
+  (hash (update snap :status dissoc :now)))
+
+(defn- sse-frame [event payload]
+  (str "event: " event "\ndata: " payload "\n\n"))
+
+(defn- push-snapshot!
+  "One `state` event to every live channel."
+  [snap]
+  (let [frame (sse-frame "state" (json/generate-string snap))]
+    (doseq [ch @sse-clients] (sse-write! ch frame))))
+
+(defn- broadcaster-loop!
+  "The push engine: re-read the deck every pulse, push when the
+  fingerprint moved, ping on the keepalive cadence. Subscribers get
+  their first frame on the next tick after joining (the fingerprint
+  starts as ::none), so no snapshot is ever computed on a request
+  thread — only here, where the home redefs tests rely on can reach.
+  Exits within one pulse of :running going false."
+  []
+  (loop []
+    (when (:running @broadcaster)
+      (try
+        (when (seq @sse-clients)
+          (let [snap (deck-snapshot)
+                fp   (fingerprint snap)]
+            (when (not= (:last-fp @broadcaster) fp)
+              (swap! broadcaster assoc :last-fp fp)
+              (push-snapshot! snap))))
+        (let [now (System/currentTimeMillis)]
+          (when (> (- now (:last-ping @broadcaster)) sse-keepalive-ms)
+            (swap! broadcaster assoc :last-ping now)
+            (doseq [ch @sse-clients] (sse-write! ch ": ping\n\n"))))
+        (catch Exception _ nil))
+      (Thread/sleep sse-pulse-ms)
+      (recur))))
+
+(defn- handle-events
+  "GET /api/events — the deck's single push channel. A dead token gets
+  an `unauthorized` event and a close: EventSource cannot read status
+  codes, so the verdict rides as an event — the 200 head is a transport
+  handshake, not a login verdict."
+  [req]
+  (let [headers {"Content-Type" "text/event-stream; charset=utf-8"
+                 "Cache-Control" "no-cache"
+                 "X-Accel-Buffering" "no"}
+        live?   (auth/session-live? (sse-token req))]
+    (server/with-channel req ch
+      (server/send! ch {:status 200 :headers headers} false)
+      (if-not live?
+        (do (sse-write! ch (sse-frame "unauthorized" "{}"))
+            (sse-close! ch))
+        (do (swap! sse-clients conj ch)
+            (server/on-close ch (fn [_] (swap! sse-clients disj ch))))))))
+
 (defn- guarded
   "The auth + error envelope every cockpit handler rides: 401 without a
   live token, the handler's data as 200 JSON, ex-info :status for
@@ -192,6 +318,9 @@
                      (or (turn/job-view id)
                          (throw (ex-info "no such job" {:status 404}))))))
 
+    (and (= :get request-method) (= "/api/events" uri))
+    (handle-events req)
+
     (contains? api-routes uri)
     (if (authorized? req)
       (try
@@ -205,10 +334,30 @@
 
     :else (respond 404 "not found" "text/plain; charset=utf-8")))
 
+(defn start-deck!
+  "Boot the deck on 127.0.0.1: the HTTP surface plus the SSE broadcaster
+  thread. Returns a 0-arity stop (tests, embedding); -main boots it and
+  parks. The broadcaster thread is created via bound-fn so test-time
+  config/home redefs are conveyed into it."
+  [port]
+  (let [stop-http (server/run-server app {:ip "127.0.0.1" :port port})
+        thread    (doto (Thread. (bound-fn [] (broadcaster-loop!))
+                                 "theseus-sse-broadcast")
+                    (.setDaemon true))]
+    (reset! broadcaster {:running true
+                         :last-fp ::none
+                         :last-ping (System/currentTimeMillis)})
+    (.start thread)
+    (fn []
+      (swap! broadcaster assoc :running false)
+      (doseq [ch @sse-clients] (sse-close! ch))
+      (reset! sse-clients #{})
+      (stop-http))))
+
 (defn -main
   [& _]
   (let [port (Integer/parseInt (or (System/getenv "THESEUS_WEB_PORT") "8787"))]
-    (server/run-server app {:ip "127.0.0.1" :port port})
+    (start-deck! port)
     (println "theseus web deck on http://127.0.0.1:" port)
     (println "auth:" (if (auth/password-set?)
                        "master password set"

@@ -1,17 +1,19 @@
-// deck main — clock (EAT, always), column wiring, login overlay, cockpit.
-import { getToken, login, poll, setApiState } from './api.js';
+// deck main — clock (EAT, always), login overlay, the single push stream.
+import { getToken, login, stream, setApiState } from './api.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem } from './columns.js';
 import { bootCockpit } from './cockpit.js';
 
-const COLUMNS = [
-  { key: 'flow',      render: renderTurns },
-  { key: 'tools',     render: renderTools },
-  { key: 'rsi',       render: renderRsi },
-  { key: 'sessions',  render: renderSessions },
-  { key: 'goals',     render: renderGoals },
-  { key: 'schedules', render: renderSchedules },
-  { key: 'system',    render: renderSystem },
+// One renderer per snapshot field. A throwing renderer skips its own
+// frame and never kills the others — the same isolation the old
+// per-column pollers had, kept for free.
+const RENDER = [
+  ['turns', renderTurns],
+  ['tools', renderTools],
+  ['rsi', renderRsi],
+  ['sessions', renderSessions],
+  ['goals', renderGoals],
+  ['schedules', renderSchedules],
 ];
 
 // ---- clock: EAT, full stop ----
@@ -51,17 +53,20 @@ if (form) {
   });
 }
 
-// ---- boot the deck ----
+// ---- boot the deck: one push channel, everything rides it ----
 if (!getToken()) {
   document.getElementById('login').hidden = false;
   setApiState('login required');
 } else {
   setApiState('connecting…');
-  bootCockpit();
-  for (const c of COLUMNS) {
-    const body = document.querySelector(`[data-body="${c.key}"]`);
-    if (!body) continue;
-    const seconds = parseInt(body.dataset.interval || '30', 10);
-    poll(body.dataset.src, seconds, c.render);
-  }
+  const cockpit = bootCockpit();
+  stream({
+    onState: (st) => {
+      for (const [key, render] of RENDER) {
+        try { render(st[key]); } catch (_) { /* one column, one bad frame */ }
+      }
+      try { renderSystem(st.status); } catch (_) { /* ditto */ }
+      if (cockpit) { try { cockpit.onState(st); } catch (_) { /* ditto */ } }
+    },
+  });
 }

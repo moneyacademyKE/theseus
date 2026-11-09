@@ -1,4 +1,4 @@
-// deck api — session-gated fetch + a poller that keeps the topbar honest.
+// deck api — session-gated fetch, login, and the single push stream.
 // The stored credential is a session token minted by POST /api/login
 // (master password); it never equals the password itself.
 const TOKEN_KEY = 'theseus-deck-token';
@@ -55,25 +55,26 @@ export async function get(path) {
   return res.json();
 }
 
-// poll(path, seconds, render) — immediate first tick, then interval.
-// Stops itself on auth failure (login overlay takes over); a data error
-// only dims the LED so a single bad tick doesn't kill the column.
-export function poll(path, seconds, render) {
-  let alive = true;
-  async function tick() {
-    if (!alive) return;
-    try {
-      const data = await get(path);
-      render(data);
-      setLed('on');
-      setApiState('live');
-    } catch (e) {
-      if (e.unauthorized) { alive = false; return; }
-      setLed('err');
-      setApiState('api unreachable');
-    }
-  }
-  tick();
-  const id = setInterval(tick, seconds * 1000);
-  return () => { alive = false; clearInterval(id); };
+// stream({onState}) — the deck's single push channel: one EventSource
+// replaces every column poller and the cockpit's job/session tickers.
+// EventSource reconnects on its own after a drop; a dead token gets an
+// explicit `unauthorized` event from the server before the close, so
+// the login overlay takes over instead of a blind retry loop.
+// EventSource cannot set headers, so the session token rides as
+// ?token= on this one route.
+export function stream({ onState }) {
+  const es = new EventSource('/api/events?token=' + encodeURIComponent(getToken()));
+  es.addEventListener('state', (e) => {
+    try { onState(JSON.parse(e.data)); } catch (_) { /* one bad frame never kills the deck */ }
+    setLed('on');
+    setApiState('live · push');
+  });
+  es.addEventListener('unauthorized', () => {
+    es.close();
+    showLogin();
+    setApiState('login required');
+    setLed('err');
+  });
+  es.onerror = () => { setLed('err'); setApiState('reconnecting…'); };
+  return es;
 }

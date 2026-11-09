@@ -10,7 +10,6 @@ const state = {
   session: localStorage.getItem('theseus-cockpit-session') || 'web',
   attachments: [],
   jobId: null,
-  timer: null,
 };
 
 // ---------- authed non-GET helpers ----------
@@ -39,23 +38,22 @@ async function put(path, body) {
 
 // ---------- sessions ----------
 
-async function refreshSessions() {
+// The picker rides the push: the stream carries session-list with
+// every state event, so there is nothing left to poll.
+function refreshSessions(rows) {
   const sel = el('cockpit-session');
-  if (!sel) return;
-  try {
-    const rows = await get('/api/session-list');
-    sel.innerHTML = '';
-    const opt = (id, label) => {
-      const o = document.createElement('option');
-      o.value = id;
-      o.textContent = label;
-      if (id === state.session) o.selected = true;
-      sel.appendChild(o);
-    };
-    const known = new Set(rows.map((r) => r.id));
-    opt(state.session, state.session + (known.has(state.session) ? '' : '  (new)'));
-    for (const r of rows) if (r.id !== state.session) opt(r.id, r.id);
-  } catch (e) { /* picker failure is cosmetic — the lane still works */ }
+  if (!sel || !Array.isArray(rows)) return;
+  sel.innerHTML = '';
+  const opt = (id, label) => {
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = label;
+    if (id === state.session) o.selected = true;
+    sel.appendChild(o);
+  };
+  const known = new Set(rows.map((r) => r.id));
+  opt(state.session, state.session + (known.has(state.session) ? '' : '  (new)'));
+  for (const r of rows) if (r.id !== state.session) opt(r.id, r.id);
 }
 
 function pickSession(id) {
@@ -190,35 +188,21 @@ function renderJob(job) {
   }
 }
 
-function stopPoll() {
-  if (state.timer) { clearInterval(state.timer); state.timer = null; }
+// The job rides the push stream: the state event carries the job map,
+// so watching a job is just remembering which one. The old 1.5s ticker
+// is gone — the broadcaster pushes within a second of any change.
+function watchJob(id) {
+  state.jobId = id;
 }
 
-function watchJob(id) {
-  stopPoll();
-  state.jobId = id;
-  state.timer = setInterval(async () => {
-    let job = null;
-    try {
-      job = await get('/api/job/' + encodeURIComponent(id));
-    } catch (e) {
-      stopPoll();
-      state.jobId = null;
-      return;
-    }
-    renderJob(job);
-    if (job.status === 'done' || job.status === 'failed') {
-      stopPoll();
-      state.jobId = null;
-      el('cockpit-status').textContent = job.status;
-      loadTranscript();
-      refreshSessions();
-      setTimeout(() => {
-        const box = el('cockpit-job');
-        if (box && !state.jobId) box.hidden = true;
-      }, 5000);
-    }
-  }, 1500);
+function jobFinished(job) {
+  state.jobId = null;
+  el('cockpit-status').textContent = job ? job.status : 'gone';
+  loadTranscript();
+  setTimeout(() => {
+    const box = el('cockpit-job');
+    if (box && !state.jobId) box.hidden = true;
+  }, 5000);
 }
 
 async function send() {
@@ -258,7 +242,20 @@ export function bootCockpit() {
     if (e.target.files && e.target.files.length) uploadFiles([...e.target.files]);
     e.target.value = '';
   });
-  refreshSessions();
   loadTranscript();
-  setInterval(refreshSessions, 30000);
+  // Everything else rides the push: the session list arrives in every
+  // state event, the job map lands here while a turn runs.
+  return {
+    onState: (st) => {
+      if (Array.isArray(st['session-list'])) refreshSessions(st['session-list']);
+      if (!state.jobId) return;
+      const job = st.jobs && st.jobs[state.jobId];
+      if (job) {
+        renderJob(job);
+        if (job.status === 'done' || job.status === 'failed') jobFinished(job);
+      } else {
+        jobFinished(null); // aged out of the push window, or a restart
+      }
+    },
+  };
 }
