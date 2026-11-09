@@ -50,6 +50,15 @@
   min-height: 120px;
 }
 
+.msg-role {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin-bottom: 2px;
+}
+
 .bubble {
   max-width: 88%;
   padding: 7px 10px;

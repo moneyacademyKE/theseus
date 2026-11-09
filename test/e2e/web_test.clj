@@ -241,6 +241,7 @@
           (is (str/includes? (:body html) "for=\"login-pass\""))
           (is (str/includes? (:body html) "role=\"alert\""))
           (is (str/includes? (:body html) "for=\"cockpit-session\""))
+          (is (str/includes? (:body html) "role=\"log\""))
           (is (str/includes? (get-in html [:headers "Content-Type"]) "text/html")))
         (doseq [uri ["/css/deck.css" "/css/content.css" "/css/login.css"
                      "/css/cockpit.css" "/js/main.js"]]

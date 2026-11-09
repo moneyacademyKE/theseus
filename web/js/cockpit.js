@@ -87,8 +87,13 @@ function newSession() {
 // Transcripts are markdown on the wire (assistant finals especially) —
 // mdToNode runs marked + DOMPurify, and degrades to plain text if the
 // vendored libs somehow failed to load.
-function bubble(text, cls) {
-  return mdToNode(text, 'bubble ' + cls);
+function bubble(text, cls, role) {
+  const node = mdToNode(text, 'bubble ' + cls);
+  const label = document.createElement('span');
+  label.className = 'msg-role';
+  label.textContent = role || 'theseus';
+  node.prepend(label);
+  return node;
 }
 
 async function loadTranscript() {
@@ -97,10 +102,10 @@ async function loadTranscript() {
   box.innerHTML = '';
   try {
     const rows = await get('/api/transcript?id=' + encodeURIComponent(state.session));
-    if (!rows.length) box.appendChild(bubble('no history yet — say something', 'dim'));
+    if (!rows.length) box.appendChild(bubble('no history yet — say something', 'dim', 'note'));
     for (const t of rows) {
-      box.appendChild(bubble(t.input, 'in'));
-      box.appendChild(bubble(t.final, t.ok ? 'out' : 'out err'));
+      box.appendChild(bubble(t.input, 'in', 'you'));
+      box.appendChild(bubble(t.final, t.ok ? 'out' : 'out err', 'theseus'));
     }
   } catch (e) {
     box.appendChild(bubble('transcript unavailable', 'dim'));
