@@ -24,9 +24,16 @@ function timeNode(value) {
   const node = el('time', 'ts', relTime(value));
   if (iso) {
     node.dateTime = iso;
+    node.dataset.ts = iso;
     node.title = eatFull(value);
   }
   return node;
+}
+
+export function refreshTimes() {
+  document.querySelectorAll('time[data-ts]').forEach((node) => {
+    node.textContent = relTime(node.dataset.ts);
+  });
 }
 
 function clearInto(colKey) {

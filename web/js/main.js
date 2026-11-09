@@ -1,7 +1,7 @@
 // deck main — clock (EAT, always), login overlay, the single push stream.
 import { getToken, login, stream, setApiState, showLogin } from './api.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
-         renderGoals, renderSchedules, renderSystem } from './columns.js';
+         renderGoals, renderSchedules, renderSystem, refreshTimes } from './columns.js';
 import { bootCockpit } from './cockpit.js';
 import { bootUsage, refreshUsage } from './usage.js';
 import { eatClock } from './time.js';
@@ -25,6 +25,7 @@ function tickClock() {
 }
 tickClock();
 setInterval(tickClock, 1000);
+setInterval(refreshTimes, 30000);
 
 // ---- login overlay: the master password buys a session token ----
 const loginDialog = document.getElementById('login');
