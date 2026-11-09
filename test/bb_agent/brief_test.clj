@@ -1,5 +1,6 @@
 (ns bb-agent.brief-test
   (:require [bb-agent.brief :as brief]
+            [bb-agent.brief-universe :as universe]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
@@ -250,3 +251,100 @@ ORCL
   (testing "the worst case is the per-pass budget times the passes, no hidden retries"
     (is (= (* brief/generation-timeout-ms (count brief/section-plan))
            brief/worst-case-generation-ms))))
+
+;; ---------- Binance-only universe (2026-10-10 owner directive) ----------
+
+(deftest binance-equity-tokens-test
+  (let [symbols [{:symbol "NVDABUSDT" :status "TRADING" :baseAsset "NVDAB" :quoteAsset "USDT"}
+                 {:symbol "TSLABUSDT" :status "TRADING" :baseAsset "TSLAB" :quoteAsset "USDT"}
+                 {:symbol "TQQQBUSDT" :status "TRADING" :baseAsset "TQQQB" :quoteAsset "USDT"}
+                 {:symbol "BTCUSDT" :status "TRADING" :baseAsset "BTC" :quoteAsset "USDT"}
+                 {:symbol "NVDABUSDC" :status "TRADING" :baseAsset "NVDAB" :quoteAsset "USDC"}
+                 {:symbol "AAPLBUSDT" :status "BREAK" :baseAsset "AAPLB" :quoteAsset "USDT"}
+                 {:symbol "SOXLBUSDT" :status "TRADING" :baseAsset "SOXLB" :quoteAsset "USDT"}
+                 {:symbol "BANANAS31USDT" :status "TRADING" :baseAsset "BANANAS31" :quoteAsset "USDT"}
+                 {:symbol "1000CATUSDT" :status "TRADING" :baseAsset "1000CAT" :quoteAsset "USDT"}]
+        u (universe/binance-equity-tokens symbols)]
+    (testing "only TRADING USDT pairs whose base asset is an alpha token ending in B"
+      (is (contains? (set (map :underlying u)) "NVDA"))
+      (is (contains? (set (map :underlying u)) "TSLA"))
+      (is (not (contains? (set (map :underlying u)) "BTC")))
+      (is (not (contains? (set (map :underlying u)) "AAPL"))) ; BREAK, not trading
+      (is (not (contains? (set (map :underlying u)) "BANANAS3"))) ; digits
+      (is (not (contains? (set (map :underlying u)) "1000CA")))) ; leading digits
+    (testing "the token keeps its Binance pair name so the report can cite it"
+      (let [nvda (first (filter #(= "NVDA" (:underlying %)) u))]
+        (is (= "NVDAB" (:token nvda)))
+        (is (= "NVDABUSDT" (:pair nvda)))))
+    (testing "leveraged/inverse fund wrappers are excluded — an ETF is not a company"
+      (is (not (contains? (set (map :underlying u)) "TQQQ")))
+      (is (not (contains? (set (map :underlying u)) "SOXL"))))
+    (testing "deduplicated by underlying, one entry per company"
+      (is (= (count u) (count (distinct (map :underlying u))))))))
+
+(deftest researchable-test
+  (testing "a company and its ADR are both researchable"
+    (is (universe/researchable? {:type "stock" :name "NVIDIA Corporation"}))
+    (is (universe/researchable? {:type "dr" :name "ASML Holding NV"})))
+  (testing "a fund wrapper is not — an ETF has no cash flow statement"
+    (is (not (universe/researchable? {:type "fund" :name "ProShares UltraPro QQQ"}))))
+  (testing "nil never is"
+    (is (not (universe/researchable? nil)))))
+
+(deftest fresh-universe-test
+  (let [now 1000000000000
+        stale-ms (* 24 60 60 1000)]
+    (testing "a young cache with names is authoritative"
+      (is (universe/fresh? {:tokens [{:underlying "NVDA"}] :fetched-ms (- now 1000)}
+                           now stale-ms)))
+    (testing "an old cache is stale"
+      (is (not (universe/fresh? {:tokens [{:underlying "NVDA"}] :fetched-ms (- now stale-ms 1)}
+                                now stale-ms))))
+    (testing "no names and no stamp are never fresh — an empty universe must rebuild"
+      (is (not (universe/fresh? {:tokens [] :fetched-ms now} now stale-ms)))
+      (is (not (universe/fresh? {:tokens [{:underlying "NVDA"}]} now stale-ms))))))
+
+(deftest refill-queue-test
+  (let [u {:tokens [{:underlying "NVDA"} {:underlying "TSLA"} {:underlying "AAPL"}]}
+        state {:covered [["NVDA" "2026-10-05"] ["MSFT" "2026-10-06"]] :queue []}
+        refilled (brief/refill-queue state u)]
+    (testing "exhausted queue takes Binance-tradable names not already covered"
+      (is (= ["TSLA" "AAPL"] (:queue refilled))))
+    (testing "covered history is untouched — refilling does not rewrite the ledger"
+      (is (= (:covered state) (:covered refilled))))
+    (testing "an empty universe leaves the queue empty (recycle-oldest still handles it)"
+      (is (= [] (:queue (brief/refill-queue state {:tokens []})))))
+    (testing "a non-empty queue is not disturbed"
+      (let [s {:covered [] :queue ["NVDA"]}]
+        (is (= ["NVDA"] (:queue (brief/refill-queue s u))))))))
+
+;; ---------- bounded prior coverage (2026-10-10: the prompt that ate the timeout) ----------
+
+(deftest prior-excerpt-test
+  (let [long-section (str/join " " (repeat 4000 "word"))
+        report (str "---\ntitle: AAPL - Apple Deep Report\nrating: 🟢\ndate: 2026-10-04\n---\n\n"
+                    "**Executive Summary**\n\nApple runs a toll booth. " long-section "\n\n"
+                    "**The Stat Block** (+)\n\nPrice 336. " long-section "\n\n"
+                    "**What They Sell and Who Buys** (+)\n\n" long-section "\n\n"
+                    "**Valuation: Update the Model** (+)\n\nBear 250, base 380, bull 500. " long-section "\n\n"
+                    "**Bottom Line and Verdict** (+)\n\nA better company, not a better buy. " long-section "\n\n"
+                    "*Date: 2026-10-04 | Price: 336 USD | Sources: vendor | Not financial advice. DYOR.*\n")
+        ex (brief/prior-excerpt report)]
+    (testing "the verdict-bearing sections survive the cut"
+      (is (str/includes? ex "Executive Summary"))
+      (is (str/includes? ex "Stat Block"))
+      (is (str/includes? ex "Valuation: Update the Model"))
+      (is (str/includes? ex "Bottom Line and Verdict")))
+    (testing "the frontmatter (rating, date) rides along so the follow-up can differ honestly"
+      (is (str/includes? ex "rating: 🟢")))
+    (testing "padding-only sections are dropped"
+      (is (not (str/includes? ex "What They Sell and Who Buys"))))
+    (testing "the excerpt is bounded — a 40KB prior brief cannot ride every pass"
+      (is (> (count report) 60000))
+      (is (<= (count ex) brief/prior-excerpt-max-chars))
+      (is (< (count ex) (/ (count report) 3))))
+    (testing "a short prior brief passes through whole"
+      (let [short "---\nrating: 🟡\n---\n\n**Executive Summary**\n\nSmall.\n"]
+        (is (str/includes? (brief/prior-excerpt short) "Small."))))
+    (testing "the cut is announced, never silent"
+      (is (str/includes? ex "[excerpted")))))
