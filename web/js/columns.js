@@ -4,6 +4,7 @@
 // innerHTML with data.
 
 import { mdToNode } from './md.js';
+import { relTime, eatFull } from './time.js';
 
 export function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -17,14 +18,15 @@ function pill(kind, text) {
   return p;
 }
 
-export function relTime(isoOrMs) {
-  const t = typeof isoOrMs === 'number' ? isoOrMs : Date.parse(isoOrMs);
-  if (!t || isNaN(t)) return '';
-  const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 60) return Math.floor(s) + 's';
-  if (s < 3600) return Math.floor(s / 60) + 'm';
-  if (s < 86400) return Math.floor(s / 3600) + 'h';
-  return Math.floor(s / 86400) + 'd';
+function timeNode(value) {
+  const ms = typeof value === 'number' ? value : Date.parse(value);
+  const iso = Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  const node = el('time', 'ts', relTime(value));
+  if (iso) {
+    node.dateTime = iso;
+    node.title = eatFull(value);
+  }
+  return node;
 }
 
 function clearInto(colKey) {
@@ -58,7 +60,7 @@ function done(colKey, n, shown) {
 function card(body, parts) {
   const c = el('article', 'card');
   const r1 = el('div', 'row1');
-  if (parts.ts) r1.append(el('span', 'ts', parts.ts));
+  if (parts.ts) r1.append(timeNode(parts.ts));
   if (parts.pill) r1.append(pill(parts.pill[0], parts.pill[1]));
   c.append(r1);
   if (parts.title) c.append(el('div', 'title', parts.title));
@@ -76,7 +78,7 @@ export function renderTurns(turns) {
   if (!Array.isArray(turns) || !turns.length) return empty(body, 'no turns yet — the ledger starts with the first LLM call'), done('flow', 0);
   for (const t of turns.slice(0, 60)) {
     card(body, {
-      ts: relTime(t.ts),
+      ts: t.ts,
       pill: t.ok ? ['ok', 'ok'] : ['fail', 'fail'],
       title: t.model || 'unknown model',
       sub: `${t.session || ''} · ${t.tokens ?? '–'} tok`,
@@ -123,7 +125,7 @@ export function renderSessions(rows) {
   if (!Array.isArray(rows) || !rows.length) return empty(body, 'no sessions yet — say something in the cockpit'), done('sessions', 0);
   for (const s of rows.slice(0, 30)) {
     card(body, {
-      ts: relTime(s.updated),
+      ts: s.updated,
       title: s.id || 'session',
       sub: s.summary || '',
     });
@@ -137,7 +139,7 @@ export function renderGoals(rows) {
   if (!Array.isArray(rows) || !rows.length) return empty(body, 'no goal workspaces yet'), done('goals', 0);
   for (const g of rows) {
     card(body, {
-      ts: g.updated ? relTime(g.updated) : '',
+      ts: g.updated || '',
       pill: g.active ? ['ok', 'live'] : ['idle', 'idle'],
       title: g.name || g.dir,
       sub: g.last || '',
@@ -152,7 +154,7 @@ export function renderSchedules(rows) {
   if (!Array.isArray(rows) || !rows.length) return empty(body, 'no schedule runs yet'), done('schedules', 0);
   for (const r of rows.slice(0, 40)) {
     card(body, {
-      ts: relTime(r.at),
+      ts: r.at,
       pill: r.status === 'ok' ? ['ok', 'ok'] : ['fail', r.status || 'fail'],
       title: r.id || 'schedule',
       sub: r.final || '',

@@ -200,7 +200,7 @@
     (let [vendor (web/app {:request-method :get :uri "/vendor/marked.min.js" :headers {}})]
       (is (= "public, max-age=31536000, immutable"
              (get-in vendor [:headers "Cache-Control"])))
-      (doseq [uri ["/js/main.js" "/css/deck.css" "/css/content.css"
+      (doseq [uri ["/js/main.js" "/js/time.js" "/css/deck.css" "/css/content.css"
                    "/css/login.css" "/css/cockpit.css"]]
         (let [own (web/app {:request-method :get :uri uri :headers {}})]
           (is (= 200 (:status own)) uri)

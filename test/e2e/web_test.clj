@@ -253,7 +253,7 @@
                                           {:request-method :get})))))))
       (testing "every module the shell imports serves — the md.js 404 lesson"
         (doseq [uri ["/js/api.js" "/js/columns.js" "/js/cockpit.js"
-                     "/js/md.js" "/js/usage.js" "/js/main.js"
+                     "/js/md.js" "/js/time.js" "/js/usage.js" "/js/main.js"
                      "/vendor/marked.min.js" "/vendor/purify.min.js"
                      "/vendor/uplot.min.js" "/vendor/uplot.min.css"]]
           (let [res (web/app (req uri))]

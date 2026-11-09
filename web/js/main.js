@@ -4,6 +4,7 @@ import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem } from './columns.js';
 import { bootCockpit } from './cockpit.js';
 import { bootUsage, refreshUsage } from './usage.js';
+import { eatClock } from './time.js';
 
 // One renderer per snapshot field. A throwing renderer skips its own
 // frame and never kills the others — the same isolation the old
@@ -18,14 +19,9 @@ const RENDER = [
 ];
 
 // ---- clock: EAT, full stop ----
-const fmt = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Africa/Nairobi',
-  hour: '2-digit', minute: '2-digit', second: '2-digit',
-  hour12: false,
-});
 function tickClock() {
   const el = document.getElementById('clock');
-  if (el) el.textContent = fmt.format(new Date()) + ' EAT';
+  if (el) el.textContent = eatClock();
 }
 tickClock();
 setInterval(tickClock, 1000);
