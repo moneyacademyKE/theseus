@@ -560,7 +560,7 @@
         ledger (str ld "/improvements.md")]
     (spit ledger "## 2026-10-13\n- lens: fresh.md twice\n- lens: fresh.md again\n")
     (testing "the report prints events beside fires, so a reader cannot confuse the units"
-      (let [out (str/join "\n" (k/prune-report (k/fire-counts *dir* [ledger])))]
+      (let [out (str/join "\n" (#'k/prune-report (k/fire-counts *dir* [ledger])))]
         (is (str/includes? out "fresh"))
         (is (str/includes? out "fires=2"))
         (is (str/includes? out "events=1")
@@ -586,7 +586,7 @@
     (testing "and never-fired does NOT claim it — the 10-14 false NEVER, refused again"
       (is (not-any? #{"refusal-classes"} (mapv :slug (k/never-fired *dir* [ledger])))))
     (testing "the report prints DATELESS, a third verdict beside NEVER and UNVERIFIED"
-      (let [out (str/join "\n" (k/prune-report (k/fire-counts *dir* [ledger])))]
+      (let [out (str/join "\n" (#'k/prune-report (k/fire-counts *dir* [ledger])))]
         (is (str/includes? out "[DATELESS]"))
         (is (str/includes? out "[NEVER]"))))
     (testing "the CLI names the bucket and explains the two units"
@@ -746,7 +746,7 @@
       (fs/create-dirs (fs/path empty))
       (spit (str d "/page.md") "# Page\nSee src/thing.clj:1 for the guard.\n")
       (let [s (k/guard-coverage-summary d [empty] [])
-            out (str/join "\n" (k/guards-report s))]
+            out (str/join "\n" (#'k/guards-report s))]
         (is (zero? (get-in s [:index :code-files])))
         (is (str/includes? out "[UNVERIFIED]"))
         (is (str/includes? out "index walk saw NO code file"))
@@ -760,7 +760,7 @@
       (fs/create-dirs (fs/path src "src"))
       (spit (str src "/src/thing.clj") "(ns thing)\n")
       (spit (str d "/page.md") "# Page\nSee src/thing.clj:1 for the guard.\n")
-      (let [out (str/join "\n" (k/guards-report (k/guard-coverage-summary d [src] [])))]
+      (let [out (str/join "\n" (#'k/guards-report (k/guard-coverage-summary d [src] [])))]
         (is (not (str/includes? out "[UNVERIFIED]"))
             "no vacuous zero here, so no false alarm either")
         (is (str/includes? out "index: 1 code file(s) under 1 dir(s)")))
@@ -772,7 +772,7 @@
     (fs/create-dirs (fs/path src "src"))
     (spit (str src "/src/thing.clj") "(ns thing)\n")
     (spit (str d "/page.md") "# Page\nSee src/thing.clj:1 for the guard.\n")
-    (let [out (str/join "\n" (k/guards-report (k/guard-coverage-summary d [src] [])))]
+    (let [out (str/join "\n" (#'k/guards-report (k/guard-coverage-summary d [src] [])))]
       (is (str/includes? out "GHOST means no resolving file IN THE INDEX WALK"))
       (is (str/includes? out "not the same as no such file on disk")))
     (fs/delete-tree (fs/path d))))

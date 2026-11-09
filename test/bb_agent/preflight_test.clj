@@ -368,7 +368,7 @@
       (doseq [[name text] p/benign-samples]
         (let [row (get by name)]
           (is (some? row) (str "benign sample names a rule that does not exist: " name))
-          (is (empty? (filterv #(= name (:rule %)) (p/scan-text text name)))
+          (is (empty? (filterv #(= name (:rule %)) (#'p/scan-text text name)))
               (str "benign prose fires " name " — the rule is too wide"))
           (is (= :live (:status row))
               (str "the positive probe must still fire while the benign one stays quiet: " name)))))))
