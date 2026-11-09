@@ -89,6 +89,66 @@ body {
 .led.on  { background: var(--ok); box-shadow: 0 0 6px rgba(67, 178, 111, 0.7); }
 .led.err { background: var(--fail); box-shadow: 0 0 6px rgba(229, 72, 77, 0.7); }
 
+/* ---- mini cockpit (Document Picture-in-Picture) ---- */
+
+.pip-toggle {
+  background: transparent;
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+.pip-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.pip-toggle[hidden] { display: none; }
+
+.pip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  font: 13px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+.pip-row { display: flex; align-items: center; gap: 8px; }
+
+.pip-led {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--faint);
+}
+.pip-led.on  { background: var(--ok); box-shadow: 0 0 6px rgba(67, 178, 111, 0.7); }
+.pip-led.err { background: var(--fail); }
+
+.pip-state { color: var(--dim); font-size: 12px; }
+
+.pip-job {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pip-job.running { color: var(--warn); }
+.pip-job.queued { color: var(--warn); }
+.pip-job.done { color: var(--ok); }
+.pip-job.failed { color: var(--fail); }
+.pip-job.idle { color: var(--dim); }
+
+.pip-clock {
+  margin-top: auto;
+  font-family: var(--mono);
+  color: var(--accent);
+  font-size: 22px;
+  text-align: center;
+}
+
 /* ---------- the deck ---------- */
 
 #deck {

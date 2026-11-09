@@ -4,6 +4,7 @@ import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem, refreshTimes } from './columns.js';
 import { bootCockpit } from './cockpit.js';
 import { bootSearch } from './search.js';
+import { bootPip, pipPush } from './pip.js';
 import { bootUsage, refreshUsage } from './usage.js';
 import { eatClock } from './time.js';
 
@@ -122,6 +123,7 @@ if (!getToken()) {
       try { renderSystem(st.status); } catch (_) { /* ditto */ }
     }
     if (cockpit) { try { cockpit.onState(st); } catch (_) { /* ditto */ } }
+    try { pipPush(st); } catch (_) { /* mini cockpit never blocks the deck */ }
   };
   // Instant paint: the last snapshot is cached locally, so a reload
   // shows the deck immediately instead of a blank flash. The stream
@@ -143,5 +145,6 @@ if (!getToken()) {
     },
   });
   bootSearch();
+  bootPip();
   bootUsage();
 }
