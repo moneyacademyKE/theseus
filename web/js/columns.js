@@ -185,10 +185,12 @@ export function renderSchedules(rows) {
 export function renderSystem(st) {
   const { body } = clearInto('system');
   if (!st) return empty(body, 'no status snapshot'), done('system', '');
+  const list = el('dl', 'system-list');
+  body.append(list);
   const kv = (k, v, cls) => {
     const row = el('div', 'kv');
-    row.append(el('span', 'k', k), el('span', 'v' + (cls ? ' ' + cls : ''), v));
-    body.append(row);
+    row.append(el('dt', 'k', k), el('dd', 'v' + (cls ? ' ' + cls : ''), v));
+    list.append(row);
   };
   kv('poller', st.poller && st.poller.alive ? 'up (' + (st.poller.pid || '?') + ')' : 'DOWN',
      st.poller && st.poller.alive ? 'good' : 'bad');
@@ -198,6 +200,6 @@ export function renderSystem(st) {
   kv('digest', st.digest_ms ? relTime(st.digest_ms) + ' ago' : '—');
   kv('schedules', String(st.schedules));
   kv('goals', String(st.goal_count));
-  kv('server time', (st.now || '').replace('T', ' ').slice(0, 19) + 'Z');
+  kv('server time', st.now ? eatFull(st.now) : '—');
   done('system', '');
 }
