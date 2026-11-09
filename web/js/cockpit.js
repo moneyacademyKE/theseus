@@ -119,7 +119,14 @@ async function loadTranscript() {
   let frames = 0;
   const settle = () => {
     if (box.lastElementChild) box.lastElementChild.scrollIntoView({block: 'end', behavior: 'instant'});
-    if (++frames < 5) requestAnimationFrame(settle);
+    if (++frames < 5) {
+      requestAnimationFrame(settle);
+    } else {
+      // tail: the last height realization lands a beat after the frames
+      setTimeout(() => {
+        if (box.lastElementChild) box.lastElementChild.scrollIntoView({block: 'end', behavior: 'instant'});
+      }, 300);
+    }
   };
   requestAnimationFrame(settle);
 }

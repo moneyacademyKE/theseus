@@ -48,6 +48,10 @@
   flex-direction: column;
   gap: 6px;
   min-height: 120px;
+  /* the transcript pins itself to the bottom explicitly (loadTranscript
+     settle + renderJob pin); browser scroll anchoring fights that under
+     content-visibility, dragging the position off the bottom */
+  overflow-anchor: none;
 }
 
 .msg-role {
