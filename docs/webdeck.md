@@ -85,6 +85,76 @@ Picture-in-Picture) carrying the led, the running job, and the clock —
 stylesheets copied in as LINKs (CSP-clean), feature-detected: the
 button stays hidden where the API is missing.
 
+## State machines
+
+The deck runs **twenty-odd state machines**. One is explicit code; the
+rest are named here. Policy: **a new state gets named before it gets
+rendered** — a visual state that is not in this map (or in `state.js`)
+is a bug, not a feature.
+
+### The explicit one: connection lifecycle — `web/js/state.js`
+
+The only machine that was scattered across files (status text in
+api.js, led + title elsewhere, error strings leaking in from
+cockpit.js). Now one table, one write:
+
+| Label | `data-conn` | Led | Meaning |
+|---|---|---|---|
+| `login required` | `locked` | red | no valid session; dialog owns the screen |
+| `connecting…` | `connecting` | dim | handshake in flight |
+| `cached` | `cached` | dim | painted from snapshot cache, awaiting first push |
+| `live · push` | `live` | green | stream open |
+| `live · poll` | `live` | green | stream abandoned, 5s poll of `/api/state` |
+| `reconnecting…` | `reconnecting` | amber | dropped, EventSource retrying |
+| `offline` | `offline` | amber | poll failing too — nothing reachable |
+
+`setConn(label)` is the only write; `html[data-conn]` is the
+machine-readable projection (tests and agents read it instead of
+parsing text); status text, led, and document title all derive from
+the same row, so they cannot disagree. Out-of-map transitions log
+`[deck-fsm]` and apply anyway — the map is documentation, not a gate.
+The client also watchdogs the server's 15s heartbeat: three missed
+pings and the stream degrades to poll, because a half-open pipe (no
+FIN — partition, sleep, tunnel death) never fires `onerror` on its
+own. Poll-mode 401s land in `login required`, not stale text.
+
+### The documented ones
+
+| Machine | Where | States |
+|---|---|---|
+| login form | `main.js` | idle → unlocking… → success (reload) / rate-limited (timed) / not-set / bad-password |
+| login dialog re-arm | `main.js` | Esc-closed → any click re-opens once (native `<dialog>`) |
+| auth session | `api.js` + `web_auth.clj` | out → authenticating → in → expired (in-memory store: a server bounce logs everyone out) |
+| login rate-limit | `web_auth.clj` | counting → locked-until (reset on success) |
+| session view | `cockpit.js` | picker → loading → loaded / empty / unavailable |
+| compose | `cockpit.js` | idle → sending (disabled) → queued / send-failed (text restored) |
+| attachments | `cockpit.js` | idle → uploading (chips) → removable; per-file failure surfaces in the alert |
+| approval | `cockpit.js` | new (focused) → deciding (disabled) → resolved / failed |
+| job watch | `cockpit.js` + `web_turn.clj` | none → queued → running → done / failed → aged-out (server grace 30s, box hides after 5s) |
+| scroll settle | `cockpit.js` | 5 rAF frames + 300ms tail → settled |
+| search | `search.js` | closed → open → searching → results / empty / failed → highlighted → closed |
+| PiP window | `pip.js` | unsupported (hidden) → closed → open (mirrored) → closed |
+| column flash | `columns.js` | changed → flash class → removed |
+| SSE channel | `web.clj` | joined (nil fp) → streaming (fp) → closed; late joiners get the next tick's snapshot |
+| broadcaster | `web.clj` | stopped → running (1s pulse, 15s named ping) |
+| turn engine | `web_turn.clj` | enqueue → running → done / failed (jobs/uploads in-memory) |
+| search index | `web_search.clj` | per-file: unindexed / stale → indexed (mtime-driven) |
+
+Invariants that are *not* machines: the markdown pipeline always
+sanitizes-or-degrades (`md.js` — never raw innerHTML), and vendors are
+immutable-cached while modules are `no-cache`.
+
+### Agent contract (AX)
+
+- `document.documentElement.dataset.conn` — the connection state,
+  always current, zero parsing.
+- `#api-state` carries `role="status"` + `aria-live="polite"`; the led
+  carries an `aria-label`. Screen readers announce transitions.
+- SSE events are typed: `state`, `ping`, `unauthorized` (terminal).
+- Read surface: `/api/state`, `/api/search?q=`, `/api/usage`.
+- Writes go through `setConn` only. Adding a state = adding one row to
+  `STATES` in `state.js` — never a direct `textContent` write.
+
 ## Vendoring policy
 
 Third-party JS is vendored as-is into `web/vendor/`, license file
