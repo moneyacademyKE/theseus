@@ -233,8 +233,9 @@
           (is (str/includes? (:body html) "THESEUS"))
           (is (str/includes? (:body html) "master password"))
           (is (str/includes? (get-in html [:headers "Content-Type"]) "text/html")))
-        (is (= 200 (:status (web/app (req "/css/deck.css")))))
-        (is (= 200 (:status (web/app (req "/js/main.js"))))))
+        (doseq [uri ["/css/deck.css" "/css/content.css" "/css/login.css"
+                     "/css/cockpit.css" "/js/main.js"]]
+          (is (= 200 (:status (web/app (req uri)))) uri)))
       (testing "anything outside the whitelist is 404 — no grammar for traversal"
         (is (= 404 (:status (web/app (req "/etc/passwd")))))
         (is (= 404 (:status (web/app (req "/../../etc/passwd")))))

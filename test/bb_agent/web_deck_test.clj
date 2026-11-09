@@ -197,8 +197,11 @@
     (let [res (web/app {:request-method :get :uri "/vendor/evil.js" :headers {}})]
       (is (= 404 (:status res)))))
   (testing "cache policy: vendors immutable for a year, our modules revalidate"
-    (let [vendor (web/app {:request-method :get :uri "/vendor/marked.min.js" :headers {}})
-          own    (web/app {:request-method :get :uri "/js/main.js" :headers {}})]
+    (let [vendor (web/app {:request-method :get :uri "/vendor/marked.min.js" :headers {}})]
       (is (= "public, max-age=31536000, immutable"
              (get-in vendor [:headers "Cache-Control"])))
-      (is (= "no-cache" (get-in own [:headers "Cache-Control"]))))))
+      (doseq [uri ["/js/main.js" "/css/deck.css" "/css/content.css"
+                   "/css/login.css" "/css/cockpit.css"]]
+        (let [own (web/app {:request-method :get :uri uri :headers {}})]
+          (is (= 200 (:status own)) uri)
+          (is (= "no-cache" (get-in own [:headers "Cache-Control"])) uri))))))
