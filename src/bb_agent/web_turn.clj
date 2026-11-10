@@ -23,6 +23,7 @@
             [bb-agent.session :as session]
             [bb-agent.telegram-flow :as flow]
             [bb-agent.telegram-intake :as intake]
+            [bb-agent.web-lane :as lane]
             [clojure.string :as str]))
 
 (def jobs
@@ -30,7 +31,11 @@
   synthetic job to pin approval decisions) — production writes flow
   through submit-turn!/run-job! only."
   (atom {}))
-(def ^:private uploads (atom {}))
+(def uploads
+  "Upload registry: id -> descriptor map. Public for tests (recovery
+  pins assert descriptors rehydrate after a restart); production
+  writes flow through save-upload! only."
+  (atom {}))
 (def ^:private job-seq (atom 0))
 (def ^:private max-jobs 60)
 (def ^:private max-upload-bytes (* 20 1024 1024))
@@ -51,6 +56,12 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
+(defn- persist-lane!
+  "Write the registries through at the transitions that matter. Best
+  effort: a persistence fault must never kill a turn."
+  []
+  (try (lane/persist! @jobs @uploads) (catch Exception _ nil)))
+
 (defn- job-update!
   "Apply (f args…) to one job map, missing job = no-op. Varargs mirror
   clojure.core/update so call sites read like the update they are."
@@ -60,9 +71,23 @@
                   (apply update m id f args)
                   m))))
 
+(defn- terminal!
+  "One terminal transition: job fields + the write-through. cond
+  branches are single-expression, so this is the body the branches
+  share."
+  [id & kvs]
+  (apply job-update! id assoc kvs)
+  (persist-lane!))
+
 (defn- bound-error [e]
   (let [m (or (.getMessage e) (str (class e)))]
     (if (> (count m) 400) (str (subs m 0 400) "…") m)))
+
+(defn- bound-text
+  "Any text bounded to display size; nil-safe."
+  [s]
+  (let [m (str (or s ""))]
+    (if (> (count m) 200) (str (subs m 0 200) "…") m)))
 
 (defn- append-event! [id entry]
   (job-update! id (fn [j]
@@ -73,7 +98,7 @@
   "The :status/emit for web jobs: flow entries land in the job map for
   JSON polling. Never throws — same contract as core's safe-emit."
   [id]
-  (fn [{:keys [status tool args]}]
+  (fn [{:keys [status tool args attempt kind reason]}]
     (try
       (case status
         :tool/call (append-event! id {:type "call" :tool (str tool)
@@ -81,14 +106,20 @@
                                       :at (now-ms)})
         :tool/done (append-event! id {:type "done" :tool (str tool)
                                       :ok (boolean (:ok? args)) :at (now-ms)})
+        :retry/attempt (append-event! id {:type "retry"
+                                          :attempt (or attempt 1)
+                                          :kind (some-> kind name)
+                                          :reason (bound-text reason)
+                                          :at (now-ms)})
         nil)
       (catch Exception _ nil))))
 
 (defn- web-approver
   "The :approval/ask for web jobs: the shared waiting-approver with the
   notify surface pointed at the job. A decision POST (this module's
-  decide!) or a plain approve/deny message resolves it through
-  approvals.edn within the approver's 200ms poll."
+  decide!), a typed approval (approval-bypass!), or a plain
+  approve/deny message resolves it through approvals.edn within the
+  approver's 200ms poll."
   [id session-id cfg]
   (approval/waiting-approver
    {:session-id session-id
@@ -100,6 +131,7 @@
                             :tool (str (:tool/name pending))
                             :context (flow/tool-context (:tool/name pending)
                                                         (:tool/args pending))})
+              (persist-lane!)
               {:web/registered true})
     :on-expire (fn [_ _] (job-update! id dissoc :approval))}))
 
@@ -121,64 +153,69 @@
 (defn- run-job!
   [id]
   (when-let [job (get @jobs id)]
-    (let [sid (:session/id job)]
-      (job-update! id assoc :status :running :started-at (now-ms))
-      (try
-        (let [text (str/trim (str (or (:text job) "")))
-              atts (keep #(get @uploads %) (:attachment-ids job))]
-          (cond
-            (and (str/blank? text) (empty? atts))
-            (job-update! id assoc :status :failed :error "empty message"
+    (if (= :canceled (:status job))
+      (persist-lane!) ; canceled before the executor picked it up
+      (let [sid (:session/id job)]
+        (job-update! id assoc :status :running :started-at (now-ms))
+        (persist-lane!)
+        (try
+          (let [text (str/trim (str (or (:text job) "")))
+                atts (keep #(get @uploads %) (:attachment-ids job))]
+            (cond
+              (and (str/blank? text) (empty? atts))
+              (terminal! id :status :failed :error "empty message"
                          :finished-at (now-ms))
 
-            (approval/telegram-approval-reply text)
-            (let [decision (approval/telegram-approval-reply text)
-                  resolved (approval/resolve! sid decision)]
-              (job-update! id assoc :status :done
+              (approval/telegram-approval-reply text)
+              (let [decision (approval/telegram-approval-reply text)
+                    resolved (approval/resolve! sid decision)]
+                (terminal! id :status :done
                            :final (approval/approval-reply-text resolved decision)
                            :finished-at (now-ms)))
 
-            :else
-            (let [cfg (config/load-config)
-                  cmd (intake/chat-command text)
-                  final (if cmd
-                          (let [reply (if (contains? #{:goal-request :build-goal} cmd)
-                                        (goal-request-reply cfg text cmd)
-                                        (intake/handle-chat-command cmd sid text nil nil))]
-                            (when-not (= :new cmd)
-                              (session/append-turn!
-                               sid {:session/id sid
-                                    :user/input text
-                                    :assistant/final (str reply)
-                                    :source :command
-                                    :created/at (str (java.time.Instant/now))}))
-                            (str reply))
-                          (let [composed (or (intake/skill-command text) text)
-                                contexts (apply str
-                                                (map #(intake/attachment-context
-                                                       (:telegram cfg) %)
-                                                     atts))
-                                images (->> atts
-                                            (filter #(str/starts-with?
-                                                      (or (:mime-type %) "") "image/"))
-                                            (mapv (fn [a] {:path (:path a)
-                                                           :mime-type (:mime-type a)})))
-                                turn (core/run-turn!
-                                      (assoc cfg
-                                             :session/id sid
-                                             :session/shared? false
-                                             :status/emit (web-emit id)
-                                             :user/images (not-empty images)
-                                             :approval/ask (web-approver id sid cfg))
-                                      (str composed contexts))]
-                            (:assistant/final turn)))]
-              (job-update! id assoc :status :done :final (str final)
-                           :finished-at (now-ms)))))
-        (catch Exception e
-          (job-update! id assoc :status :failed :error (bound-error e)
-                       :finished-at (now-ms)))
-        (finally
-          (job-update! id dissoc :approval))))))
+              :else
+              (let [cfg (config/load-config)
+                    cmd (intake/chat-command text)
+                    final (if cmd
+                            (let [reply (if (contains? #{:goal-request :build-goal} cmd)
+                                          (goal-request-reply cfg text cmd)
+                                          (intake/handle-chat-command cmd sid text nil nil))]
+                              (when-not (= :new cmd)
+                                (session/append-turn!
+                                 sid {:session/id sid
+                                      :user/input text
+                                      :assistant/final (str reply)
+                                      :source :command
+                                      :created/at (str (java.time.Instant/now))}))
+                              (str reply))
+                            (let [composed (or (intake/skill-command text) text)
+                                  contexts (apply str
+                                                  (map #(intake/attachment-context
+                                                         (:telegram cfg) %)
+                                                       atts))
+                                  images (->> atts
+                                              (filter #(str/starts-with?
+                                                        (or (:mime-type %) "") "image/"))
+                                              (mapv (fn [a] {:path (:path a)
+                                                             :mime-type (:mime-type a)})))
+                                  turn (core/run-turn!
+                                        (assoc cfg
+                                               :session/id sid
+                                               :session/shared? false
+                                               :status/emit (web-emit id)
+                                               :user/images (not-empty images)
+                                               :approval/ask (web-approver id sid cfg))
+                                        (str composed contexts))]
+                              (:assistant/final turn)))]
+                (terminal! id :status :done :final (str final)
+                                 :finished-at (now-ms)))))
+          (catch Exception e
+            (job-update! id assoc :status :failed :error (bound-error e)
+                         :finished-at (now-ms))
+            (persist-lane!))
+          (finally
+            (job-update! id dissoc :approval)
+            (persist-lane!)))))))
 
 (defn- prune-jobs! []
   (swap! jobs (fn [m]
@@ -257,6 +294,7 @@
              :events []
              :submitted-at (now-ms)}]
     (swap! jobs assoc id job)
+    (persist-lane!)
     (.execute executor (fn [] (run-job! id)))
     (prune-jobs!)
     job))
@@ -267,7 +305,77 @@
   [id]
   (when-let [j (get @jobs (str id))]
     (select-keys j [:job/id :session/id :status :events :approval :final
-                    :error :turn-ok :submitted-at :started-at :finished-at])))
+                    :error :turn-ok :cancel-requested :artifacts
+                    :submitted-at :started-at :finished-at])))
+
+(defn recover-lane!
+  "Boot (and test) recovery: hydrate the registries from disk. A restart
+  marks still-queued/running jobs :interrupted — honest, never re-run.
+  Returns the recovery report ({:interrupted [ids] ..}) for the caller
+  to surface."
+  []
+  (let [report (lane/recover!)]
+    (reset! jobs (:jobs report))
+    (reset! uploads (:uploads report))
+    (reset! job-seq (:next-seq report))
+    report))
+
+(defn cancel!
+  "Cancel a web job. Queued: instant — the executor skips it. Running:
+  an intent flag plus denial of any pending approval (that usually ends
+  the wait); an in-flight provider call itself runs to completion — the
+  honest limit, documented in the parity matrix. Idempotent on already
+  terminal jobs (returns the state unchanged)."
+  [id]
+  (let [id (str id)
+        job (get @jobs id)]
+    (cond
+      (nil? job) {:error "unknown-job"}
+      (= :queued (:status job))
+      (do (job-update! id assoc :status :canceled :finished-at (now-ms))
+          (persist-lane!)
+          {:canceled true :status :canceled})
+      (= :running (:status job))
+      (do (job-update! id assoc :cancel-requested true)
+          (when-let [approval-id (get-in job [:approval :id])]
+            (approval/resolve-by-id! approval-id (:session/id job) :deny)
+            (job-update! id dissoc :approval))
+          (persist-lane!)
+          {:cancel-requested true :status :running})
+      :else {:canceled false :status (:status job)})))
+
+(defn retry!
+  "Re-queue a failed/interrupted/canceled job's inputs as a NEW job.
+  Old side effects already happened; retry is an explicit operator
+  decision, same as re-sending the message."
+  [id]
+  (let [job (get @jobs (str id))]
+    (cond
+      (nil? job) {:error "unknown-job"}
+      (not (contains? #{:failed :interrupted :canceled} (:status job)))
+      {:error "not-retryable" :status (:status job)}
+      :else (let [new-job (submit-turn! {:session (:session/id job)
+                                         :text (:text job)
+                                         :attachments (:attachment-ids job)})]
+              {:retried true :job/id (:job/id new-job)}))))
+
+(defn approval-bypass!
+  "Typed approval replies resolve on the REQUEST thread, ahead of the
+  single-lane queue — the exact Telegram ordering (process-message!
+  checks approval replies before anything queues). A pending approval
+  plus a blocked lane is the deadlock this kills: 'approve' typed into
+  the composer answers the waiting turn instead of queuing behind it.
+  Returns {:resolved true :reply s} or nil when the text is not an
+  approval reply for a pending request of that session."
+  [session text]
+  (when-let [decision (approval/telegram-approval-reply (str text))]
+    (let [sid (session/safe-session-id (or (not-empty (str session)) "web"))]
+      (when (->> (vals (:pending (approval/load-state)))
+                 (some #(= sid (:session/id %))))
+        (let [resolved (approval/resolve! sid decision)]
+          {:resolved true
+           :decision (name decision)
+           :reply (approval/approval-reply-text resolved decision)})))))
 
 (defn decide!
   "Resolve a pending approval by id — the web buttons. The decision
@@ -276,7 +384,7 @@
   [approval-id decision]
   (if-not (contains? #{:approve :deny :approve-rest} decision)
     {:error "invalid-decision"}
-    (let [job (some (fn [j] (when (= approval-id (get-in j [:approval :id]))) j)
+    (let [job (some (fn [j] (when (= approval-id (get-in j [:approval :id])) j))
                     (vals @jobs))]
       (if-not job
         {:error "unknown-approval"}

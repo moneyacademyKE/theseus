@@ -11,7 +11,7 @@ const el = (id) => document.getElementById(id);
 const state = {
   session: localStorage.getItem('theseus-cockpit-session') || 'web',
   attachments: [],
-  jobId: null,
+  jobId: localStorage.getItem('theseus-cockpit-job') || null,
   lastApprovalId: null,
 };
 
@@ -181,9 +181,33 @@ function renderAttachments() {
 function flowLine(ev) {
   const div = document.createElement('div');
   div.className = 'flow ' + ev.type;
-  const icon = ev.type === 'call' ? '⚙️' : (ev.ok ? '✅' : '❌');
+  const icon = ev.type === 'call' ? '⚙️' : (ev.type === 'retry' ? '⏳' : (ev.ok ? '✅' : '❌'));
+  if (ev.type === 'retry') {
+    div.textContent = icon + ' retry ' + (ev.attempt || '?') +
+      (ev.reason ? ' · ' + ev.reason : '');
+    return div;
+  }
   div.textContent = icon + ' ' + ev.tool + (ev.context ? ' · ' + ev.context : '');
   return div;
+}
+
+async function jobAction(id, verb) {
+  try {
+    const data = await post('/api/job/' + encodeURIComponent(id) + '/' + verb, {});
+    if (verb === 'cancel' && data.canceled) el('cockpit-status').textContent = 'canceled';
+    if (verb === 'cancel' && data['cancel-requested']) el('cockpit-status').textContent = 'cancel requested';
+    if (verb === 'retry' && data['job/id']) {
+      watchJob(data['job/id']);
+      renderJob({ status: 'queued', events: [] });
+      el('cockpit-status').textContent = 'requeued';
+    }
+  } catch (e) {
+    const error = el('cockpit-error');
+    if (error) {
+      error.textContent = verb + ' failed — ' + e.message;
+      error.hidden = false;
+    }
+  }
 }
 
 async function decide(id, decision) {
@@ -226,7 +250,8 @@ function renderJob(job) {
   const ended = job['finished-at'] || Date.now();
   const elapsed = started ? Math.max(0, ended - started) : 0;
   const steps = (job.events || []).length;
-  head.textContent = job.status + ' · ' + elapsedLabel(elapsed) + ' · ' + steps + (steps === 1 ? ' step' : ' steps');
+  head.textContent = job.status + (job['cancel-requested'] ? ' · cancel requested' : '') +
+    ' · ' + elapsedLabel(elapsed) + ' · ' + steps + (steps === 1 ? ' step' : ' steps');
   box.appendChild(head);
   const flow = document.createElement('div');
   flow.className = 'job-flow';
@@ -265,24 +290,45 @@ function renderJob(job) {
   } else {
     state.lastApprovalId = null;
   }
-  if (job.status === 'failed') {
-    const err = document.createElement('div');
-    err.className = 'job-error';
-    err.textContent = job.error || 'failed';
-    box.appendChild(err);
+  if (job.status === 'failed' || job.status === 'interrupted' || job.status === 'canceled') {
+    if (job.status !== 'canceled') {
+      const err = document.createElement('div');
+      err.className = 'job-error';
+      err.textContent = job.error || 'failed';
+      box.appendChild(err);
+    }
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'job-retry';
+    retry.textContent = '↻ retry';
+    retry.setAttribute('aria-label', 'retry this message as a new turn');
+    retry.onclick = () => { retry.disabled = true; jobAction(job['job/id'], 'retry'); };
+    box.appendChild(retry);
+  }
+  if (job.status === 'queued' || job.status === 'running') {
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'job-cancel';
+    cancel.textContent = '✕ cancel';
+    cancel.setAttribute('aria-label', 'cancel this turn');
+    cancel.onclick = () => { cancel.disabled = true; jobAction(job['job/id'], 'cancel'); };
+    box.appendChild(cancel);
   }
   box.scrollTop = pinned ? box.scrollHeight : offset;
 }
 
 // The job rides the push stream: the state event carries the job map,
-// so watching a job is just remembering which one. The old 1.5s ticker
-// is gone — the broadcaster pushes within a second of any change.
+// so watching a job is just remembering which one — now also across a
+// reload (localStorage), so a refresh restores the live watch instead
+// of orphaning a running turn.
 function watchJob(id) {
   state.jobId = id;
+  if (id) localStorage.setItem('theseus-cockpit-job', id);
+  else localStorage.removeItem('theseus-cockpit-job');
 }
 
 function jobFinished(job) {
-  state.jobId = null;
+  watchJob(null);
   el('cockpit-status').textContent = job ? job.status : 'gone';
   loadTranscript();
   setTimeout(() => {
@@ -305,6 +351,25 @@ async function send() {
   renderAttachments();
   try {
     const job = await post('/api/turn', { session: state.session, text, attachments });
+    if (job.bypassed) {
+      // a typed approval answered a waiting turn on the request thread —
+      // no job exists; show the verdict where the transcript grows
+      el('cockpit-status').textContent = 'approval ' + (job.decision || 'answered');
+      const note = el('cockpit-job');
+      if (note) {
+        note.hidden = false;
+        note.replaceChildren();
+        const line = document.createElement('div');
+        line.className = 'job-head done';
+        line.textContent = 'approval ' + (job.decision || 'answered');
+        note.appendChild(line);
+        const reply = bubble(job.reply || '', 'out', 'theseus');
+        note.appendChild(reply);
+        setTimeout(() => { if (!state.jobId) note.hidden = true; }, 5000);
+      }
+      loadTranscript();
+      return;
+    }
     el('cockpit-status').textContent = 'running';
     renderJob({ status: 'queued', events: [] });
     watchJob(job['job/id']);
@@ -346,7 +411,10 @@ export function bootCockpit() {
   });
   loadTranscript();
   // Everything else rides the push: the session list arrives in every
-  // state event, the job map lands here while a turn runs.
+  // state event, the job map lands here while a turn runs. A reloaded
+  // page re-watches its remembered job; if the server restarted the job
+  // shows :interrupted and the retry button takes over from there.
+  if (state.jobId) renderJob({ status: 'queued', events: [] });
   return {
     onState: (st) => {
       if (Array.isArray(st['session-list'])) refreshSessions(st['session-list']);
@@ -354,7 +422,8 @@ export function bootCockpit() {
       const job = st.jobs && st.jobs[state.jobId];
       if (job) {
         renderJob(job);
-        if (job.status === 'done' || job.status === 'failed') jobFinished(job);
+        if (job.status === 'done' || job.status === 'failed' ||
+            job.status === 'interrupted' || job.status === 'canceled') jobFinished(job);
       } else {
         jobFinished(null); // aged out of the push window, or a restart
       }

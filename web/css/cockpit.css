@@ -285,3 +285,14 @@
 @media (max-width: 640px) {
   .col-wide { width: 100%; }
 }
+
+/* job verbs: retry (terminal), cancel (live) — same chip voice as the
+   approval buttons, one line each */
+.job-retry, .job-cancel {
+  margin-top: 8px; padding: 4px 10px; border: 0; border-radius: 6px;
+  font: 600 12px/1.4 var(--font, system-ui, sans-serif); cursor: pointer;
+}
+.job-retry { background: var(--accent, #39c5cf); color: #06130b; }
+.job-cancel { background: transparent; color: var(--fail, #ff6b6b);
+  border: 1px solid var(--fail, #ff6b6b); }
+.job-retry:disabled, .job-cancel:disabled { opacity: 0.5; cursor: default; }

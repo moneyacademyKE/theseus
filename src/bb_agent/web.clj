@@ -302,15 +302,38 @@
                   {:error (str (.getMessage e))})))))
 
 (defn- handle-turn
-  "POST /api/turn {session, text, attachments} → the queued job."
+  "POST /api/turn {session, text, attachments} → the queued job. Typed
+  approval replies short-circuit the queue entirely (approval-bypass!):
+  a blocked lane must never deadlock behind the approval it needs."
   [req]
   (let [payload (parse-json-body req)]
     (if-not payload
       (json-res 400 {:error "invalid-json"})
-      (guarded req #(turn/submit-turn!
-                     {:session (:session payload)
-                      :text (:text payload)
-                      :attachments (:attachments payload)})))))
+      (guarded req (fn []
+                     (if-let [bypass (turn/approval-bypass! (:session payload)
+                                                           (:text payload))]
+                       (assoc bypass :bypassed true)
+                       (turn/submit-turn!
+                        {:session (:session payload)
+                         :text (:text payload)
+                         :attachments (:attachments payload)})))))))
+
+(defn- handle-job-control
+  "POST /api/job/<id>/cancel | /api/job/<id>/retry — the job's own verbs.
+  Returns result maps and throws ex-info for the route envelope (guarded
+  owns status codes); never builds a response itself."
+  [id verb]
+  (let [result (case verb
+                 "cancel" (turn/cancel! id)
+                 "retry" (turn/retry! id)
+                 (throw (ex-info "unknown verb" {:status 404})))]
+    (if-let [err (:error result)]
+      (throw (ex-info err
+                      {:status (case err
+                                 "unknown-job" 404
+                                 "not-retryable" 409
+                                 500)}))
+      result)))
 
 (defn- handle-approval
   "POST /api/approval {id, decision} — the buttons on a pending request."
@@ -372,6 +395,11 @@
                      (or (turn/job-view id)
                          (throw (ex-info "no such job" {:status 404}))))))
 
+    (and (= :post request-method) (re-matches #"/api/job/[^/]+/(cancel|retry)" uri))
+    (let [id (subs uri (count "/api/job/") (str/last-index-of uri "/"))
+          verb (subs uri (inc (str/last-index-of uri "/")))]
+      (guarded req #(handle-job-control id verb)))
+
     (and (= :get request-method) (= "/api/events" uri))
     (handle-events req)
 
@@ -409,7 +437,11 @@
 
 (defn -main
   [& _]
-  (let [port (Integer/parseInt (or (System/getenv "THESEUS_WEB_PORT") "8787"))]
+  (let [port (Integer/parseInt (or (System/getenv "THESEUS_WEB_PORT") "8787"))
+        recovery (turn/recover-lane!)]
+    (when (seq (:interrupted recovery))
+      (println (str "web lane recovery: " (count (:interrupted recovery))
+                    " interrupted job(s) marked — see the cockpit")))
     (start-deck! port)
     (println "theseus web deck on http://127.0.0.1:" port)
     (println "auth:" (if (auth/password-set?)

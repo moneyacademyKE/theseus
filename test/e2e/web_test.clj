@@ -13,9 +13,11 @@
             [clojure.test :refer [deftest is testing]]
             [bb-agent.approval :as approval]
             [bb-agent.config :as config]
+            [bb-agent.provider :as provider]
             [bb-agent.web :as web]
             [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]
+            [bb-agent.web-lane :as lane]
             [bb-agent.web-turn :as turn]))
 
 (def ^:private deck-pass "deckpass-9")
@@ -468,3 +470,154 @@
       (testing "the lockout is per-process memory: a reset clears it"
         (auth/reset-login-failures!)
         (is (= 200 (:status (do-login deck-pass))))))))
+
+
+;; ---------- durable lane: recovery, cancel/retry, approval bypass ----------
+
+(deftest jobs-persist-and-recover-honestly
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))
+                  config/load-config (fn [] {:provider :fake})]
+      (testing "a finished job persists without its ephemeral events"
+        (let [token (:token (body-json (do-login deck-pass)))
+              res (post-turn token
+                             {:session "web-dur" :text "say pong"})
+              first-id (:job/id (body-json res))]
+          (is (= :done (:status (wait-for-job first-id 20000))))
+          (let [disk (lane/recover!)]
+            (is (string? (get-in disk [:jobs first-id :final]))
+                "the done job (with its final) survives on disk")
+            (is (nil? (get-in disk [:jobs first-id :events]))
+                "ephemeral flow events never persist"))))
+      (testing "restart recovery: interrupted, never silently re-run"
+        (spit (str (fs/path home "state" "web-lane.edn"))
+              (pr-str {:jobs {"job-9" {:job/id "job-9" :session/id "web-dur"
+                                        :status :running :text "say pong"
+                                        :attachment-ids [] :submitted-at 1}}
+                       :uploads {"up-1" {:kind :document :path "/x"
+                                         :file-name "x.md" :bytes 2}}}))
+        (let [report (turn/recover-lane!)]
+          (is (= ["job-9"] (:interrupted report)))
+          (is (= :interrupted (get-in (turn/job-view "job-9") [:status])))
+          (is (str/includes? (str (get-in (turn/job-view "job-9") [:error]))
+                             "restarted"))
+          (is (= {"up-1" {:kind :document :path "/x" :file-name "x.md" :bytes 2}}
+                 @turn/uploads)
+              "upload descriptors rehydrate — a retry can find its bytes"))
+        (testing "the job sequence continues past recovered ids"
+          (let [token (:token (body-json (do-login deck-pass)))
+                res (post-turn token
+                               {:session "web-dur" :text "say pong"})
+                id (:job/id (body-json res))]
+            (is (string? id))
+            (is (not= "job-9" id) "new ids do not collide with recovered job-9")
+            (is (= :done (:status (wait-for-job id 20000))))))))))
+
+(deftest queued-jobs-cancel-instantly-and-retry-as-new-jobs
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))
+                  config/load-config (fn [] {:provider :fake})]
+      ;; a queued job that never reached the executor (synthetic, like the
+      ;; approval fixture): cancel must not need the lane to drain.
+      (swap! turn/jobs assoc "job-q"
+             {:job/id "job-q" :session/id "web-cx" :status :queued
+              :text "say pong" :attachment-ids [] :events []
+              :submitted-at 1})
+      (let [token (:token (body-json (do-login deck-pass)))
+            route (fn [id verb]
+                    (web/app (req (str "/api/job/" id "/" verb)
+                                  {:request-method :post
+                                   :headers {"authorization" (str "Bearer " token)}
+                                   :body (java.io.StringReader. "{}")})))]
+        (testing "cancel answers the job's own verb"
+          (is (= 200 (:status (route "job-q" "cancel"))))
+          (is (= :canceled (:status (turn/job-view "job-q"))))
+          (testing "a retry re-queues the same inputs as a NEW job"
+            (let [res (route "job-q" "retry")
+                  new-id (:job/id (body-json res))]
+              (is (= 200 (:status res)))
+              (is (and (string? new-id) (not= "job-q" new-id)))
+              (is (= :done (:status (wait-for-job new-id 20000))))
+              (is (= "pong" (:final (turn/job-view new-id)))
+                  "the retried job ran the real turn")
+              (testing "done jobs refuse retry honestly; unknown jobs 404"
+                (is (= 409 (:status (route new-id "retry"))))
+                (is (= 404 (:status (route "job-zz" "cancel")))))))
+          (testing "canceled jobs are not re-run by the executor"
+            (is (= :canceled (:status (turn/job-view "job-q"))))))))))
+
+(deftest typed-approvals-bypass-the-blocked-lane
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (let [token (:token (body-json (do-login deck-pass)))
+            pending (approval/create-pending! "web-byp" :web
+                                              {:tool/name "shell"
+                                               :tool/args {:cmd "ls"}})]
+        ;; the blocked lane: a running job waiting on that approval
+        (swap! turn/jobs assoc "job-block"
+               {:job/id "job-block" :session/id "web-byp" :status :running
+                :text "do the thing" :attachment-ids [] :events []
+                :approval {:id (:approval/id pending) :tool "shell"}
+                :submitted-at 1})
+        (testing "'approve' resolves on the request thread, not behind the job"
+          (let [res (web/app (req "/api/turn"
+                                  {:request-method :post
+                                   :headers {"authorization" (str "Bearer " token)}
+                                   :body (java.io.StringReader.
+                                          (json/generate-string
+                                           {:session "web-byp" :text "approve"}))}))
+                payload (body-json res)]
+            (is (= 200 (:status res)))
+            (is (true? (:bypassed payload)))
+            (is (true? (:resolved payload)))
+            (is (= "approve" (:decision payload)))
+            (is (string? (:reply payload))))
+          (is (= :approve (get-in (approval/load-state)
+                                  [:decisions (:approval/id pending)])))
+          (is (= 1 (count @turn/jobs))
+              "the lane registry still holds exactly the blocked job —
+               the approval itself never enqueued one"))
+        (testing "an approval reply with nothing pending queues a normal turn"
+          (turn/reset-lane!)
+          (let [res (post-turn token {:session "web-byp" :text "deny"})]
+            (is (string? (:job/id (body-json res))))))))))
+
+;; a provider that fails once with an infra error, then succeeds —
+;; exercises the REAL retry path (core → retry/with-retries → emit)
+(def flaky-counter (atom 0))
+
+(defmethod provider/complete :flaky-fake [_ _request]
+  ;; CAS won = first call = the infra failure; the retry then succeeds
+  (if (compare-and-set! flaky-counter 0 1)
+    (throw (ex-info "503 service unavailable" {}))
+    {:role :assistant :content "recovered"}))
+
+(deftest retry-announcements-land-in-the-flow
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (reset! flaky-counter 0)
+    (with-redefs [config/home (fn [] (str home))
+                  config/load-config (fn [] {:provider :flaky-fake})]
+      (let [token (:token (body-json (do-login deck-pass)))
+            res (post-turn token
+                           {:session "web-flaky" :text "anything"})
+            job (wait-for-job (:job/id (body-json res)) 20000)]
+        (is (map? job))
+        (is (= :done (:status job)))
+        (is (= "recovered" (:final job)))
+        (let [retries (filter #(= "retry" (:type %)) (:events job))]
+          (is (= 1 (count retries)) "exactly one retry announcement")
+          (is (= 1 (:attempt (first retries))))
+          (is (= "infra" (:kind (first retries))))
+          (is (str/includes? (str (:reason (first retries))) "503")))))))
