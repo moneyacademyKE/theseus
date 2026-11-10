@@ -1,0 +1,64 @@
+;; webdeck ↔ Telegram parity witness — bk-3eeb closure record
+;; Generated 2026-11-10 (EAT) after the full parity campaign.
+;; Closure rule (docs/webdeck-parity.md): a row is CLOSED only with its
+;; named check green in the same session; PARTIAL rows name the exact
+;; external action required. Nothing here is asserted from memory —
+;; every :check names the gate that ran.
+{:generated-at "2026-11-10T10:10:00+03:00"
+ :bead "bk-3eeb"
+ :gates {:e2e-web "25 tests / 297 assertions / 0 failures (commit c1df51b state)"
+         :e2e-scheduler "3 tests / 34 assertions / 0 failures"
+         :e2e-all "full composite: exit 0, zero FAIL/ERROR lines"
+         :goal "96 tests / 482 assertions / 0 failures"
+         :node-web "node --test test/web/*.test.mjs: 9/9"
+         :kondo "0 errors"
+         :live-drill "restarted com.theseus.web; shell 200, /api/status 401 anonymous, both local and through the quick tunnel"}
+ :rows
+ [{:row 1 :capability "compose a turn" :verdict :closed
+   :check "e2e fake-provider job pin (web-send-file suite pre-state)"}
+  {:row 2 :capability "live tool flow" :verdict :closed
+   :check "e2e SSE job-event pins"}
+  {:row 3 :capability "approvals (buttons)" :verdict :closed
+   :check "e2e decision pins"}
+  {:row 4 :capability "approvals (typed)" :verdict :closed
+   :check "typed-approvals-bypass-the-blocked-lane pin"}
+  {:row 5 :capability "retry liveness" :verdict :closed
+   :check "retry-announcements-land-in-the-flow pin"}
+  {:row 6 :capability "job durability" :verdict :closed
+   :check "jobs-persist-and-recover-honestly pin; state/web-lane.edn allowlisted in state-hygiene"}
+  {:row 7 :capability "refresh recovery" :verdict :closed
+   :check "localStorage job re-watch pin + live reload drill (row 12-13 suite)"}
+  {:row 8 :capability "cancel / retry a job" :verdict :closed
+   :check "queued-jobs-cancel-instantly pin"}
+  {:row 9 :capability "generated-file delivery" :verdict :closed
+   :check "web-send-file-registers-and-serves-artifacts pin: registration, bytes, content-type, ?token= route-only, 401/404, roots denial, symlink-swap refusal (dc17ed1)"}
+  {:row 10 :capability "goal progress" :verdict :closed
+   :check "goal-detail reader pin: verdict, control state, bounded log tail (dc17ed1)"}
+  {:row 11 :capability "goal control" :verdict :closed
+   :check "goal-detail-and-control-verbs pin: pause/stop write control files into the run workdir, resume/cancel ride the goal bridge, unknowns refuse (dc17ed1)"}
+  {:row 12 :capability "history depth" :verdict :closed
+   :check "transcript-pagination pin: pages 1/2/3 slice 130 turns correctly, beyond-end honest, 9000-char field untruncated (aba8ec3)"}
+  {:row 13 :capability "cross-channel sync" :verdict :closed
+   :check "cross-channel-append pin: session-list :updated moves on engine-style append, transcript grows; cockpit reloadTarget excludes the busy session (aba8ec3)"}
+  {:row 14 :capability "voice input" :verdict :closed
+   :check "shell pin (capture=environment + mic elements) + node shell.test.mjs + media.js syntax gate; upload lane classifies audio as :voice (aba8ec3)"}
+  {:row 15 :capability "camera input" :verdict :closed
+   :check "shell pin + node test: cockpit-camera-input with capture=environment rides the upload lane (aba8ec3)"}
+  {:row 16 :capability "edit affordance" :verdict :closed
+   :check "edit-last-re-runs-and-replaces pin: one replacement never a duplicate; blank edit refused 400 BEFORE history is touched (aba8ec3)"}
+  {:row 17 :capability "reactions/typing acks" :verdict :na-by-design
+   :check "web's ack is the live job card + flow — no emoji theater"}
+  {:row 18 :capability "session mgmt" :verdict :closed
+   :check "logout-rotation-and-durable-sessions pin: logout kills only this token, load-sessions! survives restart, rotation kills old secret and re-mints (c1df51b)"}
+  {:row 19 :capability "access roles" :verdict :closed
+   :check "read-only-role-reads-but-never-writes pin: ro reads 200, six write routes 403 through one guarded-owner gate (c1df51b)"}
+  {:row 20 :capability "schedule admin" :verdict :closed
+   :check "schedule-crud pin: create validates id/prompt/cron against the daemon's own matcher, delete removes, 401/403 gates (c1df51b)"}
+  {:row 21 :capability "vision provider" :verdict :partial
+   :blocker "zai/glm-4.6v disabled at the inferhub gateway account — re-enable in the provider dashboard; the web lane's image pipeline is wired and waiting"
+   :owner-action "enable glm-4.6v on the gateway account"}
+  {:row 22 :capability "stable URL" :verdict :partial
+   :blocker "~/.cloudflared credentials absent on this host (verified 2026-11-10): a named tunnel needs a Cloudflare login + domain choice, both owner actions. The quick tunnel serves today (verified: shell 200, auth edge 401 through the tunnel)"
+   :owner-action "cloudflared tunnel login + pick a domain, then swap com.theseus.tunnel.plist to the named tunnel"}
+  {:row 23 :capability "outbound voice (TTS)" :verdict :na-by-design
+   :check "Theseus answers in text on both transports"}]}

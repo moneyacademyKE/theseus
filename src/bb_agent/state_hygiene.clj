@@ -30,7 +30,12 @@
     ;; flagged these two. notify-listen.log: the notify daemon's launchd
     ;; log, same fd contract as telegram-poll.log. telegram-edits/: the
     ;; edited-message seen-cache owned by telegram_notes.clj.
-    "notify-listen.log" "telegram-edits"})
+    "notify-listen.log" "telegram-edits"
+    ;; Web deck durable state (bk-3eeb): the job lane (queued/running jobs,
+    ;; uploads) and the login session table. Same lifetime as sessions —
+    ;; a deck restart reloads them; the password rotation clears
+    ;; web-sessions.edn's contents by rewrite, not deletion.
+    "web-lane.edn" "web-sessions.edn"})
 
 (defn violations
   "Top-level entries under state-dir that are not allowlisted durable

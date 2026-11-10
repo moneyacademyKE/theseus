@@ -184,13 +184,31 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.theseus.telegram.pli
 
 A TweetDeck-style dashboard over live state: the **cockpit** column is
 the interactive surface (full parity with how Theseus interacts over
-Telegram), and the rest are read-only columns for LLM turns, the
-tool-funnel table, the RSI digest, session summaries, goals, schedule
-runs, and system health. Run it directly:
+Telegram — the row-by-row contract and its closure witness live in
+`docs/webdeck-parity.md` and `docs/webdeck-parity-witness.edn`), and
+the rest are read-only columns for LLM turns, the tool-funnel table,
+the RSI digest, session summaries, goals, schedule runs, and system
+health. Run it directly:
 
 ```sh
 bb src/bb_agent/web.clj     # serves 127.0.0.1:8787 (THESEUS_WEB_PORT overrides)
 ```
+
+**Parity highlights (bk-3eeb).** Generated files ship as download
+links (`web_send_file` tool → authenticated `/api/artifact/<id>` with
+serve-time path revalidation); goals expose their run log, verdict and
+pause/resume/stop/cancel buttons through the same bridge Telegram
+uses; transcripts paginate from the tail (`?page=`, "load older")
+with untruncated fields; a session that grew on the other channel
+re-renders its open transcript live; the microphone (MediaRecorder)
+and camera (`capture="environment"`) ride the same upload lane as
+file attachments; the last message can be edited and re-run with true
+replacement semantics; logins survive a deck restart
+(`state/web-sessions.edn`), the browser can rotate the master
+password, and an optional read-only password (`bb-agent.web-auth`,
+`set-ro-password!`) grants read-only access that 403s every write
+route; schedule definitions can be created and deleted from the
+schedules column.
 
 **The cockpit (interactive).** Compose a message and the deck runs the
 same `core/run-turn!` the Telegram poller runs — one engine, two
