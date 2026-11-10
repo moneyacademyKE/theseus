@@ -43,6 +43,19 @@ test('cockpit module wires the new affordances (source pins)', () => {
     JSON.stringify(cockpit).includes('transcript.js'), 'pagination import');
 });
 
+test('a snapshot missing the watched job must not end the watch (issue #35)', () => {
+  const cockpit = readFileSync(join(here, '../../web/js/cockpit.js'), 'utf8');
+  // a stale poll/push frame can predate the POST that created the job;
+  // only a real 404 from the job route may declare it gone
+  assert.ok(cockpit.includes("/api/job/"), 'missing-job verification fetch');
+  assert.ok(cockpit.includes('status === 404') || cockpit.includes("status===404"),
+    'gone is decided by the job route 404, not a missing snapshot entry');
+  const api = readFileSync(join(here, '../../web/js/api.js'), 'utf8');
+  // the fetch helper must carry the status code so the 404 is decidable
+  assert.match(api, /export async function get\(path\) \{[\s\S]*?status: res\.status/,
+    'get() attaches the HTTP status to its thrown error');
+});
+
 test('transcript.js owns paging + untruncated render (row 12)', () => {
   const t = readFileSync(join(here, '../../web/js/transcript.js'), 'utf8');
   assert.ok(t.includes('has-more') || t.includes('hasMore'), 'envelope field');

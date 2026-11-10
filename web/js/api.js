@@ -46,7 +46,7 @@ export async function get(path) {
     showLogin();
     throw Object.assign(new Error('unauthorized'), { unauthorized: true });
   }
-  if (!res.ok) throw new Error('HTTP ' + res.status);
+  if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
   return res.json();
 }
 

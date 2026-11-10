@@ -19,6 +19,11 @@ const state = {
   busySession: null, // the session our running job writes to
 };
 
+// one in-flight missing-job verification at a time (issue #35): a
+// snapshot without our job triggers a job-route check, and overlapping
+// checks would race each other's watchJob(null)
+let verifyingGone = false;
+
 // ---------- authed non-GET helpers ----------
 
 async function post(path, body) {
@@ -467,8 +472,24 @@ export function bootCockpit() {
         renderJob(job);
         if (job.status === 'done' || job.status === 'failed' ||
             job.status === 'interrupted' || job.status === 'canceled') jobFinished(job);
-      } else {
-        jobFinished(null); // aged out of the push window, or a restart
+      } else if (!verifyingGone) {
+        // A snapshot can predate the POST that created the job (issue #35:
+        // a poll/push frame raced the send and the cockpit declared the
+        // job "gone" before the engine ever ran it). Missing ≠ gone —
+        // ask the job route; only a real 404 ends the watch.
+        verifyingGone = true;
+        const id = state.jobId;
+        get('/api/job/' + encodeURIComponent(id))
+          .then((j) => {
+            if (!state.jobId || state.jobId !== id) return;
+            renderJob(j);
+            if (j.status === 'done' || j.status === 'failed' ||
+                j.status === 'interrupted' || j.status === 'canceled') jobFinished(j);
+          })
+          .catch((e) => {
+            if (state.jobId === id && e && e.status === 404) jobFinished(null);
+          })
+          .finally(() => { verifyingGone = false; });
       }
     },
   };
