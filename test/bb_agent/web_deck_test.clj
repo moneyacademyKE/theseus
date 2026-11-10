@@ -132,6 +132,29 @@
       (is (= "late-join digest\n"
              (get-in (json/parse-string (:data ev) false) ["rsi" "md"]))))))
 
+(deftest sse-head-carries-no-transform
+  (testing "the push stream opts out of edge rewriting/compression (issue #36)
+             — a Cloudflare edge left free to transform held the authed
+             stream from its first byte while unauthorized frames passed"
+    (let [sock (Socket. "127.0.0.1" (int @deck-port))]
+      (.setSoTimeout sock 8000)
+      (let [os (.getOutputStream sock)]
+        (.write os (.getBytes (str "GET /api/events?token=" @token " HTTP/1.1\r\n"
+                                   "Host: localhost\r\n"
+                                   "Accept: text/event-stream\r\n\r\n")
+                          "UTF-8"))
+        (.flush os))
+      (let [rdr (BufferedReader. (InputStreamReader. (.getInputStream sock) "UTF-8"))
+            head (loop [acc []]
+                   (let [line (try (.readLine rdr) (catch Exception _ ""))]
+                     (if (or (nil? line) (str/blank? line))
+                       (vec acc)
+                       (recur (conj acc (str/lower-case line))))))]
+        (.close sock)
+        (is (some #(.contains ^String % "cache-control: no-cache, no-transform")
+                  head)
+            (str "sse head was: " (pr-str head)))))))
+
 ;; ---------- the routes the push composes over (regression) ----------
 
 (deftest json-routes-keep-answering

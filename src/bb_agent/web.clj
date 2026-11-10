@@ -242,7 +242,13 @@
   handshake, not a login verdict."
   [req]
   (let [headers {"Content-Type" "text/event-stream; charset=utf-8"
-                 "Cache-Control" "no-cache"
+                 ;; no-transform: Cloudflare's edge compresses/rewrites
+                 ;; text it decides to — and a compressor that doesn't
+                 ;; flush per chunk holds the whole stream (issue #36:
+                 ;; unauthorized frames passed, authed streams stalled
+                 ;; from byte one until the connection closed). The
+                 ;; directive is the documented opt-out.
+                 "Cache-Control" "no-cache, no-transform"
                  "X-Accel-Buffering" "no"}
         live?   (auth/session-live? (sse-token req))]
   (server/with-channel req ch
