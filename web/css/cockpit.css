@@ -17,6 +17,7 @@
 }
 
 .cockpit-sessions select {
+  min-width: 0;
   flex: 1 1 auto;
   background: var(--bg);
   color: var(--text);

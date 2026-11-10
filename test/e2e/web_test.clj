@@ -1074,3 +1074,13 @@
       (is (some? rule) "login dialog style is present")
       (is (re-find #"(?m)(?:^|;)\s*color\s*:\s*var\(--text\)\s*;" (or (second rule) ""))
           "the dialog must use the deck foreground rather than the native black default"))))
+
+
+(deftest session-picker-shrinks-within-the-toolbar
+  (testing "long session labels must not push controls into the next column"
+    (let [res (web/app {:uri "/css/cockpit.css" :request-method :get})
+          rule (re-find #"(?s)\.cockpit-sessions\s+select\s*\{(.*?)\}" (:body res))]
+      (is (= 200 (:status res)))
+      (is (some? rule) "session picker style is present")
+      (is (re-find #"(?m)(?:^|;)\s*min-width\s*:\s*0\s*;" (or (second rule) ""))
+          "flex item must be allowed to shrink below long session labels"))))
