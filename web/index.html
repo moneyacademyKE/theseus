@@ -101,6 +101,17 @@
   </form>
 </dialog>
 
+<dialog id="goal-detail" aria-labelledby="goal-detail-title">
+  <div class="goal-detail-head">
+    <div class="login-title" id="goal-detail-title"><span class="glyph">🎯</span>goal</div>
+    <button type="button" id="goal-detail-close" title="close" aria-label="close goal detail">×</button>
+  </div>
+  <div id="goal-detail-meta" class="goal-detail-meta" aria-live="polite"></div>
+  <div id="goal-detail-log" class="goal-detail-log" role="log" aria-label="goal run log"></div>
+  <div id="goal-detail-actions" class="goal-detail-actions"></div>
+  <div id="goal-detail-note" class="goal-detail-note" role="status" hidden></div>
+</dialog>
+
 <!-- vendored, no CDN: markdown rendering (marked) + its sanitizer
      (DOMPurify). UMD builds exposing window.marked / window.DOMPurify;
      md.js degrades to plain text if either fails to load. -->

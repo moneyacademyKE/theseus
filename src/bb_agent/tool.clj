@@ -8,6 +8,7 @@
             [bb-agent.tool.goal :as goal]
             [bb-agent.tool.process :as process]
             [bb-agent.tool.telegram :as telegram]
+            [bb-agent.tool.web :as web]
             [bb-agent.usage :as usage]))
 
 (def normalize-request common/normalize-request)
@@ -15,7 +16,8 @@
 (def deny-result common/deny-result)
 
 (def ^:private handlers
-  (merge file/handlers process/handlers telegram/handlers goal/handlers))
+  (merge file/handlers process/handlers telegram/handlers goal/handlers
+         web/handlers))
 
 (defn execute-tool-request
   "Run one tool request. The argument heal happens HERE as well as in
@@ -53,7 +55,8 @@
    (let [request (normalize-request request)
          request (cond-> request
                    (and (:cwd cfg)
-                        (contains? #{"shell" "git_status" "telegram_send_file"}
+                        (contains? #{"shell" "git_status" "telegram_send_file"
+                                     "web_send_file"}
                                    (:tool/name request))
                         (nil? (get-in request [:tool/args :cwd])))
                    ;; A stale/missing session cwd (e.g. a pre-migration
@@ -71,6 +74,9 @@
                    (assoc-in [:tool/args :telegram-session]
                              (select-keys (:telegram/send-context cfg)
                                           [:chat-id :thread-id]))
+                   (and (string? (get cfg :web/job-id))
+                        (= "web_send_file" (:tool/name request)))
+                   (assoc-in [:tool/args :web-job-id] (get cfg :web/job-id))
                    (and (map? (:telegram/send-context cfg))
                         (= "launch_goal" (:tool/name request)))
                    (assoc-in [:tool/args :goal/send-context]

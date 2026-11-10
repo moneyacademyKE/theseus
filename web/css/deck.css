@@ -322,3 +322,26 @@ body {
 .kv .v.bad  { color: var(--fail); }
 
 .empty { padding: 22px 14px; text-align: center; color: var(--faint); font-size: 12px; }
+
+/* goal detail drawer — same voice as the login dialog */
+#goal-detail { width: min(680px, 92vw); max-height: 80vh; }
+#goal-detail::backdrop { background: rgba(0,0,0,0.6); }
+.goal-detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.goal-detail-head button { background: none; border: 0; color: inherit; font-size: 18px; cursor: pointer; }
+.goal-detail-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 13px; }
+.goal-detail-log {
+  overflow: auto; max-height: 40vh; margin-bottom: 10px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; word-break: break-word;
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 8px;
+}
+.goal-detail-log .logline { border-bottom: 1px solid rgba(255,255,255,0.04); padding: 1px 0; }
+.goal-detail-actions { display: flex; gap: 8px; }
+.goal-verb {
+  padding: 5px 14px; border: 0; border-radius: 6px; cursor: pointer;
+  background: var(--accent, #39c5cf); color: #06130b;
+  font: 600 13px/1.4 var(--font, system-ui, sans-serif);
+}
+.goal-verb.danger { background: transparent; color: var(--fail, #ff6b6b); border: 1px solid var(--fail, #ff6b6b); }
+.goal-verb:disabled { opacity: 0.5; cursor: default; }
+.goal-detail-note { margin-top: 8px; font-size: 13px; color: var(--accent, #39c5cf); }

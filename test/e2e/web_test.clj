@@ -18,6 +18,9 @@
             [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]
             [bb-agent.web-lane :as lane]
+            [bb-agent.tool :as tool]
+            [bb-agent.goal-bridge :as goal-bridge]
+            [bb-agent.web-artifacts :as artifacts]
             [bb-agent.web-turn :as turn]))
 
 (def ^:private deck-pass "deckpass-9")
@@ -621,3 +624,138 @@
           (is (= 1 (:attempt (first retries))))
           (is (= "infra" (:kind (first retries))))
           (is (str/includes? (str (:reason (first retries))) "503")))))))
+
+
+;; ---------- artifacts: web_send_file + authenticated download ----------
+
+(deftest web-send-file-registers-and-serves-artifacts
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (reset! artifacts/registry {})
+    (with-redefs [config/home (fn [] (str home))]
+      (let [report-dir (do (fs/create-dirs (fs/path home "reports"))
+                           (fs/path home "reports"))
+            report-path (str (fs/path report-dir "report.md"))
+            _ (spit report-path "# the report\n\nzanzibar\n")]
+        (testing "the tool handler registers against the running web job"
+          (let [result (tool/handle-tool-request
+                        {:tool/name "web_send_file"
+                         :tool/args {:path report-path :caption "the report"}}
+                        {:web/job-id "job-art" :approval/mode :auto-all})]
+            (is (:executed? result) (str "handler result: " (pr-str result)))
+            (is (string? (:artifact/id result)))
+            (is (= "report.md" (:name result)))
+            (is (pos? (:bytes result)))))
+        (testing "job-view carries the artifacts of its job"
+          (swap! turn/jobs assoc "job-art"
+                 {:job/id "job-art" :session/id "web-art" :status :done
+                  :text "make a report" :attachment-ids [] :events []
+                  :final "here" :submitted-at 1 :finished-at 2})
+          (is (= 1 (count (:artifacts (turn/job-view "job-art")))))))
+      (testing "outside a web session the tool refuses, telegram-style"
+        (let [result (tool/handle-tool-request
+                      {:tool/name "web_send_file"
+                       :tool/args {:path "/etc/hosts"}}
+                      {:approval/mode :auto-all})]
+          (is (false? (:executed? result)))
+          (is (str/includes? (str (:error/message result))
+                             "web cockpit session"))))
+      (let [token (:token (body-json (do-login deck-pass)))
+            entry (first (vals @artifacts/registry))
+            art-id (:artifact/id entry)
+            on-disk (:path entry)
+            authed (fn [uri opts]
+                     (web/app (req uri (assoc opts :headers
+                                              {"authorization" (str "Bearer " token)}))))]
+        (testing "the download route serves bytes with a safe content type"
+          (let [res (authed (str "/api/artifact/" art-id) {})]
+            (is (= 200 (:status res)))
+            (is (str/includes? (String. ^bytes (:body res) "UTF-8") "zanzibar"))
+            (is (= "text/markdown; charset=utf-8"
+                   (get-in res [:headers "Content-Type"])))
+            (is (= "attachment; filename=\"report.md\""
+                   (get-in res [:headers "Content-Disposition"])))))
+        (testing "?token= works on the artifact route only (download links)"
+          (is (= 200 (:status (web/app (req (str "/api/artifact/" art-id)
+                                            {:query-string (str "token=" token)})))))
+          (is (= 401 (:status (web/app (req "/api/status"
+                                            {:query-string (str "token=" token)}))))))
+        (testing "no auth → 401; unknown id → 404"
+          (is (= 401 (:status (web/app (req (str "/api/artifact/" art-id) {})))))
+          (is (= 404 (:status (authed "/api/artifact/deadbeef" {})))))
+        (testing "a path outside the delivery roots is refused at registration"
+          (is (thrown-with-msg? Exception #"roots"
+                                (artifacts/register! "/etc/hosts" "job-art" nil))))
+        (testing "a symlink swap after registration is refused at serve"
+          (let [outside (fs/create-temp-dir {:prefix "web-outside-"})
+                secret (str (fs/path outside "secret.txt"))
+                _ (spit secret "SECRETS")
+                link-dir (fs/create-temp-dir {:prefix "web-link-"})
+                link (str (fs/path link-dir "innocent.md"))
+                _ (fs/create-sym-link link (fs/path on-disk))
+                art (artifacts/register! link "job-art" nil)]
+            (fs/delete link)
+            (fs/create-sym-link (fs/path link) (fs/path secret))
+            (is (nil? (artifacts/lookup (:artifact/id art)))
+                "serve-time revalidation refuses the swapped path")))))))
+
+;; ---------- goals: detail reader + control verbs ----------
+
+(deftest goal-detail-and-control-verbs
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (let [ws (fs/path home "goals" "goal-web-x")
+            workdir (fs/create-temp-dir {:prefix "goal-workdir-"})
+            _ (do (fs/create-dirs ws)
+                  (spit (str (fs/path ws "project.edn"))
+                        (pr-str {:name "goal-web-x"}))
+                  (spit (str (fs/path ws "config.edn"))
+                        (pr-str {:name "goal-web-x" :workdir (str workdir)}))
+                  (spit (str (fs/path ws "run.log"))
+                        "iter 1 started\niter 1 ok\nHALT: stall\n"))
+            token (:token (body-json (do-login deck-pass)))
+            control-route (fn [id action]
+                            (web/app (req "/api/goal-control"
+                                          {:request-method :post
+                                           :headers {"authorization" (str "Bearer " token)}
+                                           :body (java.io.StringReader.
+                                                  (json/generate-string
+                                                   {:id id :action action}))})))]
+        (testing "detail: verdict, control state, bounded log tail"
+          (let [res (web/app (req "/api/goal-detail"
+                                  {:headers {"authorization" (str "Bearer " token)}
+                                   :query-string "id=goal-web-x"}))
+                detail (body-json res)]
+            (is (= 200 (:status res)))
+            (is (= "halted" (:verdict detail)))
+            (is (= "goal-web-x" (:dir detail)))
+            (is (= "running" (get-in detail [:control :state])))
+            (is (= ["iter 1 started" "iter 1 ok" "HALT: stall"] (:log detail))))
+          (is (= 404 (:status (web/app (req "/api/goal-detail"
+                                            {:headers {"authorization" (str "Bearer " token)}
+                                             :query-string "id=ghost"}))))))
+        (testing "pause writes the control file into the RUN workdir, stop wins"
+          (let [res (control-route "goal-web-x" "pause")]
+            (is (= 200 (:status res)))
+            (is (= :paused (keyword (:state (body-json res))))))
+          (is (fs/exists? (fs/path workdir ".goal-control" "pause")))
+          (control-route "goal-web-x" "stop")
+          (is (fs/exists? (fs/path workdir ".goal-control" "stop")))
+          (let [res (web/app (req "/api/goal-detail"
+                                  {:headers {"authorization" (str "Bearer " token)}
+                                   :query-string "id=goal-web-x"}))]
+            (is (= "stop-requested" (get-in (body-json res) [:control :state])))))
+        (testing "unknown goal / unknown action refuse honestly"
+          (is (= 404 (:status (control-route "ghost" "pause"))))
+          (is (= 400 (:status (control-route "goal-web-x" "detonate")))))
+        (testing "resume/cancel route through the goal bridge"
+          (with-redefs [goal-bridge/resume! (fn [slug chat thread _emit]
+                                              [slug chat thread])
+                        goal-bridge/cancel! (fn [chat thread] [chat thread])]
+            (is (= 200 (:status (control-route "goal-web-x" "resume"))))
+            (is (= 200 (:status (control-route "goal-web-x" "cancel"))))))))))

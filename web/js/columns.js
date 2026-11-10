@@ -4,6 +4,7 @@
 // innerHTML with data.
 
 import { mdToNode } from './md.js';
+import { getToken } from './api.js';
 import { relTime, eatFull } from './time.js';
 
 export function el(tag, cls, text) {
@@ -165,14 +166,94 @@ export function renderGoals(rows) {
   const { body } = clearInto('goals');
   if (!Array.isArray(rows) || !rows.length) return empty(body, 'no goal workspaces yet'), done('goals', 0);
   for (const g of rows) {
-    card(body, {
+    const c = card(body, {
       ts: g.updated || '',
       pill: g.active ? ['ok', 'live'] : ['idle', 'idle'],
       title: g.name || g.dir,
       sub: g.last || '',
     });
+    c.style.cursor = 'pointer';
+    c.setAttribute('role', 'button');
+    c.setAttribute('tabindex', '0');
+    c.setAttribute('aria-label', 'open goal detail for ' + (g.name || g.dir));
+    c.addEventListener('click', () => openGoalDetail(g.dir));
+    c.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openGoalDetail(g.dir); }
+    });
   }
   done('goals', rows.length);
+}
+
+// ---- goal detail: the operator drawer (run log + control verbs) ----
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
+  return data;
+}
+
+async function openGoalDetail(dir) {
+  const dialog = document.getElementById('goal-detail');
+  if (!dialog || !dir) return;
+  const close = document.getElementById('goal-detail-close');
+  if (close && !close.dataset.wired) {
+    close.dataset.wired = '1';
+    close.addEventListener('click', () => dialog.close());
+  }
+  const title = document.getElementById('goal-detail-title');
+  const meta = document.getElementById('goal-detail-meta');
+  const log = document.getElementById('goal-detail-log');
+  const actions = document.getElementById('goal-detail-actions');
+  const note = document.getElementById('goal-detail-note');
+  if (title) title.textContent = dir;
+  if (log) log.replaceChildren(el('div', 'dim', 'loading…'));
+  if (meta) meta.replaceChildren();
+  if (note) { note.textContent = ''; note.hidden = true; }
+  dialog.showModal();
+  try {
+    const res = await fetch('/api/goal-detail?id=' + encodeURIComponent(dir), {
+      headers: { Authorization: 'Bearer ' + getToken() },
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const g = await res.json();
+    if (meta) {
+      meta.append(
+        el('span', 'pill ' + (g.verdict === 'fulfilled' ? 'ok' : g.verdict === 'halted' ? 'fail' : 'idle'), g.verdict),
+        el('span', 'dim', ' · control: ' + (g.control && g.control.state ? g.control.state : '?')),
+        el('span', 'dim', ' · ' + (g['log-lines'] || 0) + ' log lines'));
+    }
+    if (log) {
+      log.replaceChildren();
+      for (const line of (g.log || [])) log.append(el('div', 'logline', line));
+      if (!(g.log || []).length) log.append(el('div', 'dim', 'no run.log yet — authored or never launched'));
+    }
+    if (actions) {
+      actions.replaceChildren();
+      for (const verb of ['pause', 'resume', 'stop', 'cancel']) {
+        const b = el('button', 'goal-verb ' + (verb === 'stop' || verb === 'cancel' ? 'danger' : ''), verb);
+        b.setAttribute('aria-label', verb + ' goal ' + dir);
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            const result = await post('/api/goal-control', { id: dir, action: verb });
+            if (note) { note.textContent = verb + ': ' + (result.state || result['command'] || JSON.stringify(result)); note.hidden = false; }
+            setTimeout(() => openGoalDetail(dir), 800); // re-read control state
+          } catch (e) {
+            if (note) { note.textContent = verb + ' failed — ' + e.message; note.hidden = false; }
+            b.disabled = false;
+          }
+        };
+        actions.append(b);
+      }
+    }
+  } catch (e) {
+    if (log) log.replaceChildren(el('div', 'empty', 'detail unavailable — ' + e.message));
+  }
 }
 
 // ---- schedules ----

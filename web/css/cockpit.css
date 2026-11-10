@@ -296,3 +296,13 @@
 .job-cancel { background: transparent; color: var(--fail, #ff6b6b);
   border: 1px solid var(--fail, #ff6b6b); }
 .job-retry:disabled, .job-cancel:disabled { opacity: 0.5; cursor: default; }
+
+/* artifacts: download chips inside the job card — the web lane's
+   delivery surface (web_send_file) */
+.job-artifacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.artifact-chip {
+  display: inline-block; padding: 4px 10px; border-radius: 6px;
+  background: var(--accent, #39c5cf); color: #06130b;
+  font: 600 12px/1.4 var(--font, system-ui, sans-serif);
+  text-decoration: none;
+}

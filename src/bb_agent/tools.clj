@@ -63,6 +63,15 @@
       :required ["path"]}}}
    {:type "function"
     :function
+    {:name "web_send_file"
+     :description "Send a local file to the current web deck conversation as a downloadable artifact (web cockpit sessions only). Use it whenever the user is on the web deck and asks for a file, a report, or any generated output."
+     :parameters
+     {:type "object"
+      :properties {"path" {:type "string" :description "Local file path to send"}
+                   "caption" {:type "string" :description "Optional caption (max 200 characters)"}}
+      :required ["path"]}}}
+   {:type "function"
+    :function
     {:name "launch_goal"
      :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
      :parameters

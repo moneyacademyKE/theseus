@@ -23,6 +23,7 @@
             [bb-agent.session :as session]
             [bb-agent.telegram-flow :as flow]
             [bb-agent.telegram-intake :as intake]
+            [bb-agent.web-artifacts :as artifacts]
             [bb-agent.web-lane :as lane]
             [clojure.string :as str]))
 
@@ -202,6 +203,7 @@
                                         (assoc cfg
                                                :session/id sid
                                                :session/shared? false
+                                               :web/job-id id
                                                :status/emit (web-emit id)
                                                :user/images (not-empty images)
                                                :approval/ask (web-approver id sid cfg))
@@ -301,12 +303,14 @@
 
 (defn job-view
   "The JSON-facing projection of one job: status, live flow events, a
-  pending approval, the final reply, the error. Bounded by construction."
+  pending approval, the final reply, the error, registered artifacts.
+  Bounded by construction."
   [id]
   (when-let [j (get @jobs (str id))]
-    (select-keys j [:job/id :session/id :status :events :approval :final
-                    :error :turn-ok :cancel-requested :artifacts
-                    :submitted-at :started-at :finished-at])))
+    (-> (select-keys j [:job/id :session/id :status :events :approval :final
+                        :error :turn-ok :cancel-requested
+                        :submitted-at :started-at :finished-at])
+        (assoc :artifacts (artifacts/artifacts-for id)))))
 
 (defn recover-lane!
   "Boot (and test) recovery: hydrate the registries from disk. A restart

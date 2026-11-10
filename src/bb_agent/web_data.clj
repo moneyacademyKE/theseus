@@ -12,6 +12,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [bb-agent.config :as config]
+            [bb-agent.goal.control :as control]
             [bb-agent.rsi :as rsi]
             [bb-agent.session :as session]))
 
@@ -111,6 +112,32 @@
                                 (or (file-ms (fs/path d "watch.log")) 0))
                   :last    (trunc last 140)})))
        (sort-by :updated >)))
+
+(defn goal-detail
+  "One goal workspace's operator view: run.log tail (bounded), the
+  control state from the goal's OWN run workdir (config.edn :workdir —
+  the same place `bb goal pause` writes), and a run verdict heuristic
+  from the log's last line. Read-only."
+  [slug]
+  (let [ws (fs/path (home) "goals" (str slug))]
+    (when (fs/directory? ws)
+      (let [cfg      (or (read-edn (fs/path ws "config.edn")) {})
+            workdir  (or (:workdir cfg) (str ws))
+            lines    (->> (str/split-lines (or (slurp-quiet (fs/path ws "run.log")) ""))
+                          (remove str/blank?))
+            last     (or (last lines) "")
+            verdict  (cond
+                       (str/includes? (str/upper-case last) "FULFILLED") :fulfilled
+                       (str/includes? (str/upper-case last) "HALT") :halted
+                       :else (if (seq lines) :running :authored))]
+        {:dir           (str slug)
+         :title         (or (:name (read-edn (fs/path ws "project.edn"))) (str slug))
+         :config-exists (map? cfg)
+         :workdir       workdir
+         :verdict       (name verdict)
+         :control       (control/state {:workdir workdir})
+         :log           (mapv #(trunc % 400) (vec (take-last 80 lines)))
+         :log-lines     (count lines)}))))
 
 (defn schedule-rows
   "Recent schedule runs, newest first."

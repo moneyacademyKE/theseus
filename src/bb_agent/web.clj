@@ -19,12 +19,15 @@
   the same readers the JSON routes use and pushes on change; a named
   ping event every 15s keeps the cloudflared tunnel from closing a
   silent pipe AND gives the client a heartbeat it can watchdog."
-  (:require [babashka.fs :as fs]
+    (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
             [org.httpkit.server :as server]
+            [bb-agent.config :as config]
             [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]
+            [bb-agent.web-http :as http]
+            [bb-agent.web-routes :as routes]
             [bb-agent.web-search :as search]
             [bb-agent.web-turn :as turn]))
 
@@ -54,24 +57,6 @@
    "/vendor/uplot.min.js"  ["web/vendor/uplot.min.js" "text/javascript; charset=utf-8"]
    "/vendor/uplot.min.css" ["web/vendor/uplot.min.css" "text/css; charset=utf-8"]})
 
-(defn- bearer [req]
-  (some-> (get-in req [:headers "authorization"])
-          (str/split #"\s+" 2)
-          (second)))
-
-(defn authorized?
-  "A live session token in Authorization: Bearer <token>."
-  [req]
-  (auth/session-live? (bearer req)))
-
-(defn- respond [code body type]
-  {:status code
-   :headers {"Content-Type" type "Cache-Control" "no-store"}
-   :body body})
-
-(defn- json-res [code obj]
-  (respond code (json/generate-string obj) "application/json; charset=utf-8"))
-
 (defn- static-cache-control
   "Vendored libraries are content-stable and fat (~100KB): cache them
   immutably for a year, keyed by the ?v= query index.html pins. Our own
@@ -86,9 +71,9 @@
   (let [[rel type] (static-files uri)
         path (fs/path (System/getProperty "user.dir") rel)]
     (if (fs/regular-file? path)
-      (-> (respond 200 (slurp (str path)) type)
+      (-> (http/respond 200 (slurp (str path)) type)
           (assoc-in [:headers "Cache-Control"] (static-cache-control uri)))
-      (respond 404 "not found" "text/plain; charset=utf-8"))))
+      (http/respond 404 "not found" "text/plain; charset=utf-8"))))
 
 (defn- handle-login
   "POST /api/login {password: ...} — the only place the password is ever
@@ -100,45 +85,24 @@
         password (get payload :password)]
     (cond
       (not (auth/password-set?))
-      (json-res 401 {:error "not-set"
+      (http/json-res 401 {:error "not-set"
                      :hint "on the host: bb scripts/set_web_password.bb"})
 
       (not (string? password))
-      (json-res 400 {:error "missing-password"})
+      (http/json-res 400 {:error "missing-password"})
 
       :else
       (let [session (auth/login! password)]
         (cond
           (:locked session)
-          (json-res 429 {:error "rate-limited"
+          (http/json-res 429 {:error "rate-limited"
                          :retry-ms (:retry-ms session)})
 
           session
-          (json-res 200 session)
+          (http/json-res 200 session)
 
           :else
-          (json-res 401 {:error "bad-password"}))))))
-
-(defn- query-params
-  "Flat ?k=v&k2=v2 parse with URL decoding — enough for name/mime/id."
-  [req]
-  (->> (str/split (str (or (:query-string req) "")) #"&")
-       (keep (fn [kv]
-               (when (seq kv)
-                 (let [[k v] (str/split kv #"=" 2)]
-                   [(keyword (java.net.URLDecoder/decode k "UTF-8"))
-                    (java.net.URLDecoder/decode (or v "") "UTF-8")]))))
-       (into {})))
-
-(defn- parse-json-body
-  "Body → keyword-keyed map, or nil on anything unparsable."
-  [req]
-  (try
-    (let [v (json/parse-string (slurp (:body req)) true)]
-      (when (map? v) v))
-    (catch Exception _ nil)))
-
-;; ---------- server-sent events: one push channel, no client pollers ----------
+          (http/json-res 401 {:error "bad-password"}))))))
 
 (def ^:private sse-clients
   "Live SSE channels → fingerprint of the last frame each one received.
@@ -169,8 +133,8 @@
   "EventSource cannot set headers, so the stream route accepts the
   session token as ?token= — this route only, never the whole API."
   [req]
-  (or (bearer req)
-      (some-> (query-params req) :token not-empty)))
+  (or (http/bearer req)
+      (some-> (http/query-params req) :token not-empty)))
 
 (defn- sse-write! [ch chunk]
   (try (server/send! ch chunk false) (catch Exception _ nil)))
@@ -288,28 +252,15 @@
         (do (swap! sse-clients assoc ch nil)
             (server/on-close ch (fn [_] (swap! sse-clients dissoc ch))))))))
 
-(defn- guarded
-  "The auth + error envelope every cockpit handler rides: 401 without a
-  live token, the handler's data as 200 JSON, ex-info :status for
-  deliberate failures, 500 otherwise."
-  [req handler]
-  (if-not (authorized? req)
-    (json-res 401 {:error "unauthorized"})
-    (try
-      (json-res 200 (handler))
-      (catch Exception e
-        (json-res (or (get (ex-data e) :status) 500)
-                  {:error (str (.getMessage e))})))))
-
 (defn- handle-turn
   "POST /api/turn {session, text, attachments} → the queued job. Typed
   approval replies short-circuit the queue entirely (approval-bypass!):
   a blocked lane must never deadlock behind the approval it needs."
   [req]
-  (let [payload (parse-json-body req)]
+  (let [payload (http/parse-json-body req)]
     (if-not payload
-      (json-res 400 {:error "invalid-json"})
-      (guarded req (fn []
+      (http/json-res 400 {:error "invalid-json"})
+      (http/guarded req (fn []
                      (if-let [bypass (turn/approval-bypass! (:session payload)
                                                            (:text payload))]
                        (assoc bypass :bypassed true)
@@ -320,7 +271,7 @@
 
 (defn- handle-job-control
   "POST /api/job/<id>/cancel | /api/job/<id>/retry — the job's own verbs.
-  Returns result maps and throws ex-info for the route envelope (guarded
+  Returns result maps and throws ex-info for the route envelope (http/guarded
   owns status codes); never builds a response itself."
   [id verb]
   (let [result (case verb
@@ -338,10 +289,10 @@
 (defn- handle-approval
   "POST /api/approval {id, decision} — the buttons on a pending request."
   [req]
-  (let [payload (parse-json-body req)]
+  (let [payload (http/parse-json-body req)]
     (if-not payload
-      (json-res 400 {:error "invalid-json"})
-      (guarded req (fn []
+      (http/json-res 400 {:error "invalid-json"})
+      (http/guarded req (fn []
                      (let [result (turn/decide! (:id payload)
                                                 (keyword (str (:decision payload))))]
                        (if-let [err (:error result)]
@@ -353,10 +304,10 @@
   "PUT /api/attachment?name=..&mime=.. with raw bytes → the descriptor.
   save-upload! sanitizes the name and enforces the byte cap."
   [req]
-  (let [q (query-params req)
+  (let [q (http/query-params req)
         bytes (try (.readAllBytes (:body req))
                    (catch Exception _ (byte-array 0)))]
-    (guarded req #(turn/save-upload! (get q :name) (get q :mime) bytes))))
+    (http/guarded req #(turn/save-upload! (get q :name) (get q :mime) bytes))))
 
 (defn app
   "The whole HTTP surface as one pure function request->response."
@@ -375,46 +326,55 @@
     (handle-upload req)
 
     (and (= :get request-method) (= "/api/session-list" uri))
-    (guarded req data/session-list)
+    (http/guarded req data/session-list)
 
     (and (= :get request-method) (= "/api/search" uri))
-    (let [q (get (query-params req) :q)]
+    (let [q (get (http/query-params req) :q)]
       (if-not (not-empty q)
-        (json-res 400 {:error "missing-query"})
-        (guarded req #(search/search q))))
+        (http/json-res 400 {:error "missing-query"})
+        (http/guarded req #(search/search q))))
 
     (and (= :get request-method) (= "/api/transcript" uri))
-    (let [sid (get (query-params req) :id)]
+    (let [sid (get (http/query-params req) :id)]
       (if-not (not-empty sid)
-        (json-res 400 {:error "missing-id"})
-        (guarded req #(data/transcript sid 60))))
+        (http/json-res 400 {:error "missing-id"})
+        (http/guarded req #(data/transcript sid 60))))
+
+    (and (= :get request-method) (= "/api/goal-detail" uri))
+    (routes/handle-goal-detail req)
+
+    (and (= :post request-method) (= "/api/goal-control" uri))
+    (routes/handle-goal-control req)
 
     (and (= :get request-method) (str/starts-with? uri "/api/job/"))
     (let [id (subs uri (count "/api/job/"))]
-      (guarded req (fn []
+      (http/guarded req (fn []
                      (or (turn/job-view id)
                          (throw (ex-info "no such job" {:status 404}))))))
+
+    (and (= :get request-method) (str/starts-with? uri "/api/artifact/"))
+    (routes/handle-artifact req (subs uri (count "/api/artifact/")))
 
     (and (= :post request-method) (re-matches #"/api/job/[^/]+/(cancel|retry)" uri))
     (let [id (subs uri (count "/api/job/") (str/last-index-of uri "/"))
           verb (subs uri (inc (str/last-index-of uri "/")))]
-      (guarded req #(handle-job-control id verb)))
+      (http/guarded req #(handle-job-control id verb)))
 
     (and (= :get request-method) (= "/api/events" uri))
     (handle-events req)
 
     (contains? api-routes uri)
-    (if (authorized? req)
+    (if (http/authorized? req)
       (try
-        (json-res 200 ((api-routes uri)))
+        (http/json-res 200 ((api-routes uri)))
         (catch Exception e
-          (json-res 500 {:error (str (.getMessage e))})))
-      (json-res 401 {:error "unauthorized"}))
+          (http/json-res 500 {:error (str (.getMessage e))})))
+      (http/json-res 401 {:error "unauthorized"}))
 
     (contains? static-files uri)
     (static-res uri)
 
-    :else (respond 404 "not found" "text/plain; charset=utf-8")))
+    :else (http/respond 404 "not found" "text/plain; charset=utf-8")))
 
 (defn start-deck!
   "Boot the deck on 127.0.0.1: the HTTP surface plus the SSE broadcaster

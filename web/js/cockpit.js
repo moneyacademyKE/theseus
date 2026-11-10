@@ -305,6 +305,21 @@ function renderJob(job) {
     retry.onclick = () => { retry.disabled = true; jobAction(job['job/id'], 'retry'); };
     box.appendChild(retry);
   }
+  if (job.artifacts && job.artifacts.length) {
+    const chips = document.createElement('div');
+    chips.className = 'job-artifacts';
+    for (const a of job.artifacts) {
+      const link = document.createElement('a');
+      link.className = 'artifact-chip';
+      link.href = '/api/artifact/' + encodeURIComponent(a['artifact/id']) +
+        '?token=' + encodeURIComponent(getToken());
+      link.textContent = '⬇ ' + a.name + ' (' + (a.bytes || 0) + 'B)';
+      if (a.caption) link.title = a.caption;
+      link.setAttribute('download', a.name);
+      chips.appendChild(link);
+    }
+    box.appendChild(chips);
+  }
   if (job.status === 'queued' || job.status === 'running') {
     const cancel = document.createElement('button');
     cancel.type = 'button';
