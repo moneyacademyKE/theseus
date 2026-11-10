@@ -35,6 +35,8 @@
         <select id="cockpit-session" title="session — the same files Telegram turns append to"></select>
         <button type="button" id="cockpit-search" title="search sessions (FTS over every transcript)" aria-label="search sessions">⌕</button>
         <button type="button" id="cockpit-new" title="fresh session" aria-label="start a fresh session">+ new</button>
+        <button type="button" id="cockpit-logout" title="log out (revokes this session)" aria-label="log out" hidden>⏻</button>
+        <button type="button" id="cockpit-rotate" title="rotate the master password" aria-label="rotate the master password" hidden>⚿</button>
       </div>
       <div class="cockpit-searchbar" id="cockpit-searchbar" hidden>
         <label class="sr-only" for="cockpit-search-input">search sessions</label>
@@ -85,6 +87,13 @@
   </section>
   <section class="col" id="col-schedules">
     <header><h2>schedules</h2><span class="count" data-count="schedules"></span></header>
+    <form id="sched-form" class="sched-form" autocomplete="off">
+      <input id="sched-id" placeholder="id (letters)" maxlength="64" aria-label="schedule id" required>
+      <input id="sched-cron" placeholder="cron (e.g. 0 9 * * 1-5)" aria-label="cron expression, optional">
+      <input id="sched-prompt" placeholder="what to run" aria-label="schedule prompt" required>
+      <button type="submit" aria-label="create schedule">add</button>
+    </form>
+    <div id="sched-note" class="sched-note" role="status" hidden></div>
     <div class="body" data-body="schedules"></div>
   </section>
   <section class="col" id="col-system">

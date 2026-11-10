@@ -139,3 +139,50 @@ export function stream({ onState }) {
   };
   return { stop };
 }
+
+// authed mutations shared by the cockpit + schedules modules. post
+// already exists in cockpit.js's private scope; these are the module
+// surface versions (schedules.js, account buttons) so no second copy
+// of the fetch shape lives anywhere.
+export async function post(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    showLogin();
+    throw Object.assign(new Error(data.error || 'unauthorized'), { unauthorized: true });
+  }
+  if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
+  return data;
+}
+
+export async function del(path) {
+  const res = await fetch(path, {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer ' + getToken() },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    showLogin();
+    throw Object.assign(new Error(data.error || 'unauthorized'), { unauthorized: true });
+  }
+  if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
+  return data;
+}
+
+// logout + rotation (parity row 18): logout revokes this token and
+// drops the local copy; rotation swaps the stored token for the fresh
+// one the route returns.
+export async function logout() {
+  try { await post('/api/logout', {}); } catch (_) { /* a dead token logs out fine */ }
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export async function rotatePassword(current, next) {
+  const res = await post('/api/password', { current, new: next });
+  if (res.token) setToken(res.token);
+  return res;
+}

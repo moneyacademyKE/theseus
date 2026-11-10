@@ -260,7 +260,7 @@
   (let [payload (http/parse-json-body req)]
     (if-not payload
       (http/json-res 400 {:error "invalid-json"})
-      (http/guarded req (fn []
+      (http/guarded-owner req (fn []
                      (if-let [bypass (turn/approval-bypass! (:session payload)
                                                            (:text payload))]
                        (assoc bypass :bypassed true)
@@ -293,7 +293,7 @@
   (let [payload (http/parse-json-body req)]
     (if-not payload
       (http/json-res 400 {:error "invalid-json"})
-      (http/guarded req (fn []
+      (http/guarded-owner req (fn []
                      (let [result (turn/decide! (:id payload)
                                                 (keyword (str (:decision payload))))]
                        (if-let [err (:error result)]
@@ -308,7 +308,7 @@
   (let [q (http/query-params req)
         bytes (try (.readAllBytes (:body req))
                    (catch Exception _ (byte-array 0)))]
-    (http/guarded req #(turn/save-upload! (get q :name) (get q :mime) bytes))))
+    (http/guarded-owner req #(turn/save-upload! (get q :name) (get q :mime) bytes))))
 
 (defn app
   "The whole HTTP surface as one pure function request->response."
@@ -325,6 +325,24 @@
 
     (and (= :put request-method) (= "/api/attachment" uri))
     (handle-upload req)
+
+    (and (= :post request-method) (= "/api/logout" uri))
+    (routes/handle-logout req)
+
+    (and (= :post request-method) (= "/api/password" uri))
+    (routes/handle-rotate-password req)
+
+    (and (= :post request-method) (= "/api/ro-password" uri))
+    (routes/handle-ro-password req false)
+
+    (and (= :delete request-method) (= "/api/ro-password" uri))
+    (routes/handle-ro-password req true)
+
+    (and (= :post request-method) (= "/api/schedule" uri))
+    (routes/handle-schedule-create req)
+
+    (and (= :delete request-method) (str/starts-with? uri "/api/schedule/"))
+    (routes/handle-schedule-delete req (subs uri (count "/api/schedule/")))
 
     (and (= :get request-method) (= "/api/session-list" uri))
     (http/guarded req data/session-list)
@@ -361,7 +379,7 @@
     (and (= :post request-method) (re-matches #"/api/job/[^/]+/(cancel|retry)" uri))
     (let [id (subs uri (count "/api/job/") (str/last-index-of uri "/"))
           verb (subs uri (inc (str/last-index-of uri "/")))]
-      (http/guarded req #(handle-job-control id verb)))
+      (http/guarded-owner req #(handle-job-control id verb)))
 
     (and (= :get request-method) (= "/api/events" uri))
     (handle-events req)
@@ -383,8 +401,10 @@
   "Boot the deck on 127.0.0.1: the HTTP surface plus the SSE broadcaster
   thread. Returns a 0-arity stop (tests, embedding); -main boots it and
   parks. The broadcaster thread is created via bound-fn so test-time
-  config/home redefs are conveyed into it."
+  config/home redefs are conveyed into it. Durable sessions reload
+  FIRST: a deck restart keeps the browser logged in (parity row 18)."
   [port]
+  (auth/load-sessions!)
   (let [stop-http (server/run-server app {:ip "127.0.0.1" :port port})
         thread    (doto (Thread. (bound-fn [] (broadcaster-loop!))
                                  "theseus-sse-broadcast")

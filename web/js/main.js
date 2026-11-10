@@ -1,5 +1,5 @@
 // deck main — clock (EAT, always), login overlay, the single push stream.
-import { getToken, login, stream, showLogin } from './api.js';
+import { getToken, login, stream, showLogin, logout, rotatePassword } from './api.js';
 import { setConn } from './state.js';
 import { renderTurns, renderTools, renderRsi, renderSessions,
          renderGoals, renderSchedules, renderSystem, refreshTimes } from './columns.js';
@@ -7,6 +7,7 @@ import { bootCockpit } from './cockpit.js';
 import { bootSearch } from './search.js';
 import { bootPip, pipPush } from './pip.js';
 import { bootUsage, refreshUsage } from './usage.js';
+import { bootSchedules } from './schedules.js';
 import { eatClock } from './time.js';
 
 // One renderer per snapshot field. A throwing renderer skips its own
@@ -99,6 +100,29 @@ if (!getToken()) {
 } else {
   setConn('connecting…');
   const cockpit = bootCockpit();
+  bootSchedules();
+  // account buttons live in the cockpit header once a token exists
+  const lo = document.getElementById('cockpit-logout');
+  const ro = document.getElementById('cockpit-rotate');
+  if (lo) {
+    lo.hidden = false;
+    lo.addEventListener('click', async () => { await logout(); location.reload(); });
+  }
+  if (ro) {
+    ro.hidden = false;
+    ro.addEventListener('click', async () => {
+      const current = prompt('current master password:');
+      if (!current) return;
+      const next = prompt('new master password:');
+      if (!next) return;
+      try {
+        await rotatePassword(current, next);
+        alert('password rotated — other sessions were logged out');
+      } catch (e) {
+        alert('rotation failed — ' + e.message);
+      }
+    });
+  }
   // Per-column change detection: a push carries the WHOLE snapshot, so
   // without this one changed file re-renders all seven columns. The
   // server's per-second :now is excluded — the deck's clock is local.

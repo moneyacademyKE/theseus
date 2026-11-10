@@ -345,3 +345,23 @@ body {
 .goal-verb.danger { background: transparent; color: var(--fail, #ff6b6b); border: 1px solid var(--fail, #ff6b6b); }
 .goal-verb:disabled { opacity: 0.5; cursor: default; }
 .goal-detail-note { margin-top: 8px; font-size: 13px; color: var(--accent, #39c5cf); }
+
+/* schedule create form (parity row 20) — same density as the deck,
+   no modal, inline in the column */
+.sched-form {
+  display: grid; grid-template-columns: 90px 1fr; gap: 4px;
+  padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.sched-form input {
+  background: rgba(255,255,255,0.05); color: inherit;
+  border: 1px solid rgba(255,255,255,0.15); border-radius: 4px;
+  padding: 4px 8px; font: 12px/1.4 var(--font, system-ui, sans-serif);
+}
+.sched-form button {
+  border: 0; border-radius: 4px; cursor: pointer;
+  background: var(--accent, #39c5cf); color: #06130b;
+  font: 600 12px/1.4 var(--font, system-ui, sans-serif);
+}
+.sched-note { padding: 6px 10px; font-size: 12px; color: var(--accent, #39c5cf); }
+#cockpit-logout, #cockpit-rotate { opacity: 0.8; }
+#cockpit-logout:hover, #cockpit-rotate:hover { opacity: 1; }

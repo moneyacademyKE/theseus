@@ -17,9 +17,17 @@
           (second)))
 
 (defn authorized?
-  "A live session token in Authorization: Bearer <token>."
+  "A live session token in Authorization: Bearer <token> — any role
+  (owner or read-only). Reads accept both; writes want owner?."
   [req]
   (auth/session-live? (bearer req)))
+
+(defn owner?
+  "The request's session carries the owner role — the write surface's
+  gate. Read-only sessions fail this and get 403, not 401: they are
+  logged in, just not allowed to write (parity row 19)."
+  [req]
+  (= :owner (auth/session-role (bearer req))))
 
 (defn respond
   "The base response envelope: status, content type, no-store."
@@ -53,9 +61,9 @@
     (catch Exception _ nil)))
 
 (defn guarded
-  "The auth + error envelope every cockpit handler rides: 401 without a
-  live token, the handler's data as 200 JSON, ex-info :status for
-  deliberate failures, 500 otherwise."
+  "The auth + error envelope every cockpit READ handler rides: 401
+  without a live token, the handler's data as 200 JSON, ex-info :status
+  for deliberate failures, 500 otherwise."
   [req handler]
   (if-not (authorized? req)
     (json-res 401 {:error "unauthorized"})
@@ -64,3 +72,17 @@
       (catch Exception e
         (json-res (or (get (ex-data e) :status) 500)
                   {:error (str (.getMessage e))})))))
+
+(defn guarded-owner
+  "guarded's write-side sibling: 401 anonymous, 403 read-only sessions,
+  the handler for owners. The write surface is one gate, not six."
+  [req handler]
+  (if-not (authorized? req)
+    (json-res 401 {:error "unauthorized"})
+    (if-not (owner? req)
+      (json-res 403 {:error "read-only"})
+      (try
+        (json-res 200 (handler))
+        (catch Exception e
+          (json-res (or (get (ex-data e) :status) 500)
+                    {:error (str (.getMessage e))}))))))

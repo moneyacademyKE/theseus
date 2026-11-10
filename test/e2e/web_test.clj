@@ -15,6 +15,7 @@
             [bb-agent.config :as config]
             [bb-agent.provider :as provider]
             [bb-agent.session :as session]
+            [bb-agent.schedule :as schedule]
             [bb-agent.web :as web]
             [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]
@@ -150,8 +151,9 @@
       (testing "expiry: age the token past its TTL and it dies"
         (let [token (:token (body-json (do-login deck-pass)))]
           (swap! auth/sessions (fn [m]
-                                 (assoc m token (- (get m token)
-                                                   (* 2 auth/session-ttl-ms)))))
+                                 (update m token assoc :expires
+                                         (- (:expires (get m token))
+                                            (* 2 auth/session-ttl-ms)))))
           (is (= 401 (:status (web/app (req "/api/status"
                                             {:headers {"authorization"
                                                        (str "Bearer " token)}})))))))
@@ -892,3 +894,130 @@
             (is (= 2 (:total env)))
             (is (= "from the telegram lane"
                    (:input (last (:rows env)))))))))))
+;; ---------- task 11 pins: schedules CRUD, roles, rotation, durability ----------
+
+(deftest schedule-crud-routes-manage-the-shared-registry
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (let [token (:token (body-json (do-login deck-pass)))
+            post-route (fn [payload]
+                         (web/app (req "/api/schedule"
+                                       {:request-method :post
+                                        :headers {"authorization" (str "Bearer " token)}
+                                        :body (java.io.StringReader.
+                                               (json/generate-string payload))})))
+            delete-route (fn [id]
+                           (web/app (req (str "/api/schedule/" id)
+                                         {:request-method :delete
+                                          :headers {"authorization" (str "Bearer " token)}})))
+            schedules (fn []
+                        (body-json (web/app (req "/api/schedules"
+                                                 {:headers {"authorization" (str "Bearer " token)}}))))]
+        (testing "create: same registry the daemon reads"
+          (is (= 200 (:status (post-route {:id "web-sched" :prompt "say hi" :cron "*/5 * * * *"}))))
+          (is (= "web-sched" (:schedule/id (body-json (post-route {:id "web-sched" :prompt "say hi" :cron "*/5 * * * *"})))))
+          (let [entry (schedule/find-schedule "web-sched")]
+            (is (= "say hi" (:schedule/prompt entry)))
+            (is (= "*/5 * * * *" (:schedule/cron entry))))
+          (is (schedule/find-schedule "web-sched"))
+        (testing "validation: bad id, empty prompt, impossible cron refuse"
+          (is (= 400 (:status (post-route {:id "no spaces!" :prompt "x"}))))
+          (is (= 400 (:status (post-route {:id "ok-id" :prompt "   "}))))
+          (is (= 400 (:status (post-route {:id "ok-id" :prompt "x" :cron "not a cron"})))))
+        (testing "delete removes it from the registry"
+          (is (= 200 (:status (delete-route "web-sched"))))
+          (is (nil? (schedule/find-schedule "web-sched"))))
+        (testing "no auth → 401"
+          (is (= 401 (:status (web/app (req "/api/schedule"
+                                            {:request-method :post
+                                             :body (java.io.StringReader. "{}")})))))))))
+)
+
+(deftest read-only-role-reads-but-never-writes
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))
+                  config/load-config (fn [] {:provider :fake})]
+      (auth/set-ro-password! "deck-ro-7")
+      (let [ro (:token (body-json (do-login "deck-ro-7")))
+            ro-call (fn [method uri body]
+                      (web/app (req uri
+                                    {:request-method method
+                                     :headers {"authorization" (str "Bearer " ro)}
+                                     :body (when body
+                                             (java.io.StringReader.
+                                              (json/generate-string body)))})))
+            writes [["turn" :post "/api/turn" {}]
+                    ["approval" :post "/api/approval" {}]
+                    ["upload" :put "/api/attachment" nil]
+                    ["job-control" :post "/api/job/x/cancel" nil]
+                    ["goal-control" :post "/api/goal-control" {}]
+                    ["schedule" :post "/api/schedule" {}]]]
+        (testing "the ro login carries the ro role"
+          (is (= "ro" (:role (body-json (do-login "deck-ro-7"))))))
+        (testing "reads pass for the ro token"
+          (is (= 200 (:status (ro-call :get "/api/status" nil))))
+          (is (= 200 (:status (ro-call :get "/api/session-list" nil)))))
+        (testing "every write route refuses with 403, never 401"
+          (doseq [[desc method uri body] writes]
+            (is (= 403 (:status (ro-call method uri body)))
+                (str desc " must 403 for ro")))))
+      (auth/set-ro-password! nil))))
+
+(deftest logout-rotation-and-durable-sessions
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (testing "logout kills THIS token only"
+        (let [t1 (:token (body-json (do-login deck-pass)))
+              t2 (:token (body-json (do-login deck-pass)))
+              res (web/app (req "/api/logout"
+                                {:request-method :post
+                                 :headers {"authorization" (str "Bearer " t1)}}))]
+          (is (= 200 (:status res)))
+          (is (= 401 (:status (web/app (req "/api/status"
+                                            {:headers {"authorization" (str "Bearer " t1)}})))))
+          (is (= 200 (:status (web/app (req "/api/status"
+                                            {:headers {"authorization" (str "Bearer " t2)}}))))))
+      (testing "durable: a restart (load-sessions!) keeps the browser logged in"
+        (let [t (:token (body-json (do-login deck-pass)))]
+          (auth/load-sessions!)
+          (is (= 200 (:status (web/app (req "/api/status"
+                                            {:headers {"authorization" (str "Bearer " t)}}))))))
+      (testing "rotation: old secret dies, new token works, wrong current refuses"
+        (let [t-old (:token (body-json (do-login deck-pass)))
+              res (web/app (req "/api/password"
+                                {:request-method :post
+                                 :headers {"authorization" (str "Bearer " t-old)}
+                                 :body (java.io.StringReader.
+                                        (json/generate-string {:current deck-pass
+                                                               :new "rotated-77"}))}))
+              body (body-json res)]
+          (is (= 200 (:status res)))
+          (is (string? (:token body)))
+          (is (= "owner" (:role body)))
+          (is (= 401 (:status (web/app (req "/api/status"
+                                            {:headers {"authorization" (str "Bearer " t-old)}})))))
+          (is (= 200 (:status (web/app (req "/api/status"
+                                            {:headers {"authorization"
+                                                       (str "Bearer " (:token body))}})))))
+          (is (= 401 (:status (do-login deck-pass))))
+          (is (map? (body-json (do-login "rotated-77"))))
+          (let [wrong (web/app (req "/api/password"
+                                    {:request-method :post
+                                     :headers {"authorization"
+                                               (str "Bearer " (:token (body-json (do-login "rotated-77"))))}
+                                     :body (java.io.StringReader.
+                                            (json/generate-string {:current "nope"
+                                                                   :new "x2"}))}))]
+            (is (= 400 (:status wrong))))
+          ;; restore the fixture password for any later tests
+          (auth/set-password! deck-pass)))))))
+))

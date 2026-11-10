@@ -1,15 +1,19 @@
 (ns bb-agent.web-routes
-  "The delivery + goal HTTP routes of the web deck, split out of web.clj
-  (2026-11-10): one namespace per concern, the app dispatches here.
+  "The deck's management HTTP routes, split out of web.clj (2026-11-10):
+  one namespace per concern, the app dispatches here.
 
   - artifact: authenticated download of web_send_file deliveries
-  - goal-detail: the operator view of one goal workspace
-  - goal-control: the Telegram /goal verbs (pause/stop/resume/cancel)
-    over the same bridge the Telegram lane uses"
+  - goal-detail / goal-control: the Telegram /goal verbs over HTTP
+  - schedules: browser CRUD over the same schedule registry the
+    scheduler daemon reads (parity row 20)
+  - account: logout, password rotation, the optional read-only
+    password (parity rows 18-19). Write routes demand the owner role."
   (:require [bb-agent.config :as config]
+            [bb-agent.cron :as cron]
             [bb-agent.goal-bridge :as goal-bridge]
             [bb-agent.goal.control :as goal-control]
             [bb-agent.goal.registry :as goal-registry]
+            [bb-agent.schedule :as schedule]
             [bb-agent.web-artifacts :as artifacts]
             [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]
@@ -81,7 +85,7 @@
   (let [payload (http/parse-json-body req)]
     (if-not payload
       (http/json-res 400 {:error "invalid-json"})
-      (http/guarded req (fn []
+      (http/guarded-owner req (fn []
                           (let [slug (str (:id payload))
                                 action (keyword (str (:action payload)))]
                             (when (str/blank? slug)
@@ -108,3 +112,83 @@
                                                  "` — it is not running."))))
                               (throw (ex-info (str "unknown action: " (:action payload))
                                               {:status 400})))))))))
+
+;; ---------- account: logout, rotation, the read-only role ----------
+
+(defn handle-logout
+  "POST /api/logout — revoke THIS session. Any role may log itself out."
+  [req]
+  (http/guarded req (fn []
+                      (auth/logout! (http/bearer req))
+                      {:logged-out true})))
+
+(defn handle-rotate-password
+  "POST /api/password {current, new} — owner-only. Kills every session,
+  returns a fresh owner token so the rotating browser stays logged in."
+  [req]
+  (let [payload (http/parse-json-body req)]
+    (if-not payload
+      (http/json-res 400 {:error "invalid-json"})
+      (http/guarded-owner req (fn []
+                                (auth/rotate-password!
+                                 {:current (:current payload)
+                                  :new (:new payload)}))))))
+
+(defn handle-ro-password
+  "POST /api/ro-password {password} — owner-only, defines the read-only
+  password. DELETE /api/ro-password removes it. Blank password = clear."
+  [req clear?]
+  (let [payload (http/parse-json-body req)]
+    (if (and (not clear?) (not payload))
+      (http/json-res 400 {:error "invalid-json"})
+      (http/guarded-owner req (fn []
+                                (if clear?
+                                  (do (auth/set-ro-password! nil)
+                                      {:ro-password "cleared"})
+                                  (do (auth/set-ro-password! (str (:password payload)))
+                                      (if (str/blank? (str (:password payload)))
+                                        {:ro-password "cleared"}
+                                        {:ro-password "set"}))))))))
+
+;; ---------- schedules: browser CRUD over the shared registry ----------
+
+(defn- valid-cron?
+  "5 fields that match at least one minute in the coming year. The same
+  matcher the scheduler daemon will evaluate — validation can never
+  disagree with execution."
+  [expr]
+  (boolean (when (string? expr)
+             (some? (try (cron/next-match expr (java.time.ZonedDateTime/now))
+                         (catch Exception _ nil))))))
+
+(defn handle-schedule-create
+  "POST /api/schedule {id, prompt, cron} — owner-only. Same
+  add-schedule! the CLI/Telegram lanes use; the daemon sees it on its
+  next read."
+  [req]
+  (let [payload (http/parse-json-body req)]
+    (if-not payload
+      (http/json-res 400 {:error "invalid-json"})
+      (http/guarded-owner req (fn []
+                                (let [id (str/trim (str (or (:id payload) "")))
+                                      prompt (str/trim (str (or (:prompt payload) "")))
+                                      cron-expr (some-> (:cron payload) str str/trim)]
+                                  (cond
+                                    (not (re-matches #"[A-Za-z0-9_-]{1,64}" id))
+                                    (throw (ex-info "id must be 1-64 chars of [A-Za-z0-9_-]"
+                                                    {:status 400}))
+                                    (str/blank? prompt)
+                                    (throw (ex-info "prompt must not be empty"
+                                                    {:status 400}))
+                                    (and cron-expr (not (valid-cron? cron-expr)))
+                                    (throw (ex-info "cron must be a 5-field expression"
+                                                    {:status 400}))
+                                    :else
+                                    (schedule/add-schedule! id prompt cron-expr))))))))
+
+(defn handle-schedule-delete
+  "DELETE /api/schedule/<id> — owner-only."
+  [req id]
+  (http/guarded-owner req (fn []
+                            (schedule/remove-schedule! (str id))
+                            {:deleted (str id)})))
