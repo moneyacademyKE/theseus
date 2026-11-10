@@ -2,26 +2,74 @@
   "Live-wiring pins for the universe seam (2026-11-07): the exchangeInfo
    fetch, the never-serve-stale cache, and the queue-empty selection order."
   (:require [babashka.fs :as fs]
+            [babashka.http-client :as http]
             [bb-agent.brief :as brief]
             [bb-agent.brief-universe :as universe]
+            [cheshire.core :as json]
             [clojure.test :as t]))
 
 (def ^:private exchange-json
   "{\"symbols\":[{\"symbol\":\"NVDABUSDT\",\"status\":\"TRADING\",\"baseAsset\":\"NVDAB\",\"quoteAsset\":\"USDT\"},
    {\"symbol\":\"TSLABUSDT\",\"status\":\"TRADING\",\"baseAsset\":\"TSLAB\",\"quoteAsset\":\"USDT\"},
    {\"symbol\":\"TQQQBUSDT\",\"status\":\"TRADING\",\"baseAsset\":\"TQQQB\",\"quoteAsset\":\"USDT\"},
+   {\"symbol\":\"BNBUSDT\",\"status\":\"TRADING\",\"baseAsset\":\"BNB\",\"quoteAsset\":\"USDT\"},
+   {\"symbol\":\"DGBUSDT\",\"status\":\"TRADING\",\"baseAsset\":\"DGB\",\"quoteAsset\":\"USDT\"},
    {\"symbol\":\"1000CATUSDT\",\"status\":\"TRADING\",\"baseAsset\":\"1000CAT\",\"quoteAsset\":\"USDT\"},
    {\"symbol\":\"NVDABBTC\",\"status\":\"TRADING\",\"baseAsset\":\"NVDAB\",\"quoteAsset\":\"BTC\"}]}")
+
+(def ^:private asset-json
+  (json/generate-string {:code "000000" :success true
+                         :data [{:assetCode "NVDAB" :trading true :tags ["bStocks"]}
+                                {:assetCode "TSLAB" :trading true :tags ["bStocks"]}
+                                {:assetCode "TQQQB" :trading true :tags ["bStocks"]}
+                                {:assetCode "BNB" :trading true :tags ["BSC"]}
+                                {:assetCode "DGB" :trading true :tags ["mining-zone"]}]}))
 
 (defn- respond [status body]
   (fn [_url _opts] {:status status :body body}))
 
+(defn- exchange-and-assets [url _opts]
+  (cond (= url universe/exchange-info-url) {:status 200 :body exchange-json}
+        (= url universe/asset-info-url) {:status 200 :body asset-json}
+        :else {:status 503 :body "{}"}))
+
+(defn- tv-fetcher [rows]
+  (fn [sym _fields] (get rows sym)))
+
+(def ^:private scanner-rows
+  {"NASDAQ:LLY" {:type "stock" :sector "Health Technology"}
+   "NASDAQ:SPY" {:type "fund"}
+   "NASDAQ:NVDA" {:type "stock" :sector "Electronic Technology"}
+   "NYSE:TR" {:type "stock" :sector "Consumer Non-Durables"}
+   "NASDAQ:BN" {:type "stock" :sector "Finance"}
+   "NASDAQ:DG" {:type "stock" :sector "Retail Trade"}})
+
+(def ^:private tech-scanner-rows
+  (assoc scanner-rows
+         "NASDAQ:AMZN" {:type "stock" :sector "Retail Trade"}
+         "NASDAQ:TSLA" {:type "stock" :sector "Consumer Durables"}))
+
+(defn- validated-underlyings [u covered]
+  (with-redefs [bb-agent.brief/tv-fetch (tv-fetcher (merge scanner-rows tech-scanner-rows))]
+    (mapv :underlying (:tokens (brief/validated-universe u covered)))))
+
+(defn- universe-of [tickers]
+  {:tokens (mapv (fn [ticker] {:underlying ticker}) tickers) :fetched-ms 1})
+
 (t/deftest fetch-universe-test
   (t/testing "one entry per tradable company — wrappers, digits and non-USDT pairs dropped"
-    (with-redefs [babashka.http-client/get (respond 200 exchange-json)]
+    (with-redefs [http/get exchange-and-assets]
       (let [u (universe/fetch-universe)]
         (t/is (= ["NVDA" "TSLA"] (mapv :underlying (:tokens u))))
         (t/is (pos? (:fetched-ms u))))))
+  (t/testing "an unavailable or malformed asset registry fails closed"
+    (doseq [bad [{:status 503 :body "{}"}
+                 {:status 200 :body "{}"}
+                 {:status 200 :body "not-json"}]]
+      (with-redefs [http/get (fn [url opts]
+                               (if (= url universe/asset-info-url)
+                                 bad (exchange-and-assets url opts)))]
+        (t/is (nil? (universe/fetch-universe))))))
   (t/testing "a dead or failing exchange is nil — never an exception, never a failed run"
     (with-redefs [babashka.http-client/get (respond 503 "{}")]
       (t/is (nil? (universe/fetch-universe))))
@@ -33,7 +81,7 @@
         path (str (fs/path dir "universe.edn"))
         stale 60000]
     (t/testing "no cache: fetches, writes, serves"
-      (with-redefs [babashka.http-client/get (respond 200 exchange-json)]
+      (with-redefs [http/get exchange-and-assets]
         (let [u (universe/load-universe path (System/currentTimeMillis) stale)]
           (t/is (= ["NVDA" "TSLA"] (mapv :underlying (:tokens u))))
           (t/is (fs/exists? path)))))
@@ -46,8 +94,13 @@
         (t/is (nil? (universe/load-universe path
                                             (+ (System/currentTimeMillis) stale 1000)
                                             stale)))))
+    (t/testing "an unverified old cache cannot bypass bStocks verification"
+      (spit path (pr-str {:tokens [{:underlying "BN" :token "BNB"}]
+                          :fetched-ms (System/currentTimeMillis)}))
+      (with-redefs [http/get (respond 503 "{}")]
+        (t/is (nil? (universe/load-universe path (System/currentTimeMillis) stale)))))
     (t/testing "stale cache refetches and rewrites"
-      (with-redefs [babashka.http-client/get (respond 200 exchange-json)]
+      (with-redefs [http/get exchange-and-assets]
         (let [u (universe/load-universe path
                                         (+ (System/currentTimeMillis) stale 1000)
                                         stale)]
@@ -70,19 +123,32 @@
       (t/is (nil? (brief/select-ticker {:queue [] :covered []} nil))))))
 
 (t/deftest validated-universe-test
-  (let [u {:tokens [{:underlying "LLY"} {:underlying "SPY"} {:underlying "TR"} {:underlying "NVDA"}]
-           :fetched-ms 1}]
+  (t/testing "non-tech sectors are rejected: BN, DG, TR, AMZN, TSLA, LLY"
+    (t/is (= ["NVDA"] (validated-underlyings (universe-of ["BN" "DG" "TR" "AMZN" "TSLA" "LLY" "NVDA"]) #{}))))
+  (t/testing "tech sectors accepted across exchanges"
+    (with-redefs [bb-agent.brief/tv-fetch
+                  (tv-fetcher (assoc tech-scanner-rows
+                                     "NYSE:MSFT" {:type "stock" :sector "Technology Services"}
+                                     "NYSE:GOOGL" {:type "stock" :sector "Communications"}))]
+      (let [u {:tokens [{:underlying "NVDA"} {:underlying "MSFT"} {:underlying "GOOGL"}]
+               :fetched-ms 1}
+            v (brief/validated-universe u #{})]
+        (t/is (= ["NVDA" "MSFT" "GOOGL"] (mapv :underlying (:tokens v))))
+        (t/is (= ["Electronic Technology" "Technology Services" "Communications"]
+                 (mapv :sector (:tokens v)))))))
+  (t/testing "unknown sector is rejected"
+    (with-redefs [bb-agent.brief/tv-fetch (fn [sym fields]
+                                            (when-let [row ((tv-fetcher scanner-rows) sym fields)]
+                                              (assoc row :sector nil)))]
+      (t/is (= [] (mapv :underlying (:tokens (brief/validated-universe (universe-of ["NVDA"]) #{})))))))
+  (t/testing "covered names are never probed"
     (with-redefs [bb-agent.brief/tv-fetch
                   (fn [sym _fields]
-                    (condp = sym
-                      "NASDAQ:LLY" {:type "stock"}
-                      "NASDAQ:SPY" {:type "fund"}
-                      "NASDAQ:NVDA" (throw (Exception. "covered names must not be probed"))
-                      nil))]
-      (let [v (brief/validated-universe u #{"NVDA"})]
-        (t/testing "stocks kept with their type; funds and unknown symbols dropped"
-          (t/is (= ["LLY"] (mapv :underlying (:tokens v))))
-          (t/is (= "stock" (:type (first (:tokens v)))))
-          (t/is (= 1 (:fetched-ms v)))))
-      (t/testing "an empty universe passes through untouched"
-        (t/is (nil? (brief/validated-universe nil #{"NVDA"})))))))
+                    (when (= "NASDAQ:NVDA" sym)
+                      (throw (Exception. "covered names must not be probed")))
+                    (get scanner-rows sym))]
+      (t/is (= [] (mapv :underlying (:tokens (brief/validated-universe (universe-of ["NVDA"]) #{"NVDA"})))))))
+  (t/testing "funds remain dropped"
+    (t/is (= [] (validated-underlyings (universe-of ["SPY"]) #{}))))
+  (t/testing "empty universe passes through untouched"
+    (t/is (nil? (brief/validated-universe nil #{})))))

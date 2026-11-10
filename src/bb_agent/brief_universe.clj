@@ -8,7 +8,7 @@
   (:require [babashka.fs :as fs]
             [babashka.http-client :as http]
             [cheshire.core :as json]
-            [clojure.string :as str]))
+            [clojure.edn :as edn]))
 
 ;; ---------- Binance venue price ----------
 
@@ -93,10 +93,21 @@
                :pair symbol}))
        (dedupe-by :underlying)))
 
+(def tech-sectors
+  "TradingView sectors treated as tech for the AI/tech-stock lane. Data from
+   the scanner, not a hand-maintained ticker list. This is a broad sector
+   screen, not a classification of each firm's AI activities or fundamentals."
+  #{"Electronic Technology"
+    "Technology Services"
+    "Communications"})
+
+(defn tech-sector?
+  "Whether an entry belongs to the tech universe. Missing sector is false."
+  [entry]
+  (contains? tech-sectors (:sector entry)))
+
 (defn researchable?
-  "Can a report be written about this entry? Companies and ADRs are
-   researchable; fund wrappers are not — an ETF has no cash flow statement
-   to analyze. Nil never is."
+  "Companies and ADRs are researchable; fund wrappers and nil are not."
   [entry]
   (contains? #{"stock" "dr"} (:type entry)))
 
@@ -112,22 +123,40 @@
 ;; ---------- live universe ----------
 
 (def exchange-info-url
-  "Every symbol Binance lists. The universe is derived from this, never
-   hand-maintained."
+  "Every symbol Binance lists."
   "https://api.binance.com/api/v3/exchangeInfo")
 
+(def asset-info-url
+  "Binance's public asset registry; bStocks are identified by the bStocks tag."
+  "https://www.binance.com/bapi/asset/v2/public/asset/asset/get-all-asset")
+
+(def ^:private verified-source :binance-bstocks-v1)
+
 (defn fetch-universe
-  "The live universe from Binance exchangeInfo, or nil. One call, no retry —
-   a failed fetch falls back to recycling, never a failed run."
+  "Intersect active spot pairs with Binance's bStocks-tagged asset registry.
+   If either source is unavailable or malformed, return nil rather than
+   treating an unrelated crypto symbol as a tokenized equity."
   []
   (try
-    (let [{:keys [status body]}
-          (http/get exchange-info-url {:throw false :timeout 15000})]
-      (when (= 200 status)
-        (let [symbols (:symbols (json/parse-string body true))]
-          (when (seq symbols)
-            {:tokens (binance-equity-tokens symbols)
-             :fetched-ms (System/currentTimeMillis)}))))
+    (let [market (http/get exchange-info-url {:throw false :timeout 15000})
+          assets (http/get asset-info-url {:throw false :timeout 15000})]
+      (when (and (= 200 (:status market)) (= 200 (:status assets)))
+        (let [symbols (:symbols (json/parse-string (:body market) true))
+              registry (json/parse-string (:body assets) true)
+              records (:data registry)]
+          (when (and (seq symbols) (= "000000" (:code registry))
+                     (true? (:success registry)) (sequential? records) (seq records))
+            (let [verified (into #{} (keep (fn [{:keys [assetCode tags trading]}]
+                                           (when (and (string? assetCode)
+                                                      (true? trading)
+                                                      (some #{"bStocks"} tags))
+                                             assetCode)))
+                                 records)]
+              (when (seq verified)
+                {:tokens (filterv #(contains? verified (:token %))
+                                  (binance-equity-tokens symbols))
+                 :listing-source verified-source
+                 :fetched-ms (System/currentTimeMillis)}))))))
     (catch Exception _ nil)))
 
 (defn load-universe
@@ -135,8 +164,10 @@
    rewrite it. Nil when the cache is stale AND the fetch fails — a stale
    universe is never served."
   [path now stale-ms]
-  (or (try (let [cached (clojure.edn/read-string (slurp path))]
-             (when (fresh? cached now stale-ms) cached))
+  (or (try (let [cached (edn/read-string (slurp path))]
+             (when (and (= verified-source (:listing-source cached))
+                        (fresh? cached now stale-ms))
+               cached))
            (catch Exception _ nil))
       (when-let [u (fetch-universe)]
         (try

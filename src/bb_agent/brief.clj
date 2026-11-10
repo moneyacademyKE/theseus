@@ -223,26 +223,31 @@
                       (tv-fetch sym fields)))))
           ["NASDAQ" "NYSE" ""])))
 
-(defn scanner-type
-  "TradingView security type for a ticker across NASDAQ and NYSE, or nil.
+(defn scanner-profile
+  "TradingView security profile for a ticker across NASDAQ and NYSE, or nil.
    One no-retry probe per exchange — the caller paces the burst. This is
-   the universe's researchability oracle: a name that answers 'stock' or
-   'dr' here is a name fetch-quote can quote on the same exchange."
+   the universe's researchability oracle: a tech stock or ADR here is a name
+   fetch-quote can quote on the same exchange."
   [ticker]
   (some (fn [exch]
-          (when-let [row (tv-fetch (str exch ":" ticker) "type")]
-            (str (:type row))))
+          (when-let [row (tv-fetch (str exch ":" ticker) "type,sector")]
+            {:type (str (:type row))
+             :sector (:sector row)}))
         ["NASDAQ" "NYSE"]))
+
+(defn scanner-type
+  "TradingView security type for an underlying ticker, or nil."
+  [ticker]
+  (:type (scanner-profile ticker)))
 
 (def ^:private queue-fill-cap 24) ; a day of hourly runs per refill
 
 (defn validated-universe
-  "The universe the queue may fill from: entries enriched with the
-   scanner's security type, kept only when universe/researchable? agrees.
-   The pure Binance filter cannot tell a tokenized equity (NVDAB → NVDA)
-   from a crypto symbol that happens to end in B (BNB → 'BN'), so
-   researchability is confirmed against TradingView before a name ever
-   reaches the queue. Covered names skip the probe — they are known good;
+  "The universe the queue may fill from: entries enriched with the scanner's
+   security type and sector, kept only when both predicates agree.
+   A US equity match is not proof that a similarly named Binance asset is a
+   tokenized version of it. The sector filter narrows candidates; asset
+   identity must still be established separately. Covered names skip the probe;
    probes are paced; the work is capped at queue-fill-cap."
   [u covered]
   (if (empty? (:tokens u))
@@ -253,8 +258,11 @@
                    out
                    (do
                      (Thread/sleep 150)
-                     (let [e (assoc (first cs) :type (scanner-type (:underlying (first cs))))]
-                       (recur (rest cs) (if (universe/researchable? e) (conj out e) out))))))
+                     (let [entry (first cs)
+                           e (merge entry (scanner-profile (:underlying entry)))]
+                       (recur (rest cs) (if (and (universe/researchable? e)
+                                                  (universe/tech-sector? e))
+                                          (conj out e) out))))))
        :fetched-ms (:fetched-ms u)})))
 
 (defn- fetch-headlines
