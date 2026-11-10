@@ -173,6 +173,26 @@ export async function del(path) {
   return data;
 }
 
+// raw-bytes upload (mic/camera lane): PUT /api/attachment?name=&mime=
+// carries the bytes as the body and returns the descriptor JSON —
+// same auth contract as post/del. (2026-11-10: this export was
+// missing, media.js's import killed the browser's module-graph
+// resolution before boot — scripts/check_web_graph.bb pins it.)
+export async function put(path, bytes) {
+  const res = await fetch(path, {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + getToken() },
+    body: bytes,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    showLogin();
+    throw Object.assign(new Error(data.error || 'unauthorized'), { unauthorized: true });
+  }
+  if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
+  return data;
+}
+
 // logout + rotation (parity row 18): logout revokes this token and
 // drops the local copy; rotation swaps the stored token for the fresh
 // one the route returns.
