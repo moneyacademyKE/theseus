@@ -8,6 +8,7 @@
   wrong / expired / rotated-away sessions 401, real default-iteration
   hashing works in bb, data shapes, static whitelist, 404 elsewhere."
   (:require [babashka.fs :as fs]
+            [babashka.process :refer [sh]]
             [cheshire.core :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -1021,3 +1022,44 @@
           ;; restore the fixture password for any later tests
           (auth/set-password! deck-pass)))))))
 ))
+
+(def ^:private repo-root
+  ;; bound at load time, when *file* is reliable; "." is the fallback
+  ;; for runners that don't bind it (bb.edn tasks always run at root)
+  (if (and *file* (fs/exists? *file*))
+    (str (fs/parent (fs/parent (fs/parent (fs/absolutize *file*)))))
+    "."))
+
+(deftest module-graph-resolves-test
+  (testing "every web/js import resolves to a real export"
+    ;; Incident 2026-11-10: media.js imported api.js's missing `put`.
+    ;; The browser throws a SyntaxError while RESOLVING the ES module
+    ;; graph — before any code runs — so the deck sat on the static
+    ;; "connecting…" shell with no login overlay, while every gate
+    ;; stayed green: node --check is per-file syntax, curl never
+    ;; executes JS. This is the one gate that sees the seam.
+    (let [{:keys [exit out]} (sh "bb" "scripts/check_web_graph.bb"
+                                 (str (fs/path repo-root "web")))]
+      (is (zero? exit))
+      (is (str/includes? out "0 missing exports, 0 unparsed forms")
+          (str "graph checker said: " out)))))
+
+(deftest every-disk-module-is-served-test
+  (testing "the static whitelist covers every asset on disk"
+    ;; The other half of incident 2026-11-10: feature work added
+    ;; media/paging/schedules/transcript.js but the whitelist never
+    ;; learned them — the browser's module fetch 404'd (Chrome reports
+    ;; it as "failed to fetch dynamically imported module") and the
+    ;; deck sat on the static connecting shell. The existing whitelist
+    ;; test compared the table against itself; this one compares it
+    ;; against the disk, where feature work actually adds files.
+    (let [on-disk (fn [dir]
+                    (->> (fs/glob (fs/path repo-root "web" dir) "*.{js,css}")
+                         (map #(str dir "/" (fs/file-name %)))))
+          served? (fn [p]
+                    (= 200 (:status (web/app {:uri (str "/" p)
+                                              :request-method :get}))))
+          missing (remove served? (mapcat on-disk ["js" "css" "vendor"]))]
+      (is (empty? missing)
+          (str "files on disk the whitelist refuses to serve: "
+               (pr-str (vec missing)))))))
