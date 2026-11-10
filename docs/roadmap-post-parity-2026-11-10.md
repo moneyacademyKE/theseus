@@ -1,5 +1,18 @@
 # Theseus post-parity roadmap — 2026-11-10
 
+> **Execution update, 21:35 EAT:** The text below is the original proposal, not
+> current status. The gateway vision probe returned the correct red answer
+> twice, with one request timing out between them; an end-to-end web image
+> turn remains unverified. A weekly BrowserOS neo sweep is scheduled for
+> Sunday 10:00 EAT (first 2026-11-15). The Binance refill now screens for
+> bStocks registry tags plus three TradingView sectors (`8230172`); issue #37
+> remains open for pre-existing queue/recycle paths and instrument identity
+> limits. No master-password rotation has been carried out yet. A named tunnel
+> still needs an authorized Cloudflare certificate and hostname; SSE over any
+> eventual tunnel must be measured, not assumed fixed. The one-shot certificate
+> watcher has already retired and should not be relied on. Gateway and bot-token
+> rotation are also outstanding. Bead `bk-097f` remains open.
+
 ## Context
 
 **Where we stand.** The webdeck↔Telegram parity loop is closed: bead `bk-3eeb`, 12/12 plan tasks,
