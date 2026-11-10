@@ -14,6 +14,7 @@
             [bb-agent.approval :as approval]
             [bb-agent.config :as config]
             [bb-agent.provider :as provider]
+            [bb-agent.session :as session]
             [bb-agent.web :as web]
             [bb-agent.web-auth :as auth]
             [bb-agent.web-data :as data]
@@ -318,11 +319,12 @@
             (let [get-res (web/app (req "/api/transcript"
                                         {:headers {"authorization" (str "Bearer " token)}
                                          :query-string "id=web-e2e"}))
-                  rows (body-json get-res)]
+                  env (body-json get-res)]
               (is (= 200 (:status get-res)))
-              (is (= 1 (count rows)))
-              (is (= "say pong" (:input (first rows))))
-              (is (= "pong" (:final (first rows))))))
+              (is (= 1 (:total env)))
+              (is (= 1 (count (:rows env))))
+              (is (= "say pong" (:input (first (:rows env)))))
+              (is (= "pong" (:final (first (:rows env)))))))
           (testing "the session appears in the live session list"
             (let [rows (body-json (web/app (req "/api/session-list"
                                                 {:headers {"authorization" (str "Bearer " token)}})))]
@@ -453,10 +455,10 @@
             (let [get-res (web/app (req "/api/transcript"
                                         {:headers {"authorization" (str "Bearer " token)}
                                          :query-string "id=web-cmd"}))
-                  rows (body-json get-res)]
+                  env (body-json get-res)]
               (is (= 200 (:status get-res)))
-              (is (= 1 (count rows)))
-              (is (= "command" (:source (first rows)))))))))))
+              (is (= 1 (:total env)))
+              (is (= "command" (:source (first (:rows env))))))))))))
 
 (deftest login-rate-limits-after-five-failures
   (let [home (fixture-home!)]
@@ -759,3 +761,134 @@
                         goal-bridge/cancel! (fn [chat thread] [chat thread])]
             (is (= 200 (:status (control-route "goal-web-x" "resume"))))
             (is (= 200 (:status (control-route "goal-web-x" "cancel"))))))))))
+
+;; ---------- task 10 pins: pagination, untruncated, edit, cross-channel ----------
+
+(deftest transcript-pagination-and-untruncated-fields
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      ;; 130 turns, one of them carrying a 9000-char field: pagination
+      ;; has real pages to slice and truncation caps have something to
+      ;; betray them.
+      (let [long-input (apply str (repeat 9000 "z"))
+            turns (mapv (fn [i]
+                          {:session/id "web-page"
+                           :user/input (if (= i 129) long-input (str "q" i))
+                           :assistant/final (str "a" i)
+                           :turn/ok true})
+                        (range 130))]
+        (session/save-turns! "web-page" turns)
+        (session/touch-metadata! "web-page" {}))
+      (let [token (:token (body-json (do-login deck-pass)))
+            get-page (fn [q]
+                       (body-json
+                        (web/app (req "/api/transcript"
+                                      {:headers {"authorization" (str "Bearer " token)}
+                                       :query-string q}))))]
+        (testing "page 1: the newest 60, envelope says more exists"
+          (let [env (get-page "id=web-page")]
+            (is (= 130 (:total env)))
+            (is (= 1 (:page env)))
+            (is (= 60 (count (:rows env))))
+            (is (true? (:has-more env)))
+            (is (= "a129" (:final (last (:rows env)))))))
+        (testing "page 2: the middle 60; page 3: the oldest 10, no more"
+          (let [env (get-page "id=web-page&page=2")]
+            (is (= 2 (:page env)))
+            (is (= 60 (count (:rows env))))
+            (is (true? (:has-more env)))
+            (is (= "a69" (:final (last (:rows env))))))
+          (let [env (get-page "id=web-page&page=3")]
+            (is (= 3 (:page env)))
+            (is (= 10 (count (:rows env))))
+            (is (false? (:has-more env)))
+            (is (= "a0" (:final (first (:rows env)))))
+            (is (= "a9" (:final (last (:rows env)))))))
+        (testing "beyond the end: empty rows, honest envelope"
+          (let [env (get-page "id=web-page&page=9")]
+            (is (= 9 (:page env)))
+            (is (zero? (count (:rows env))))
+            (is (false? (:has-more env)))))
+        (testing "fields arrive UNTRUNCATED (parity row 12)"
+          (let [env (get-page "id=web-page")
+                long-row (last (:rows env))]
+            (is (= 9000 (count (:input long-row))))
+            (is (str/ends-with? (:input long-row) "zzzz"))))))))
+
+(deftest edit-last-re-runs-and-replaces
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))
+                  config/load-config (fn [] {:provider :fake})]
+      (session/save-turns! "web-edit"
+                           [{:session/id "web-edit"
+                             :user/input "original"
+                             :assistant/final "pong-original"
+                             :turn/ok true}])
+      (session/touch-metadata! "web-edit" {})
+      (let [token (:token (body-json (do-login deck-pass)))
+            res (post-turn token {:session "web-edit" :text "corrected" :edit true})
+            job (wait-for-job (:job/id (body-json res)) 20000)
+            env (body-json (web/app (req "/api/transcript"
+                                         {:headers {"authorization" (str "Bearer " token)}
+                                          :query-string "id=web-edit"})))]
+        (testing "the edit job runs"
+          (is (= :done (:status job)))
+          (is (= "fake: corrected" (:final job))))
+        (testing "one replacement, never a duplicate (parity row 16)"
+          (is (= 1 (:total env)))
+          (is (= "corrected" (:input (first (:rows env)))))
+          (is (= "fake: corrected" (:final (first (:rows env)))))))
+      (testing "a blank edit is refused BEFORE any turn is dropped"
+        (let [token (:token (body-json (do-login deck-pass)))
+              res (post-turn token {:session "web-edit" :text "   " :edit true})]
+          (is (= 400 (:status res)))
+          (is (str/includes? (str (:error (body-json res))) "edit requires text")))
+        (let [env (body-json (web/app (req "/api/transcript"
+                                           {:headers {"authorization"
+                                                      (str "Bearer "
+                                                           (:token (body-json (do-login deck-pass))))}
+                                           :query-string "id=web-edit"})))]
+          (is (= 1 (:total env))
+              "the history survived the refused edit"))))))
+
+(deftest cross-channel-append-moves-the-session-and-grows-the-transcript
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (session/save-turns! "web-xch"
+                           [{:session/id "web-xch"
+                             :user/input "from the web lane"
+                             :assistant/final "ack"
+                             :turn/ok true}])
+      (session/touch-metadata! "web-xch" {})
+      (let [token (:token (body-json (do-login deck-pass)))
+            before (body-json (web/app (req "/api/session-list"
+                                            {:headers {"authorization" (str "Bearer " token)}})))
+            stamp-before (:updated (some #(when (= "web-xch" (:id %)) %) before))]
+        (testing "the Telegram lane appends + touches metadata (what run-turn! does)"
+          (session/append-turn! "web-xch"
+                                {:session/id "web-xch"
+                                 :user/input "from the telegram lane"
+                                 :assistant/final "ack2"
+                                 :turn/ok true})
+          (session/touch-metadata! "web-xch" {}))
+        (let [after (body-json (web/app (req "/api/session-list"
+                                             {:headers {"authorization" (str "Bearer " token)}})))
+              stamp-after (:updated (some #(when (= "web-xch" (:id %)) %) after))
+              env (body-json (web/app (req "/api/transcript"
+                                           {:headers {"authorization" (str "Bearer " token)}
+                                            :query-string "id=web-xch"})))]
+          (testing "session-list :updated moved — the reload signal (parity row 13)"
+            (is (not= stamp-before stamp-after)))
+          (testing "the transcript grew for the other channel's turn"
+            (is (= 2 (:total env)))
+            (is (= "from the telegram lane"
+                   (:input (last (:rows env)))))))))))

@@ -264,10 +264,11 @@
                      (if-let [bypass (turn/approval-bypass! (:session payload)
                                                            (:text payload))]
                        (assoc bypass :bypassed true)
-                       (turn/submit-turn!
-                        {:session (:session payload)
-                         :text (:text payload)
-                         :attachments (:attachments payload)})))))))
+                      (turn/submit-turn!
+                       {:session (:session payload)
+                        :text (:text payload)
+                        :attachments (:attachments payload)
+                        :edit (boolean (:edit payload))})))))))
 
 (defn- handle-job-control
   "POST /api/job/<id>/cancel | /api/job/<id>/retry — the job's own verbs.
@@ -335,10 +336,12 @@
         (http/guarded req #(search/search q))))
 
     (and (= :get request-method) (= "/api/transcript" uri))
-    (let [sid (get (http/query-params req) :id)]
-      (if-not (not-empty sid)
+    (let [{:keys [id page size]} (http/query-params req)]
+      (if-not (not-empty id)
         (http/json-res 400 {:error "missing-id"})
-        (http/guarded req #(data/transcript sid 60))))
+        (http/guarded req #(data/transcript id
+                                           (or (some-> size Long/parseLong) 60)
+                                           (or (some-> page Long/parseLong) 1)))))
 
     (and (= :get request-method) (= "/api/goal-detail" uri))
     (routes/handle-goal-detail req)

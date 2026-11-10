@@ -162,6 +162,8 @@
         (try
           (let [text (str/trim (str (or (:text job) "")))
                 atts (keep #(get @uploads %) (:attachment-ids job))]
+            (when (:edit job)
+              (session/drop-last-turn! sid))
             (cond
               (and (str/blank? text) (empty? atts))
               (terminal! id :status :failed :error "empty message"
@@ -278,13 +280,21 @@
     (assoc desc :upload/id id)))
 
 (defn submit-turn!
-  "Queue one web turn: {:session id, :text s, :attachments [upload-id]}.
+  "Queue one web turn: {:session id, :text s, :attachments [upload-id],
+  :edit bool}. An :edit job drops the session's newest turn before the
+  re-run (Telegram edit semantics: one replacement, no duplicate).
   Returns the queued job map. Throws on unknown attachment ids — the
   route turns that into a 400."
-  [{:keys [session text attachments]}]
+  [{:keys [session text attachments edit]}]
   (let [ids (mapv str (or attachments []))
         _ (when-let [missing (seq (remove #(contains? @uploads %) ids))]
             (throw (ex-info (str "unknown attachment ids: " (pr-str (vec missing)))
+                            {:web/turn? true :status 400})))
+        _ (when (and edit (str/blank? (str (or text ""))) (empty? ids))
+            ;; an edit re-run must carry content: a blank edit would drop
+            ;; the session's newest turn and then fail empty — history
+            ;; loss, never acceptable at the queue seam.
+            (throw (ex-info "edit requires text or attachments"
                             {:web/turn? true :status 400})))
         sid (session/safe-session-id (or (not-empty (str session)) "web"))
         id (str "job-" (swap! job-seq inc))
@@ -293,6 +303,7 @@
              :status :queued
              :text (str/trim (str (or text "")))
              :attachment-ids ids
+             :edit (boolean edit)
              :events []
              :submitted-at (now-ms)}]
     (swap! jobs assoc id job)

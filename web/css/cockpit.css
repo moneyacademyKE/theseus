@@ -306,3 +306,21 @@
   font: 600 12px/1.4 var(--font, system-ui, sans-serif);
   text-decoration: none;
 }
+
+/* mic / camera / edit affordances (parity rows 14-16). Mic while
+   recording pulses so a forgotten tap is obvious. */
+.cockpit-row button.rec {
+  background: #ff6b6b; color: #fff;
+  animation: recpulse 1.2s ease-in-out infinite;
+}
+@keyframes recpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+#cockpit-transcript button.older {
+  display: block; margin: 4px auto 10px; padding: 4px 14px;
+  border: 1px solid rgba(255,255,255,0.25); border-radius: 6px;
+  background: transparent; color: inherit;
+  font: 600 12px/1.4 var(--font, system-ui, sans-serif); cursor: pointer;
+}
+#cockpit-transcript button.older:hover { border-color: var(--accent, #39c5cf); }

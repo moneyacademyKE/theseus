@@ -5,6 +5,9 @@
 import { get, getToken } from './api.js';
 import { mdToNode } from './md.js';
 import { relTime } from './time.js';
+import { reloadTarget } from './paging.js';
+import { bubble, loadTranscript, getLastUserInput } from './transcript.js';
+import { micSupported, micToggle, captureAndSend } from './media.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -13,6 +16,7 @@ const state = {
   attachments: [],
   jobId: localStorage.getItem('theseus-cockpit-job') || null,
   lastApprovalId: null,
+  busySession: null, // the session our running job writes to
 };
 
 // ---------- authed non-GET helpers ----------
@@ -76,60 +80,14 @@ function pickSession(id) {
   state.session = id;
   localStorage.setItem('theseus-cockpit-session', id);
   refreshSessions();
-  loadTranscript();
+  loadTranscript(state.session);
 }
 
 function newSession() {
   pickSession('web-' + Math.random().toString(16).slice(2, 10));
 }
 
-// ---------- transcript ----------
 
-// Transcripts are markdown on the wire (assistant finals especially) —
-// mdToNode runs marked + DOMPurify, and degrades to plain text if the
-// vendored libs somehow failed to load.
-function bubble(text, cls, role) {
-  const node = mdToNode(text, 'bubble ' + cls);
-  const label = document.createElement('span');
-  label.className = 'msg-role';
-  label.textContent = role || 'theseus';
-  node.prepend(label);
-  return node;
-}
-
-async function loadTranscript() {
-  const box = el('cockpit-transcript');
-  if (!box) return;
-  box.innerHTML = '';
-  try {
-    const rows = await get('/api/transcript?id=' + encodeURIComponent(state.session));
-    if (!rows.length) box.appendChild(bubble('no history yet — say something', 'dim', 'note'));
-    for (const t of rows) {
-      box.appendChild(bubble(t.input, 'in', 'you'));
-      box.appendChild(bubble(t.final, t.ok ? 'out' : 'out err', 'theseus'));
-    }
-  } catch (e) {
-    box.appendChild(bubble('transcript unavailable', 'dim'));
-  }
-  // content-visibility: bubbles report estimated heights until the
-  // browser realizes them near the viewport, so scrollTop math lands
-  // short and scroll anchoring drags it mid-list. scrollIntoView on the
-  // last bubble is the primitive the browser resolves through cv; chained
-  // over a few frames it converges as heights materialize.
-  let frames = 0;
-  const settle = () => {
-    if (box.lastElementChild) box.lastElementChild.scrollIntoView({block: 'end', behavior: 'instant'});
-    if (++frames < 5) {
-      requestAnimationFrame(settle);
-    } else {
-      // tail: the last height realization lands a beat after the frames
-      setTimeout(() => {
-        if (box.lastElementChild) box.lastElementChild.scrollIntoView({block: 'end', behavior: 'instant'});
-      }, 300);
-    }
-  };
-  requestAnimationFrame(settle);
-}
 
 // ---------- attachments ----------
 
@@ -345,27 +303,30 @@ function watchJob(id) {
 function jobFinished(job) {
   watchJob(null);
   el('cockpit-status').textContent = job ? job.status : 'gone';
-  loadTranscript();
+  state.busySession = null;
+  loadTranscript(state.session);
   setTimeout(() => {
     const box = el('cockpit-job');
     if (box && !state.jobId) box.hidden = true;
   }, 5000);
 }
 
-async function send() {
+async function send(opts) {
   const input = el('cockpit-text');
   const button = el('cockpit-send');
   const error = el('cockpit-error');
+  const edit = Boolean(opts && opts.edit);
   const text = (input.value || '').trim();
   if (!text && state.attachments.length === 0) return;
   if (error) error.hidden = true;
   if (button) button.disabled = true;
   input.value = '';
+  input.style.height = 'auto';
   const attachments = state.attachments.map((a) => a.id);
   state.attachments = [];
   renderAttachments();
   try {
-    const job = await post('/api/turn', { session: state.session, text, attachments });
+    const job = await post('/api/turn', { session: state.session, text, attachments, edit });
     if (job.bypassed) {
       // a typed approval answered a waiting turn on the request thread —
       // no job exists; show the verdict where the transcript grows
@@ -382,10 +343,11 @@ async function send() {
         note.appendChild(reply);
         setTimeout(() => { if (!state.jobId) note.hidden = true; }, 5000);
       }
-      loadTranscript();
+      loadTranscript(state.session);
       return;
     }
     el('cockpit-status').textContent = 'running';
+    state.busySession = state.session;
     renderJob({ status: 'queued', events: [] });
     watchJob(job['job/id']);
   } catch (e) {
@@ -400,15 +362,37 @@ async function send() {
   }
 }
 
+// The edit affordance (parity row 16): the last user input returns to
+// the composer; the re-submit sends :edit, the engine drops the old
+// turn and re-runs — one replacement, never a duplicate.
+function editLast() {
+  const input = el('cockpit-text');
+  const last = getLastUserInput();
+  if (!input || !last) return;
+  input.value = last;
+  input.focus();
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  input.dataset.editing = 'last';
+}
+
+function submitFromComposer(e) {
+  e.preventDefault();
+  const input = el('cockpit-text');
+  const edit = input && input.dataset.editing === 'last';
+  if (input) delete input.dataset.editing;
+  send({ edit });
+}
+
 // ---------- boot ----------
 
 export function bootCockpit() {
   const form = el('cockpit-form');
   if (!form) return;
-  form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
+  form.addEventListener('submit', submitFromComposer);
   const input = el('cockpit-text');
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send({}); }
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
@@ -421,18 +405,62 @@ export function bootCockpit() {
     if (e.target.files && e.target.files.length) uploadFiles([...e.target.files]);
     e.target.value = '';
   });
+  // microphone: feature-detected — the button hides itself when the
+  // browser cannot record. Tap starts, tap again stops+sends.
+  const micBtn = el('cockpit-mic');
+  if (micBtn) {
+    if (micSupported()) {
+      micBtn.hidden = false;
+      micBtn.addEventListener('click', () => {
+        micToggle(state.session, (job) => {
+          el('cockpit-status').textContent = 'running';
+          state.busySession = state.session;
+          renderJob({ status: 'queued', events: [] });
+          watchJob(job['job/id']);
+        });
+      });
+    } else {
+      micBtn.hidden = true;
+    }
+  }
+  // camera: capture="environment" rides the same upload lane; photo
+  // sends immediately like a Telegram camera shot.
+  const camBtn = el('cockpit-camera');
+  if (camBtn) {
+    camBtn.hidden = false;
+    camBtn.addEventListener('click', () => {
+      captureAndSend(state.session, (job) => {
+        el('cockpit-status').textContent = 'running';
+        state.busySession = state.session;
+        renderJob({ status: 'queued', events: [] });
+        watchJob(job['job/id']);
+      });
+    });
+  }
+  // edit affordance: the last user input returns to the composer
+  const editBtn = el('cockpit-edit');
+  if (editBtn) editBtn.addEventListener('click', editLast);
   window.addEventListener('theseus:open-session', (e) => {
     if (e.detail && e.detail !== state.session) pickSession(e.detail);
   });
-  loadTranscript();
+  loadTranscript(state.session);
   // Everything else rides the push: the session list arrives in every
   // state event, the job map lands here while a turn runs. A reloaded
   // page re-watches its remembered job; if the server restarted the job
   // shows :interrupted and the retry button takes over from there.
   if (state.jobId) renderJob({ status: 'queued', events: [] });
+  let seenSessions = null;
   return {
     onState: (st) => {
-      if (Array.isArray(st['session-list'])) refreshSessions(st['session-list']);
+      if (Array.isArray(st['session-list'])) {
+        // cross-channel sync (parity row 13): a session that moved but
+        // is NOT the one our running job writes to grew from the other
+        // channel — reload its transcript if it is the open one.
+        const moved = reloadTarget(seenSessions, st['session-list'], state.busySession);
+        seenSessions = st['session-list'];
+        if (moved === state.session && !state.jobId) loadTranscript(state.session);
+        refreshSessions(st['session-list']);
+      }
       if (!state.jobId) return;
       const job = st.jobs && st.jobs[state.jobId];
       if (job) {

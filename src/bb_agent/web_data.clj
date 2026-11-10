@@ -202,14 +202,30 @@
                       :cwd     (:cwd m)}))))
 
 (defn transcript
-  "One session's turn history, oldest first, display-bounded. The session
-  file is the durable record both channels append to under the same
-  lock — this reader never writes, it renders."
-  [session-id n]
-  (->> (session/load-turns session-id)
-       (take-last (long (or n 60)))
-       (mapv (fn [t]
-               {:input  (trunc (:user/input t) 6000)
-                :final  (trunc (:assistant/final t) 50000)
-                :source (some-> (:source t) name)
-                :ok     (boolean (:turn/ok t true))}))))
+  "One session's turn history, oldest first, paginated from the TAIL:
+  page 1 is the newest `size` turns (the cockpit's landing view), page 2
+  the batch before it. Text fields arrive UNTRUNCATED — parity row 12:
+  Telegram reads the same session file without caps. The envelope
+  carries page/total/has-more so the UI can offer 'load older' without
+  guessing. The session file is the durable record both channels append
+  to under the same lock — this reader never writes, it renders."
+  ([session-id] (transcript session-id 60 1))
+  ([session-id size]
+   (transcript session-id size 1))
+  ([session-id size page]
+   (let [turns (vec (session/load-turns session-id))
+         total (count turns)
+         size (max 1 (long (or size 60)))
+         page (max 1 (long (or page 1)))
+         to (max 0 (- total (* (dec page) size)))
+         from (max 0 (- to size))
+         rows (mapv (fn [t]
+                      {:input  (:user/input t)
+                       :final  (:assistant/final t)
+                       :source (some-> (:source t) name)
+                       :ok     (boolean (:turn/ok t true))})
+                    (subvec turns from to))]
+     {:page page
+      :total total
+      :has-more (pos? from)
+      :rows rows})))

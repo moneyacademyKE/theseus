@@ -46,10 +46,15 @@
       <div class="cockpit-job" id="cockpit-job" hidden></div>
       <form class="cockpit-compose" id="cockpit-form">
         <input type="file" id="cockpit-file" hidden multiple aria-label="attach files">
+        <input type="file" id="cockpit-camera-input" hidden accept="image/*"
+               capture="environment" aria-label="take a photo">
         <div id="cockpit-attached" class="cockpit-attached"></div>
         <div id="cockpit-error" class="cockpit-error" role="alert" aria-live="assertive" hidden></div>
         <div class="cockpit-row">
           <button type="button" id="cockpit-attach" title="attach files, images, voice" aria-label="attach files, images, or voice">📎</button>
+          <button type="button" id="cockpit-camera" title="take a photo" aria-label="take a photo with the camera" hidden>📷</button>
+          <button type="button" id="cockpit-mic" title="record a voice note" aria-label="record and send a voice note" hidden aria-pressed="false">🎙️</button>
+          <button type="button" id="cockpit-edit" title="edit last message" aria-label="edit and re-run the last message">✎</button>
           <label class="sr-only" for="cockpit-text">message theseus</label>
           <textarea id="cockpit-text" rows="2" aria-describedby="cockpit-error"
             placeholder="message theseus…  (commands work: /new /usage /model /goals /skills /goal …)"></textarea>

@@ -132,6 +132,15 @@
 (defn append-turn! [session-id turn]
   (atomic-mutate-session! session-id #(conj % (cap-tool-results turn))))
 
+(defn drop-last-turn!
+  "Remove the newest turn from a session's history — the edit-retry
+  seam. The re-run appends its own turn afterwards, so an edit shows
+  exactly one replacement, never a duplicate. Atomic on the same lock
+  append-turn! rides; a session that is somehow already empty is a
+  no-op, not an error."
+  [session-id]
+  (atomic-mutate-session! session-id #(if (seq %) (pop %) %)))
+
 (defn save-turns! [session-id turns]
   (atomic-mutate-session! session-id (constantly (vec turns))))
 
