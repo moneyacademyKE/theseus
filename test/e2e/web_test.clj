@@ -1063,3 +1063,14 @@
       (is (empty? missing)
           (str "files on disk the whitelist refuses to serve: "
                (pr-str (vec missing)))))))
+
+
+(deftest login-dialog-has-readable-theme-color
+  (testing "native dialog text explicitly overrides the browser's black default"
+    (let [res (web/app {:uri "/css/login.css" :request-method :get})
+          css (:body res)
+          rule (re-find #"(?s)#login\s*\{(.*?)\}" css)]
+      (is (= 200 (:status res)))
+      (is (some? rule) "login dialog style is present")
+      (is (re-find #"(?m)(?:^|;)\s*color\s*:\s*var\(--text\)\s*;" (or (second rule) ""))
+          "the dialog must use the deck foreground rather than the native black default"))))

@@ -6,6 +6,9 @@
   /* deck.css's universal reset zeroes margin, which kills the UA's
      dialog:centering — restate it: fixed, inset 0, margin auto,
      fit-content = centered both axes. */
+  /* Native dialogs live outside the body's inherited foreground; the
+     browser otherwise defaults their text to black on the dark card. */
+  color: var(--text);
   position: fixed;
   inset: 0;
   width: fit-content;
