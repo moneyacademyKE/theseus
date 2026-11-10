@@ -37,7 +37,7 @@ has — it never means a second engine.
 | 18 | Session mgmt | allowlist per user | durable sessions (`state/web-sessions.edn`, restart keeps login), logout, in-browser password rotation killing old sessions | e2e: persistence + rotation pins |
 | 19 | Access roles | per-user allowlist | optional second read-only password: its sessions get GET routes only; write routes require the owner password | e2e: role gate pins |
 | 20 | Schedule admin | none in Telegram | deck lists definitions; create (prompt+cron) and delete through `schedule/add-schedule!`/`remove-schedule!` | e2e: CRUD pins |
-| 21 | Vision provider | image → vision chain | EXTERNAL BLOCKER: `zai/glm-4.6v` disabled at the gateway account — re-enable in the inferhub dashboard; the web lane is ready | probe, documented |
+| 21 | Vision provider | image → vision chain | Gateway probe on 2026-11-10: `zai/glm-4.6v` correctly identified a red PNG; an end-to-end web image turn is still needed before closing parity | `bb scripts/probe_vision.bb` (gateway); web image turn pending |
 | 22 | Stable URL | n/a | named tunnel IF `~/.cloudflared` credentials exist; otherwise documented one-owner-action blocker (login + domain choice) | checked at deploy |
 | 23 | Outbound voice (TTS) | none | N/A — Theseus answers in text on both transports | (by design) |
 
