@@ -1,0 +1,33 @@
+;; gap-analysis recommendations witness — bk-a325 closure record
+;; Generated 2026-11-11 23:40 EAT after the build. Closure rule: a row is
+;; CLOSED only with its named check green in the same session; OPEN rows
+;; name the next action. Nothing here is asserted from memory — every
+;; :check names the gate that ran.
+{:generated-at "2026-11-11T23:40:00+03:00"
+ :bead "bk-a325"
+ :repo "moneyacademyKE/theseus"
+ :head "10ecda3"
+ :commits {:web-search "5633faa, 10ecda3"
+           :a2a "2c839f1"
+           :tool-ledger "eb56e7d"}
+ :gates {:unit-suite "bb test:bb-agent at 10ecda3: 319 tests / 1481 assertions / 0 failures"
+         :e2e-web "bb test:e2e:web at 2c839f1: 32 tests / 337 assertions / 0 failures"
+         :kondo "targeted lint: 0 errors / 0 warnings"
+         :state-hygiene "bb test:e2e:state-hygiene: 7 tests / 7 assertions / 0 failures"
+         :remote "git ls-remote --heads origin main -> 10ecda3"
+         :services "com.theseus.telegram + com.theseus.web restarted; agent card HTTP 200 live"}
+ :rows
+ [{:row 1 :capability "native internet web_search" :verdict :closed
+   :check "live probe Babashka: 5 parsed, 5 relevant, book.babashka.org + github.com direct URLs; live probe Clojure spec: 5 parsed, 5 relevant; relevance gate drops unrelated WhatsApp result in fixture"}
+  {:row 2 :capability "A2A agent card + JSON-RPC" :verdict :closed
+   :check "a2a_send discover returns card; unauthenticated a2a_send send -> HTTP 401; authenticated message/send -> submitted; tasks/get -> completed with real /usage artifact; token mode 600, hygiene-allowlisted, owner-DM delivery only"}
+  {:row 3 :capability "tool outcome timing + report" :verdict :closed
+   :check "live git_status event: 16ms, executed=true, no argument keys; bb scripts/tool_ledger.bb exit 0 over real ledger (14707 shell calls: 13697 ok, 823 error, 187 denied)"}
+  {:row 4 :capability "MCP client module" :verdict :open
+   :check "BrowserOS neo still driven ad-hoc over HTTP; next recommendation, not started"}
+  {:row 5 :capability "PDF/dossier generation" :verdict :deferred
+   :check "measured demand 5 uses / 60% success on OpenCrabs; borrow through the live A2A bridge before building"}
+  {:row 6 :capability "state hygiene" :verdict :closed
+   :check "password-rotation leftovers moved to mode-700 scratch/password-rotation-20261111; a2a-token allowlisted; hygiene suite 7/7"}
+  {:row 7 :capability "src/bb_agent .bak-* sweep" :verdict :open
+   :check "60 untracked .bak-* files remain; deferred because another session's WIP is in flight in this tree"}]}
