@@ -29,7 +29,9 @@
 (if (contains? names "tabs")
   (let [result (mcp/call-tool client "tabs" {:action "list"})]
     (when-not (:ok? result) (die "tools/call tabs" result))
-    (println "tools/call tabs list: ok; result fields:"
+    (when (true? (get-in result [:result :isError]))
+      (die "tools/call tabs" {:error "BrowserOS returned a tool-level error"}))
+    (println "tools/call tabs list: ok; tool error: false; result fields:"
              (str/join ", " (map name (keys (:result result)))))
     (println "tab payload withheld"))
   (println "tools/call: skipped (tabs tool not advertised)"))
