@@ -72,6 +72,18 @@
       :required ["path"]}}}
    {:type "function"
     :function
+    {:name "web_search"
+     :description (str "Search the web and return results (title, URL, snippet). "
+                       "Keyless; read-only. Use it for anything you need to know "
+                       "about the outside world: documentation, prices, news, APIs. "
+                       "The query itself is visible to the search engine.")
+     :parameters
+     {:type "object"
+      :properties {"query" {:type "string" :description "What to search for"}
+                   "limit" {:type "integer" :description "Max results, 1-8 (default 5)"}}
+      :required ["query"]}}}
+   {:type "function"
+    :function
     {:name "launch_goal"
      :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
      :parameters
