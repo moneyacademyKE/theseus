@@ -220,9 +220,11 @@
    test:e2e:web {:doc "Run web deck e2e tests (HTTP surface, auth gates, a real cockpit turn)."
                   :extra-paths ["test"]
                   :requires ([clojure.test :as t]
-                             [e2e.web-test])
+                             [e2e.web-test]
+                             [e2e.web-a2a-test])
                   :task (let [{:keys [fail error]}
-                              (t/run-tests 'e2e.web-test)]
+                              (t/run-tests 'e2e.web-test
+                                           'e2e.web-a2a-test)]
                           (when (pos? (+ fail error))
                             (System/exit 1)))}
     test:e2e:memory {:doc "Run memory e2e tests."

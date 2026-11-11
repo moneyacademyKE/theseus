@@ -23,8 +23,8 @@
             [cheshire.core :as json]
             [clojure.string :as str]
             [org.httpkit.server :as server]
-            [bb-agent.config :as config]
             [bb-agent.web-auth :as auth]
+            [bb-agent.web-a2a :as a2a]
             [bb-agent.web-data :as data]
             [bb-agent.web-http :as http]
             [bb-agent.web-routes :as routes]
@@ -323,7 +323,8 @@
 (defn app
   "The whole HTTP surface as one pure function request->response."
   [{:keys [uri request-method] :as req}]
-  (cond
+  (or (a2a/routes req)
+      (cond
     (and (= :post request-method) (= "/api/login" uri))
     (handle-login req)
 
@@ -405,7 +406,7 @@
     (contains? static-files uri)
     (static-res uri)
 
-    :else (http/respond 404 "not found" "text/plain; charset=utf-8")))
+    :else (http/respond 404 "not found" "text/plain; charset=utf-8"))))
 
 (defn start-deck!
   "Boot the deck on 127.0.0.1: the HTTP surface plus the SSE broadcaster

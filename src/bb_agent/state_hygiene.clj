@@ -35,7 +35,9 @@
     ;; uploads) and the login session table. Same lifetime as sessions —
     ;; a deck restart reloads them; the password rotation clears
     ;; web-sessions.edn's contents by rewrite, not deletion.
-    "web-lane.edn" "web-sessions.edn"})
+    "web-lane.edn" "web-sessions.edn"
+    ;; A2A bearer credential, generated once and reused by the bridge.
+    "a2a-token"})
 
 (defn violations
   "Top-level entries under state-dir that are not allowlisted durable
