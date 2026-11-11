@@ -1,13 +1,15 @@
 # Theseus vs OpenCrabs — Architecture Gap Analysis (tools focus)
 
-**Date:** 2026-11-11 · **Prepared by:** OpenCrabs v0.5.14 (this harness), for moe · **Updated 2026-11-12 00:12 EAT after the MCP follow-up.**
-**Evidence:** both live trees read this turn (~10:40 EAT); recommendations implemented and re-verified the same day. Theseus @ `e6300b1` (`~/theseus/theseus`); OpenCrabs v0.5.14 live runtime + source tree (`~/.opencrabs/src`). Nothing recycled from history without re-reading. The other session's WIP (`coordinates.clj`, `web_auth.clj`, tests) untouched and uncommitted.
+**Date:** 2026-11-11 · **Prepared by:** OpenCrabs v0.5.14 (this harness), for moe · **Updated 2026-11-12 01:10 EAT after the browser_read follow-up.**
+**Evidence:** both live trees read this turn (~10:40 EAT); recommendations implemented and re-verified the same day. Theseus @ `c8c8612` (`~/theseus/theseus`); OpenCrabs v0.5.14 live runtime + source tree (`~/.opencrabs/src`). Nothing recycled from history without re-reading. The other session's WIP (`coordinates.clj`, `web_auth.clj`, tests) untouched and uncommitted.
 
 ## Execution status (2026-11-12, 00:12 EAT)
 
 The three recommendations from §9 are no longer proposals. Receipts live in §10; the headline facts: web search is a native `web_search` tool backed by Brave HTML with a relevance gate; Theseus exposes an A2A card + JSON-RPC on the live deck; and the tool-outcome ledger is the existing `usage.edn` funnel, now with wall-time and a query script. Bing was tried and dropped: it served WhatsApp forum posts for a Babashka query.
 
 Follow-up `bk-c6c7` closes the MCP-client gap: `bb-agent.mcp-client` now performs the Streamable HTTP handshake, carries the session and negotiated protocol headers, handles JSON and SSE, and makes bounded `tools/list` / `tools/call` requests. Live BrowserOS neo 0.0.93 returned 27 tools and completed a read-only `tabs list`; its session id and tab payload stayed out of output. This is a protocol module, not yet a model-visible browser tool.
+
+Follow-up `bk-5c6a` closes that last slice: `browser_read` is now the registry's 10th tool — a single-purpose page reader. Each call opens one tab of its own, reads it as text (bounded to 20,000 chars, framed untrusted), closes it, and fails closed. It is deliberately NOT auto-safe: a real browser can carry authenticated sessions, so an auto-safe turn refuses it and a human approval or policy rule is required. No click, type, evaluate, credentials, or payment surface exists on the tool at all — of BrowserOS' 27 advertised tools it uses exactly two: `tabs` and `read`.
 
 ## TL;DR
 
@@ -17,7 +19,7 @@ Both systems are the same animal: one agent loop (turn engine), N chat transport
 
 The one layer where they truly diverge is **the tools layer**:
 
-- **Theseus: 9 tools, one flat registry, all schemas in every request.** `read_file, write_file, shell, search, web_search, git_status, telegram_send_file, web_send_file, launch_goal`. Handlers in-process (`bb-agent.tool.*`), gated by a policy DSL + approval ledger. The real surface is "9 tools + whatever `shell` can do" — the OS is the tool, and skills are the knowledge of what shell can do. A2A is a server endpoint over the web lane, not a model-visible tool.
+- **Theseus: 10 tools, one flat registry, all schemas in every request.** `read_file, write_file, shell, search, web_search, browser_read, git_status, telegram_send_file, web_send_file, launch_goal`. Handlers in-process (`bb-agent.tool.*`), gated by a policy DSL + approval ledger. The real surface is "10 tools + whatever `shell` can do" — the OS is the tool, and skills are the knowledge of what shell can do. A2A is a server endpoint over the web lane, not a model-visible tool.
 - **OpenCrabs: ~75 built-in tools in tiers + 8 runtime-registered + MCP + A2A remotes + 63 skills.** Schema delivery is two-phase (46 schemas in-prompt, ~29 name-only, activated on demand) because a fat registry eats the context window; dynamic tools load from `tools.toml` without restart — the first dynamic entry here is a Babashka script, so the two systems literally already compose at this seam.
 
 **Measured (§5):** 154,260 lifetime tool calls on this box — bash alone is ~39% of them, the top 20 tools carry ~97% of ledger volume, and 18 of those 20 map to a Theseus primitive. The 75-tool breadth is mostly dormant; Theseus' measured gaps all sit in the ≤0.5%-each long tail, which argues for bridging it, not porting it.
@@ -28,7 +30,7 @@ Theseus pays per-capability build cost for total control. OpenCrabs pays platfor
 
 | Aspect | Theseus | OpenCrabs |
 |---|---|---|
-| Registry | `tools.clj`: 9 defs, OpenAI function format, one source of truth (provider, handlers, policy predicates share names) | compiled registry: 46 schemas in-prompt + ~29 lazy (name-only until `tool_search`) + 8 dynamic (`tools.toml`) |
+| Registry | `tools.clj`: 10 defs, OpenAI function format, one source of truth (provider, handlers, policy predicates share names) | compiled registry: 46 schemas in-prompt + ~29 lazy (name-only until `tool_search`) + 8 dynamic (`tools.toml`) |
 | Schema delivery | all 9, every request | two-phase; lazy activation exists for context economics |
 | Handlers | `bb-agent.tool.*` (7 namespaces) | compiled Rust + shell-executor dynamic tools (bb scripts allowed) |
 | Gating | `policy.clj` rules DSL (external file, 2s eval budget) + `approval.clj` ledger + buttons on both transports | approval policy + earned-autonomy classes + plan gates + skill trust (Wilson lower bound) + quarantine + prompt-scan |
@@ -43,7 +45,7 @@ Theseus pays per-capability build cost for total control. OpenCrabs pays platfor
 |---|---|---|---|
 | File/shell/git | read/write/search/git_status/shell | read/write/edit (hash-anchored)/bash/ls/glob/grep | parity |
 | Internet search | `web_search` — Brave HTML SERP, keyless, direct URLs, query-relevance gate; Bing backend rejected after serving unrelated WhatsApp posts for a Babashka query | `web_search` fan-out (4 engines) + `exa_search` + `brave_search` | **closed for Theseus** (native, one engine) |
-| Browser | none in the registry; BrowserOS neo now reachable through the bounded `bb-agent.mcp-client` module | CDP suite (`browser_*`), first-class tools | **protocol gap closed; model-visible registry gap remains** |
+| Browser | `browser_read` — single-purpose page reader over the MCP client: HTTPS-only, one owned tab per call, approval-gated, fail-closed | CDP suite (`browser_*`), first-class tools | **closed for Theseus** (bounded read; no act/eval surface) |
 | Documents | none — artifacts are raw files | `generate_document` (xlsx/docx/pdf/pptx), `parse_document`, `pdf_to_images` | **gap, Theseus** |
 | Vision | `vision.clj` (attach to first user msg, provider-bound) | `analyze_image`/`analyze_video` (provider-bound) | parity; both currently blocked by the glm-4.6v account state |
 | Voice | `telegram_voice.clj`: whisper/whisper-cpp STT only | local-stt + local-tts compiled | small gap (TTS) |
@@ -102,18 +104,17 @@ What the numbers say:
 - **The tail is where reliability rots.** `pdf_to_images` 0/9, `a2a_send` 44%, `generate_document` 60%, `gmail_mcp` 61%. A fat registry isn't just dormant — unused tools silently fail when finally needed.
 - **OpenCrabs' #4 tool is its single biggest failure source.** `session_context`: 4,486 failures (29.5% fail rate) — roughly a third of ALL failures on this box; the JSON-corruption disease is chronic enough to have a repair recipe in the brain files. Theseus has no equivalent tool to fail: session state is files (§4, now with numbers).
 - **Phantom tools are recorded as data.** 200+ invented `done-*`/`stop-*`/`final-*` tool names, nearly all failed calls — the loop-terminator hallucination disease as a table. Theseus' validated 8-name registry makes the attempt structurally impossible.
-- **Lazy activation is a real tax that works.** 3% of all calls are `tool_search` itself (5,106 calls, 99.9% OK) — the price of fitting ~75 tools in one context window. At 9 tools Theseus pays nothing; at 75 there is no alternative. Both designs are internally consistent.
+- **Lazy activation is a real tax that works.** 3% of all calls are `tool_search` itself (5,106 calls, 99.9% OK) — the price of fitting ~75 tools in one context window. At 10 tools Theseus pays nothing; at 75 there is no alternative. Both designs are internally consistent.
 - **Telemetry without digestion.** RSI last ran 26 days ago; 21,973 tool events since have gone un-analyzed — and the two stores disagree on some tools (`hashline_edit`: 99% OK in the ledger, 62% in the DB aggregate). The ledger's value is real; the missing half is the scheduled digest.
 
 Effect on §6 and §9 (both revised below): the missing-capability list survives, now ranked by measured demand — recurring need (web search) is a native build; the ≤0.5%-each tail (browser, mail, vision, docgen) argues for borrowing via the A2A/MCP bridge instead of porting five low-usage capabilities.
 
 ## 6. Gaps — OpenCrabs has, Theseus lacks (measured leverage order)
 
-1. **Browser tool in the registry** — the MCP transport now exists, but the model still cannot call browser automation directly; it must be scripted via shell. ~711 browser-tool calls on this box say a thin adapter would get used.
-2. **Document generation** — dossiers are text today. Measured demand here: 5 calls, 60% success — borrow through the A2A bridge (now live) before building.
-3. **Runtime tool lifecycle** — tools are compiled-in; no enable/disable/reload. Cheap to accept at 9 tools, expensive at 30.
+1. **Document generation** — dossiers are text today. Measured demand here: 5 calls, 60% success — borrow through the A2A bridge (now live) before building.
+2. **Runtime tool lifecycle** — tools are compiled-in; no enable/disable/reload. Cheap to accept at 10 tools, expensive at 30.
 
-Closed by the 2026-11-11/12 execution: internet web search (native `web_search`, Brave + relevance gate), the A2A endpoint (live card + JSON-RPC on the deck), and the MCP client module (live BrowserOS handshake + tools call).
+Closed by the 2026-11-11/12 execution: internet web search (native `web_search`, Brave + relevance gate), the A2A endpoint (live card + JSON-RPC on the deck), the MCP client module (live BrowserOS handshake + tools call), and the browser registry tool (`browser_read`, bounded page reader, `c8c8612`).
 
 ## 7. Gaps — Theseus has, OpenCrabs lacks
 
@@ -131,7 +132,7 @@ Approvals with buttons, autonomy tiers with computed promotion, provider fallbac
 1. **Web search tool (Theseus)** — ✅ SHIPPED (`5633faa`, repaired in `10ecda3`): native `web_search` in the 9-tool registry, keyless Brave HTML, direct URLs, query-relevance filter. Live probes: 5/5 relevant for Babashka and 5/5 for Clojure spec. Bing was dropped after serving WhatsApp forum posts for a Babashka query.
 2. **A2A agent card for Theseus** — ✅ SHIPPED (`2c839f1`): both discovery paths (`agent.json` + `agent-card.json`), `/a2a/v1` + `/a2a`, bearer-gated, mapped onto the existing `web_turn` job lane. Live receipt: OpenCrabs `a2a_send discover` returns the card; unauthenticated send is 401; an authenticated `/usage` turn went `submitted → completed` with the real reply artifact.
 3. **Tool outcome ledger (Theseus)** — ✅ SHIPPED (`eb56e7d`): the existing `usage.edn` funnel now records wall ms + executed? per call (never args); `scripts/tool_ledger.bb` prints per-tool call/ok/error/denied/avg/max. The scheduled digest already exists (`rsi-daily`, 09:30 EAT) — the 26-day-stale figure was the old reality, corrected.
-4. **MCP client module (Theseus)** — ✅ SHIPPED (`e6300b1`, `bk-c6c7`): 175-line bounded Streamable HTTP client with JSON/SSE decoding, strict response-id matching, session/protocol headers, initialized notification, `tools/list` and `tools/call`. Live: BrowserOS neo 0.0.93, 27 tools, read-only `tabs list` succeeded; 6 focused tests / 30 assertions and full suite 325 / 1,511 are green. Browser-as-a-registry-tool remains the next slice, not something this row pretends to close.
+4. **MCP client module (Theseus)** — ✅ SHIPPED (`e6300b1`, `bk-c6c7`): 175-line bounded Streamable HTTP client with JSON/SSE decoding, strict response-id matching, session/protocol headers, initialized notification, `tools/list` and `tools/call`. Live: BrowserOS neo 0.0.93, 27 tools, read-only `tabs list` succeeded; 6 focused tests / 30 assertions and full suite 325 / 1,511 are green. Browser-as-a-registry-tool was the next slice, and it is closed now: `bk-5c6a` (`c8c8612`) shipped `browser_read` — HTTPS-only, one owned tab per call, deliberately not auto-safe; `bb scripts/probe_browser.bb` is all-green against live BrowserOS.
 5. **PDF dossier generation** — still demoted: 5 uses and 60% success even on OpenCrabs. Borrow through the live bridge first; build natively only if it sticks.
 6. **OpenCrabs steals** — unchanged (webdeck cockpit pattern; boot dead-key guard in `config_manager`; witness files on releases).
 7. **Hygiene note (Theseus)** — 62 `*.bak-*` files in `src/bb_agent/` remain local iteration residue (counted live 2026-11-12); password-rotation leftovers were moved to a mode-700 `scratch/` quarantine, but the `.bak-*` sweep still waits for a calm moment (another session's WIP is in flight in this tree).
@@ -144,6 +145,7 @@ Approvals with buttons, autonomy tiers with computed promotion, provider fallbac
 | A2A server on the deck | `2c839f1` | `bb test:e2e:web` 32 tests / 337 assertions / 0 failures; live `a2a_send discover` returns the card; unauthenticated `a2a_send send` → HTTP 401; authenticated `message/send` → `submitted`, `tasks/get` → `completed`, artifact = real `/usage` reply |
 | Tool-outcome ledger timing + report | `eb56e7d` | unit suite 319 / 1,479 / 0 failures (pre-search-repair state); live `git_status` event recorded `16ms, executed=true`, no argument keys; `bb scripts/tool_ledger.bb` exit 0 over the real ledger |
 | MCP client for BrowserOS | `e6300b1` | focused 6 tests / 30 assertions; full unit suite 325 / 1,511 / 0 failures; targeted kondo 0 errors / 0 warnings; live initialize + initialized + 27-tool list + read-only `tabs list`, session id and tab payload withheld |
+| `browser_read` registry tool | `c8c8612` | focused 5 tests / 19 assertions; full unit suite 337 / 1,557 / 0 failures; targeted kondo 0 errors / 0 warnings; live `bb scripts/probe_browser.bb`: auto-safe denial, non-HTTPS rejection, real example.com read (1,398 chars, origin-stamped), zero tab leak |
 
 Bearer handling, stated plainly: the live A2A token is generated mode-600 at `state/a2a-token`, hygiene-allowlisted, and delivered file-only to the owner's verified DM. The authenticated roundtrip used a Babashka client that reads the token from disk, because OpenCrabs' secret-handling rule forbids putting a live bearer into a tool argument. Discovery and the unauthenticated 401 check used the real `a2a_send` tool. Both deck and Telegram services were restarted onto `10ecda3`; the agent card answers HTTP 200 live.
 
@@ -151,6 +153,6 @@ Bearer handling, stated plainly: the live A2A token is generated mode-600 at `st
 
 - Theseus: `src/bb_agent` enumerated (79 live namespaces + `tool/` 7 + `goal/` 21, ~15.5k LOC incl. local .bak residue); tool registry read in full; secondary namespaces read at API surface (defn lists), not line-by-line.
 - OpenCrabs: live runtime surface (this session's registry: 46 schema'd + ~29 lazy tools), `tools.toml` (8 dynamic, first is a bb script), skills dir (63), source tree present at `~/.opencrabs/src` — structure verified, Rust internals not audited this turn.
-- Test counts (325 tests / 1,511 assertions) are from the full `bb test:bb-agent` run at `e6300b1` on 2026-11-12; e2e web 32 / 337 at `2c839f1`. The MCP probe is `bb scripts/probe_mcp.bb`; it prints protocol facts and counts only.
+- Test counts (325 tests / 1,511 assertions) are from the full `bb test:bb-agent` run at `e6300b1` on 2026-11-12, and 337 / 1,557 at `c8c8612` (browser_read plus the concurrent test-roster registration); e2e web 32 / 337 at `2c839f1`. The probes are `bb scripts/probe_mcp.bb` and `bb scripts/probe_browser.bb`; both print protocol facts and counts only.
 - §5 usage data: this instance's per-call feedback ledger + mission-control aggregates over `opencrabs.db`, pulled 2026-11-11 ~11:05 EAT. Ledger and DB disagree on some per-tool rates (both quoted where divergent); the top-20 share base is the 167,970-event ledger volume.
 - No secrets appear in this document.
