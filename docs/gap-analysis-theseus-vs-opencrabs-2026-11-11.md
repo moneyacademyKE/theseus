@@ -1,11 +1,13 @@
 # Theseus vs OpenCrabs — Architecture Gap Analysis (tools focus)
 
-**Date:** 2026-11-11 · **Prepared by:** OpenCrabs v0.5.14 (this harness), for moe · **Updated 23:38 EAT after execution.**
-**Evidence:** both live trees read this turn (~10:40 EAT); recommendations implemented and re-verified the same day. Theseus @ `10ecda3` (`~/theseus/theseus`); OpenCrabs v0.5.14 live runtime + source tree (`~/.opencrabs/src`). Nothing recycled from history without re-reading. The other session's WIP (`coordinates.clj`, `web_auth.clj`, tests) untouched and uncommitted.
+**Date:** 2026-11-11 · **Prepared by:** OpenCrabs v0.5.14 (this harness), for moe · **Updated 2026-11-12 00:12 EAT after the MCP follow-up.**
+**Evidence:** both live trees read this turn (~10:40 EAT); recommendations implemented and re-verified the same day. Theseus @ `e6300b1` (`~/theseus/theseus`); OpenCrabs v0.5.14 live runtime + source tree (`~/.opencrabs/src`). Nothing recycled from history without re-reading. The other session's WIP (`coordinates.clj`, `web_auth.clj`, tests) untouched and uncommitted.
 
-## Execution status (2026-11-11, 23:38 EAT)
+## Execution status (2026-11-12, 00:12 EAT)
 
 The three recommendations from §9 are no longer proposals. Receipts live in §10; the headline facts: web search is a native `web_search` tool backed by Brave HTML with a relevance gate; Theseus exposes an A2A card + JSON-RPC on the live deck; and the tool-outcome ledger is the existing `usage.edn` funnel, now with wall-time and a query script. Bing was tried and dropped: it served WhatsApp forum posts for a Babashka query.
+
+Follow-up `bk-c6c7` closes the MCP-client gap: `bb-agent.mcp-client` now performs the Streamable HTTP handshake, carries the session and negotiated protocol headers, handles JSON and SSE, and makes bounded `tools/list` / `tools/call` requests. Live BrowserOS neo 0.0.93 returned 27 tools and completed a read-only `tabs list`; its session id and tab payload stayed out of output. This is a protocol module, not yet a model-visible browser tool.
 
 ## TL;DR
 
@@ -32,7 +34,7 @@ Theseus pays per-capability build cost for total control. OpenCrabs pays platfor
 | Gating | `policy.clj` rules DSL (external file, 2s eval budget) + `approval.clj` ledger + buttons on both transports | approval policy + earned-autonomy classes + plan gates + skill trust (Wilson lower bound) + quarantine + prompt-scan |
 | Telemetry | `usage/tool-event!` funnel: one event per call with name, session, status, denial source, executed?, wall ms; `scripts/tool_ledger.bb` reports per-tool counts/rates/timing | per-call feedback ledger → honest failure-rate reports |
 | Runtime lifecycle | none — tools are compiled into the image | enable/disable/reload via `tools.toml` + `tool_manage`, no restart |
-| External tool sources | A2A server on `web_routes` (agent card + JSON-RPC, bearer-gated); BrowserOS neo still ad-hoc MCP HTTP per session | MCP client (Gmail workspace) + A2A both directions + Bankai as external tools |
+| External tool sources | A2A server on `web_routes` (agent card + JSON-RPC, bearer-gated); `mcp_client.clj` Streamable HTTP client for BrowserOS and other MCP servers | MCP client (Gmail workspace) + A2A both directions + Bankai as external tools |
 | Add a tool | write Clojure + tests + restart | append a `tools.toml` entry (shell/bb executor) + reload |
 
 ## 2. Tool-category inventory (verified this turn)
@@ -41,7 +43,7 @@ Theseus pays per-capability build cost for total control. OpenCrabs pays platfor
 |---|---|---|---|
 | File/shell/git | read/write/search/git_status/shell | read/write/edit (hash-anchored)/bash/ls/glob/grep | parity |
 | Internet search | `web_search` — Brave HTML SERP, keyless, direct URLs, query-relevance gate; Bing backend rejected after serving unrelated WhatsApp posts for a Babashka query | `web_search` fan-out (4 engines) + `exa_search` + `brave_search` | **closed for Theseus** (native, one engine) |
-| Browser | none in the registry (BrowserOS neo via ad-hoc MCP HTTP) | CDP suite (`browser_*`), first-class tools | **gap, Theseus** (registry-wise) |
+| Browser | none in the registry; BrowserOS neo now reachable through the bounded `bb-agent.mcp-client` module | CDP suite (`browser_*`), first-class tools | **protocol gap closed; model-visible registry gap remains** |
 | Documents | none — artifacts are raw files | `generate_document` (xlsx/docx/pdf/pptx), `parse_document`, `pdf_to_images` | **gap, Theseus** |
 | Vision | `vision.clj` (attach to first user msg, provider-bound) | `analyze_image`/`analyze_video` (provider-bound) | parity; both currently blocked by the glm-4.6v account state |
 | Voice | `telegram_voice.clj`: whisper/whisper-cpp STT only | local-stt + local-tts compiled | small gap (TTS) |
@@ -49,7 +51,7 @@ Theseus pays per-capability build cost for total control. OpenCrabs pays platfor
 | Delegation | `launch_goal` supervised loop + `subagent.clj` claim/capacity ledger | `spawn_agent` (own worktree/branch), teams, `tasks_list` | both have it — different bets (§3) |
 | Memory search | FTS5 over session files + `semantic_memory` BM25+recency | SQLite truth + `memory_search` scopes + code-graph | different bets (§4) |
 | Skills | 41 skills + `skill_economy.clj` (claims/receipts/fleet) + `skill_research_github` | 63 skills + trust tiers + quarantine + outcomes ledger | different sophistication: economy vs trust |
-| MCP / A2A | A2A server shipped (both card paths, `/a2a/v1`, bearer-gated, reuses the web turn lane); MCP client module still absent | MCP client (Gmail), A2A client+server (agent card, profiles) | **A2A closed; MCP client open** |
+| MCP / A2A | A2A server shipped (both card paths, `/a2a/v1`, bearer-gated, reuses the web turn lane); MCP client shipped with JSON/SSE, session-id and tools call support | MCP client (Gmail), A2A client+server (agent card, profiles) | **A2A + MCP client closed** |
 | Scheduling | `schedule.clj` + daemon matcher | `cron_manage` + heartbeat protocol | parity |
 | Compaction | `compression.clj` (prune tool results, summarize middle) | `/compact` auto at 80% | parity |
 
@@ -107,12 +109,11 @@ Effect on §6 and §9 (both revised below): the missing-capability list survives
 
 ## 6. Gaps — OpenCrabs has, Theseus lacks (measured leverage order)
 
-1. **MCP client as a module** — BrowserOS neo is driven ad-hoc over HTTP per session; a small MCP client namespace (initialize / session-id / tools-list / call) turns any MCP server into a first-class tool source. OpenCrabs' Gmail MCP shows the pattern (and, at 61% success, the testing burden it carries).
-2. **Browser tool in the registry** — today the model cannot call browser automation as a tool; it must be scripted via shell. ~711 browser-tool calls on this box say it would get used.
-3. **Document generation** — dossiers are text today. Measured demand here: 5 calls, 60% success — borrow through the A2A bridge (now live) before building.
-4. **Runtime tool lifecycle** — tools are compiled-in; no enable/disable/reload. Cheap to accept at 9 tools, expensive at 30.
+1. **Browser tool in the registry** — the MCP transport now exists, but the model still cannot call browser automation directly; it must be scripted via shell. ~711 browser-tool calls on this box say a thin adapter would get used.
+2. **Document generation** — dossiers are text today. Measured demand here: 5 calls, 60% success — borrow through the A2A bridge (now live) before building.
+3. **Runtime tool lifecycle** — tools are compiled-in; no enable/disable/reload. Cheap to accept at 9 tools, expensive at 30.
 
-Closed by the 2026-11-11 execution: internet web search (native `web_search`, Brave + relevance gate) and the A2A endpoint (live card + JSON-RPC on the deck).
+Closed by the 2026-11-11/12 execution: internet web search (native `web_search`, Brave + relevance gate), the A2A endpoint (live card + JSON-RPC on the deck), and the MCP client module (live BrowserOS handshake + tools call).
 
 ## 7. Gaps — Theseus has, OpenCrabs lacks
 
@@ -130,18 +131,19 @@ Approvals with buttons, autonomy tiers with computed promotion, provider fallbac
 1. **Web search tool (Theseus)** — ✅ SHIPPED (`5633faa`, repaired in `10ecda3`): native `web_search` in the 9-tool registry, keyless Brave HTML, direct URLs, query-relevance filter. Live probes: 5/5 relevant for Babashka and 5/5 for Clojure spec. Bing was dropped after serving WhatsApp forum posts for a Babashka query.
 2. **A2A agent card for Theseus** — ✅ SHIPPED (`2c839f1`): both discovery paths (`agent.json` + `agent-card.json`), `/a2a/v1` + `/a2a`, bearer-gated, mapped onto the existing `web_turn` job lane. Live receipt: OpenCrabs `a2a_send discover` returns the card; unauthenticated send is 401; an authenticated `/usage` turn went `submitted → completed` with the real reply artifact.
 3. **Tool outcome ledger (Theseus)** — ✅ SHIPPED (`eb56e7d`): the existing `usage.edn` funnel now records wall ms + executed? per call (never args); `scripts/tool_ledger.bb` prints per-tool call/ok/error/denied/avg/max. The scheduled digest already exists (`rsi-daily`, 09:30 EAT) — the 26-day-stale figure was the old reality, corrected.
-4. **MCP client module (Theseus)** — next in line; generalizes the ad-hoc BrowserOS driving. ~711 browser calls here say it would get used.
+4. **MCP client module (Theseus)** — ✅ SHIPPED (`e6300b1`, `bk-c6c7`): 175-line bounded Streamable HTTP client with JSON/SSE decoding, strict response-id matching, session/protocol headers, initialized notification, `tools/list` and `tools/call`. Live: BrowserOS neo 0.0.93, 27 tools, read-only `tabs list` succeeded; 6 focused tests / 30 assertions and full suite 325 / 1,511 are green. Browser-as-a-registry-tool remains the next slice, not something this row pretends to close.
 5. **PDF dossier generation** — still demoted: 5 uses and 60% success even on OpenCrabs. Borrow through the live bridge first; build natively only if it sticks.
 6. **OpenCrabs steals** — unchanged (webdeck cockpit pattern; boot dead-key guard in `config_manager`; witness files on releases).
-7. **Hygiene note (Theseus)** — 60 untracked `*.bak-*` files in `src/bb_agent/` remain local iteration residue; password-rotation leftovers were moved to a mode-700 `scratch/` quarantine today, but the `.bak-*` sweep still waits for a calm moment (another session's WIP is in flight in this tree).
+7. **Hygiene note (Theseus)** — 62 `*.bak-*` files in `src/bb_agent/` remain local iteration residue (counted live 2026-11-12); password-rotation leftovers were moved to a mode-700 `scratch/` quarantine, but the `.bak-*` sweep still waits for a calm moment (another session's WIP is in flight in this tree).
 
-## 10. Execution receipts (bk-a325)
+## 10. Execution receipts (bk-a325, bk-c6c7)
 
 | Recommendation | Commit | Gates that ran |
 |---|---|---|
 | `web_search` tool (Bing → Brave repair) | `5633faa`, `10ecda3` | unit suite 319 tests / 1,481 assertions / 0 failures; targeted kondo 0 errors; live probe 5/5 relevant (Babashka), 5/5 relevant (Clojure spec), direct untruncated URLs |
 | A2A server on the deck | `2c839f1` | `bb test:e2e:web` 32 tests / 337 assertions / 0 failures; live `a2a_send discover` returns the card; unauthenticated `a2a_send send` → HTTP 401; authenticated `message/send` → `submitted`, `tasks/get` → `completed`, artifact = real `/usage` reply |
 | Tool-outcome ledger timing + report | `eb56e7d` | unit suite 319 / 1,479 / 0 failures (pre-search-repair state); live `git_status` event recorded `16ms, executed=true`, no argument keys; `bb scripts/tool_ledger.bb` exit 0 over the real ledger |
+| MCP client for BrowserOS | `e6300b1` | focused 6 tests / 30 assertions; full unit suite 325 / 1,511 / 0 failures; targeted kondo 0 errors / 0 warnings; live initialize + initialized + 27-tool list + read-only `tabs list`, session id and tab payload withheld |
 
 Bearer handling, stated plainly: the live A2A token is generated mode-600 at `state/a2a-token`, hygiene-allowlisted, and delivered file-only to the owner's verified DM. The authenticated roundtrip used a Babashka client that reads the token from disk, because OpenCrabs' secret-handling rule forbids putting a live bearer into a tool argument. Discovery and the unauthenticated 401 check used the real `a2a_send` tool. Both deck and Telegram services were restarted onto `10ecda3`; the agent card answers HTTP 200 live.
 
@@ -149,6 +151,6 @@ Bearer handling, stated plainly: the live A2A token is generated mode-600 at `st
 
 - Theseus: `src/bb_agent` enumerated (79 live namespaces + `tool/` 7 + `goal/` 21, ~15.5k LOC incl. local .bak residue); tool registry read in full; secondary namespaces read at API surface (defn lists), not line-by-line.
 - OpenCrabs: live runtime surface (this session's registry: 46 schema'd + ~29 lazy tools), `tools.toml` (8 dynamic, first is a bb script), skills dir (63), source tree present at `~/.opencrabs/src` — structure verified, Rust internals not audited this turn.
-- Test counts (319 tests / 1,481 assertions) are from the full `bb test:bb-agent` run at `10ecda3` on 2026-11-11; e2e web 32 / 337 at `2c839f1`.
+- Test counts (325 tests / 1,511 assertions) are from the full `bb test:bb-agent` run at `e6300b1` on 2026-11-12; e2e web 32 / 337 at `2c839f1`. The MCP probe is `bb scripts/probe_mcp.bb`; it prints protocol facts and counts only.
 - §5 usage data: this instance's per-call feedback ledger + mission-control aggregates over `opencrabs.db`, pulled 2026-11-11 ~11:05 EAT. Ledger and DB disagree on some per-tool rates (both quoted where divergent); the top-20 share base is the 167,970-event ledger volume.
 - No secrets appear in this document.

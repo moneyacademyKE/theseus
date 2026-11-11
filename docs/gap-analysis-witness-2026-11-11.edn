@@ -1,21 +1,23 @@
-;; gap-analysis recommendations witness — bk-a325 closure record
-;; Generated 2026-11-11 23:40 EAT after the build. Closure rule: a row is
-;; CLOSED only with its named check green in the same session; OPEN rows
-;; name the next action. Nothing here is asserted from memory — every
-;; :check names the gate that ran.
-{:generated-at "2026-11-11T23:40:00+03:00"
+;; gap-analysis recommendations witness — bk-a325 + bk-c6c7 closure record
+;; Generated 2026-11-12 00:12 EAT after the MCP follow-up. Closure rule: a
+;; row is CLOSED only with its named check green in the same session; OPEN
+;; rows name the next action. Every :check names a gate that actually ran.
+{:generated-at "2026-11-12T00:12:00+03:00"
  :bead "bk-a325"
+ :follow-up-bead "bk-c6c7"
  :repo "moneyacademyKE/theseus"
- :head "10ecda3"
+ :implementation-head "e6300b1"
  :commits {:web-search "5633faa, 10ecda3"
            :a2a "2c839f1"
-           :tool-ledger "eb56e7d"}
- :gates {:unit-suite "bb test:bb-agent at 10ecda3: 319 tests / 1481 assertions / 0 failures"
+           :tool-ledger "eb56e7d"
+           :mcp-client "e6300b1"}
+ :gates {:unit-suite "bb test:bb-agent at e6300b1: 325 tests / 1511 assertions / 0 failures"
+         :mcp-focused "bb -cp src:test + clojure.test: 6 tests / 30 assertions / 0 failures"
          :e2e-web "bb test:e2e:web at 2c839f1: 32 tests / 337 assertions / 0 failures"
-         :kondo "targeted lint: 0 errors / 0 warnings"
+         :kondo "mcp_client.clj + mcp_client_test.clj: 0 errors / 0 warnings"
          :state-hygiene "bb test:e2e:state-hygiene: 7 tests / 7 assertions / 0 failures"
-         :remote "git ls-remote --heads origin main -> 10ecda3"
-         :services "com.theseus.telegram + com.theseus.web restarted; agent card HTTP 200 live"}
+         :remote "git ls-remote https://github.com/moneyacademyKE/theseus.git refs/heads/main -> e6300b1"
+         :services "com.theseus.telegram + com.theseus.web restarted for bk-a325; agent card HTTP 200 live"}
  :rows
  [{:row 1 :capability "native internet web_search" :verdict :closed
    :check "live probe Babashka: 5 parsed, 5 relevant, book.babashka.org + github.com direct URLs; live probe Clojure spec: 5 parsed, 5 relevant; relevance gate drops unrelated WhatsApp result in fixture"}
@@ -23,11 +25,13 @@
    :check "a2a_send discover returns card; unauthenticated a2a_send send -> HTTP 401; authenticated message/send -> submitted; tasks/get -> completed with real /usage artifact; token mode 600, hygiene-allowlisted, owner-DM delivery only"}
   {:row 3 :capability "tool outcome timing + report" :verdict :closed
    :check "live git_status event: 16ms, executed=true, no argument keys; bb scripts/tool_ledger.bb exit 0 over real ledger (14707 shell calls: 13697 ok, 823 error, 187 denied)"}
-  {:row 4 :capability "MCP client module" :verdict :open
-   :check "BrowserOS neo still driven ad-hoc over HTTP; next recommendation, not started"}
+  {:row 4 :capability "MCP client module" :verdict :closed
+   :check "bb scripts/probe_mcp.bb exit 0: BrowserOS neo 0.0.93, protocol 2025-03-26, mcp-session-id present and withheld, notifications/initialized accepted, 27 tools listed, read-only tabs list succeeded with payload withheld; strict id matching and JSON/SSE parsing covered by 6 tests / 30 assertions"}
+  {:row "4a" :capability "browser as a model-visible registry tool" :verdict :open
+   :check "mcp_client.clj is a protocol module only; tools.clj remains at 9 definitions and no browser handler is registered; next slice is a thin approval-gated adapter"}
   {:row 5 :capability "PDF/dossier generation" :verdict :deferred
    :check "measured demand 5 uses / 60% success on OpenCrabs; borrow through the live A2A bridge before building"}
   {:row 6 :capability "state hygiene" :verdict :closed
    :check "password-rotation leftovers moved to mode-700 scratch/password-rotation-20261111; a2a-token allowlisted; hygiene suite 7/7"}
   {:row 7 :capability "src/bb_agent .bak-* sweep" :verdict :open
-   :check "60 untracked .bak-* files remain; deferred because another session's WIP is in flight in this tree"}]}
+   :check "62 .bak-* files counted live on 2026-11-12; deferred because another session's WIP is in flight in this tree"}]}
