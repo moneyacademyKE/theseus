@@ -110,17 +110,42 @@
   (let [queued {:queue ["AMD" "MU"] :covered [["NVDA" "2026-10-05"]]}
         empty-q {:queue [] :covered [["NVDA" "2026-11-07"] ["AMD" "2026-11-07"]]}
         u {:tokens [{:underlying "TSLA"} {:underlying "AMD"}] :fetched-ms 1}]
-    (t/testing "a live queue wins — no universe consulted"
-      (t/is (= {:ticker "AMD" :state queued} (brief/select-ticker queued nil))))
+    (t/testing "a queued name wins only when the current screened universe verifies it"
+      (t/is (= {:ticker "AMD" :state (assoc queued :queue ["AMD"])}
+               (brief/select-ticker queued u))))
     (t/testing "an empty queue refills from the universe, skipping covered names"
       (let [{:keys [ticker state]} (brief/select-ticker empty-q u)]
         (t/is (= "TSLA" ticker))
         (t/is (= ["TSLA"] (:queue state)))
         (t/is (= (:covered empty-q) (:covered state)))))
-    (t/testing "empty queue + empty universe falls back to recycling the oldest covered"
-      (t/is (= "NVDA" (:ticker (brief/select-ticker empty-q {:tokens []})))))
+    (t/testing "empty queue + empty screened universe fails closed"
+      (t/is (nil? (:ticker (brief/select-ticker empty-q {:tokens []})))))
     (t/testing "nothing anywhere is nil"
       (t/is (nil? (brief/select-ticker {:queue [] :covered []} nil))))))
+
+(t/deftest stale-queue-is-dropped-before-selection-test
+  (let [state {:queue ["BN" "TSLA"]
+               :covered [["NVDA" "2026-11-07"]]}
+        screened {:tokens [{:underlying "TSLA"}] :fetched-ms 1}
+        result (brief/select-ticker state screened)]
+    (t/testing "a persisted queue entry outside the current screen cannot run"
+      (t/is (= "TSLA" (:ticker result)))
+      (t/is (= ["TSLA"] (:queue (:state result)))))))
+
+(t/deftest recycle-only-screened-covered-names-test
+  (let [state {:queue []
+               :covered [["BN" "2026-11-01"] ["TSLA" "2026-11-02"]]}
+        screened {:tokens [{:underlying "TSLA"}] :fetched-ms 1}
+        result (brief/select-ticker state screened)]
+    (t/testing "recycling skips historical names that are no longer screened"
+      (t/is (= "TSLA" (:ticker result)))
+      (t/is (= [["BN" "2026-11-01"]] (:covered (:state result)))))))
+
+(t/deftest selection-fails-closed-without-screened-universe-test
+  (t/testing "a queued ticker is not trusted when current verification is unavailable"
+    (t/is (nil? (brief/select-ticker {:queue ["AMD"]
+                                      :covered []}
+                                     nil)))))
 
 (t/deftest validated-universe-test
   (t/testing "non-tech sectors are rejected: BN, DG, TR, AMZN, TSLA, LLY"

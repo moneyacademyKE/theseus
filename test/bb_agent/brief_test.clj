@@ -55,9 +55,11 @@ ORCL
 
 (deftest recycle-oldest-test
   (let [state (brief/parse-state sample-state)
-        drained (assoc state :queue [])]
-    (testing "empty queue rotates the oldest-covered ticker back into play"
-      (let [{:keys [ticker state]} (brief/recycle-oldest drained)]
+        drained (assoc state :queue [])
+        screened {:tokens [{:underlying "AVGO"} {:underlying "NVDA"}]
+                  :fetched-ms 1}]
+    (testing "empty queue rotates the oldest-covered ticker still in the screen"
+      (let [{:keys [ticker state]} (brief/select-ticker drained screened)]
         (is (= "AVGO" ticker))
         (is (nil? (some #(= "AVGO" (first %)) (:covered state))))
         (is (= ["NVDA" "2026-09-10"] (first (:covered state))))
@@ -65,8 +67,9 @@ ORCL
           (let [re-advanced (brief/advance-state state ticker "2026-09-25")]
             (is (= ["AVGO" "2026-09-25"] (last (:covered re-advanced))))
             (is (= 2 (count (:covered re-advanced))))))))
-    (testing "nothing covered and nothing queued is nil, not a crash"
-      (is (nil? (brief/recycle-oldest {:covered [] :queue []}))))))
+    (testing "nothing covered and nothing screened is nil, not a crash"
+      (is (nil? (brief/select-ticker {:covered [] :queue []}
+                                     {:tokens []}))))))
 
 ;; ---------- rerun: new takes only ----------
 
@@ -309,7 +312,7 @@ ORCL
         state {:covered [["NVDA" "2026-10-05"] ["MSFT" "2026-10-06"]] :queue []}
         refilled (brief/refill-queue state u)]
     (testing "exhausted queue takes Binance-tradable names not already covered"
-      (is (= ["TSLA" "AAPL"] (:queue refilled))))
+      (is (= #{"TSLA" "AAPL"} (set (:queue refilled)))))
     (testing "covered history is untouched — refilling does not rewrite the ledger"
       (is (= (:covered state) (:covered refilled))))
     (testing "an empty universe leaves the queue empty (recycle-oldest still handles it)"

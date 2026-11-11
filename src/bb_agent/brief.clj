@@ -124,17 +124,6 @@
 
 (defn next-ticker [{:keys [queue]}] (first queue))
 
-(defn recycle-oldest
-  "Queue exhausted: rotate the oldest-covered ticker back into play and drop
-   it from covered so advance-state can re-file it with a fresh date. Nil when
-   nothing has ever been covered — a genuinely empty universe stays an error."
-  [{:keys [covered] :as state}]
-  (let [[t _] (first covered)]
-    (when t
-      {:ticker t
-       :state (update state :covered
-                      #(into [] (remove (fn [[x _]] (= x t))) %))})))
-
 (defn advance-state
   "Move ticker from queue to covered with today's date."
   [state ticker today]
@@ -142,29 +131,39 @@
    :queue (vec (remove #(= ticker %) (:queue state)))})
 
 (defn refill-queue
-  "An exhausted queue refills from the Binance universe: tradable names not
-   already covered, in universe order. A queue that still has entries is
-   never touched, and covered history is read-only here — recycle-oldest
-   owns the covered-list rewiring, refill only fills the empty case."
+  "Replace persisted queue contents with the currently screened names not
+   already covered. The queue is durable state, not a trust boundary: a stale
+   entry is dropped before it can reach fetch-quote."
   [state universe]
-  (if (seq (:queue state))
-    state
-    (let [covered (set (map first (:covered state)))]
-      (assoc state :queue
-             (vec (remove #(contains? covered %)
-                          (map :underlying (:tokens universe))))))))
+  (let [covered (set (map first (:covered state)))
+        screened (set (map :underlying (:tokens universe)))
+        retained (vec (filter screened (:queue state)))]
+    (assoc state :queue
+           (if (seq retained)
+             retained
+             (vec (remove covered screened))))))
+
+(defn- recycle-oldest-screened
+  "Remove the oldest covered ticker that remains in the current screen."
+  [state universe]
+  (let [screened (set (map :underlying (:tokens universe)))]
+    (some (fn [[ticker _]]
+            (when (contains? screened ticker)
+              {:ticker ticker
+               :state (update state :covered
+                              #(into [] (remove (fn [[x _]] (= x ticker)) %)))}))
+          (:covered state))))
 
 (defn select-ticker
-  "The queue-empty decision, as data: the queued ticker first, then a refill
-   from the Binance universe, then recycling the oldest covered entry. Nil
-   only when all three sources are empty."
+  "Select only from the current screened universe. A queued ticker is retained
+   when verified; stale queue entries are discarded. If refill is empty, recycle
+   the oldest covered name still verified by the screen."
   [state universe]
-  (or (when-let [queued (next-ticker state)]
-        {:ticker queued :state state})
-      (let [refilled (refill-queue state universe)]
-        (when-let [queued (next-ticker refilled)]
-          {:ticker queued :state refilled}))
-      (recycle-oldest state)))
+  (when (seq (:tokens universe))
+    (let [refilled (refill-queue state universe)]
+      (or (when-let [queued (next-ticker refilled)]
+            {:ticker queued :state refilled})
+          (recycle-oldest-screened refilled universe)))))
 
 ;; ---------- pure: chunking ----------
 ;; ---------- pure: chunking ----------
@@ -245,25 +244,36 @@
 (defn validated-universe
   "The universe the queue may fill from: entries enriched with the scanner's
    security type and sector, kept only when both predicates agree.
-   A US equity match is not proof that a similarly named Binance asset is a
-   tokenized version of it. The sector filter narrows candidates; asset
-   identity must still be established separately. Covered names skip the probe;
-   probes are paced; the work is capped at queue-fill-cap."
-  [u covered]
-  (if (empty? (:tokens u))
-    u
-    (let [candidates (remove #(contains? covered (:underlying %)) (:tokens u))]
-      {:tokens (loop [cs candidates, out []]
-                 (if (or (empty? cs) (>= (count out) queue-fill-cap))
-                   out
-                   (do
-                     (Thread/sleep 150)
-                     (let [entry (first cs)
-                           e (merge entry (scanner-profile (:underlying entry)))]
-                       (recur (rest cs) (if (and (universe/researchable? e)
-                                                  (universe/tech-sector? e))
-                                          (conj out e) out))))))
-       :fetched-ms (:fetched-ms u)})))
+   `priority` contains persisted queue entries and covered names that must be
+   rechecked before selection; ordinary covered names stay out of refill
+   candidates. A US equity match is not proof that a similarly named Binance
+   asset is a tokenized version of it. The sector filter narrows candidates;
+   asset identity must still be established separately. Probes are paced and
+   capped at queue-fill-cap."
+  ([u covered]
+   (validated-universe u covered []))
+  ([u covered priority]
+   (if (empty? (:tokens u))
+     u
+     (let [priority (set priority)
+           candidates (concat
+                       (filter #(contains? priority (:underlying %)) (:tokens u))
+                       (remove #(or (contains? covered (:underlying %))
+                                    (contains? priority (:underlying %)))
+                               (:tokens u)))]
+       {:tokens (loop [cs candidates, out []]
+                  (if (or (empty? cs) (>= (count out) queue-fill-cap))
+                    out
+                    (do
+                      (Thread/sleep 150)
+                      (let [entry (first cs)
+                            e (merge entry (scanner-profile (:underlying entry)))]
+                        (recur (rest cs)
+                               (if (and (universe/researchable? e)
+                                        (universe/tech-sector? e))
+                                 (conj out e)
+                                 out))))))
+        :fetched-ms (:fetched-ms u)}))))
 
 (defn- fetch-headlines
   "Google News RSS titles for the ticker, newest first, capped."
@@ -600,14 +610,16 @@
 (defn run-brief! [{:keys [dry-run?]}]
   (let [today (str (java.time.LocalDate/now))
         state0 (parse-state (slurp (state-file)))
-        universe (when-not (next-ticker state0)
-                   (validated-universe
-                    (universe/load-universe (universe-file)
-                                            (System/currentTimeMillis)
-                                            universe-stale-ms)
-                    (set (map first (:covered state0)))))
+        covered (set (map first (:covered state0)))
+        priority (concat (:queue state0) (map first (:covered state0)))
+        universe (validated-universe
+                  (universe/load-universe (universe-file)
+                                          (System/currentTimeMillis)
+                                          universe-stale-ms)
+                  covered
+                  priority)
         {:keys [ticker state]} (or (select-ticker state0 universe)
-                                   (throw (ex-info "rotation queue is empty — refill state.md" {})))
+                                   (throw (ex-info "rotation queue is empty — no currently screened ticker" {})))
         _ (when (str/blank? ticker)
             (throw (ex-info "rotation queue is empty — refill state.md" {})))
         _ (when (and (nil? (next-ticker state0)) (next-ticker state))
