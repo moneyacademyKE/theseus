@@ -131,15 +131,55 @@
   the price of admission: no session id, no event — an outcome that
   cannot be attributed is a fixture, not signal (this is also what
   keeps contextless unit-test calls out of the live ledger)."
-  [{:keys [tool session-id status ok denial-source]}]
+  [{:keys [tool session-id status ok denial-source ms executed?]}]
   (when session-id
-    (append-event! {:usage/event :tool
-                    :tool/name tool
-                    :ok (boolean ok)
-                    :tool/status status
-                    :denial/source denial-source
-                    :session/id session-id
-                    :created/at (str (java.time.Instant/now))})))
+    (append-event!
+     (cond-> {:usage/event :tool
+              :tool/name tool
+              :ok (boolean ok)
+              :tool/status status
+              :denial/source denial-source
+              :session/id session-id
+              :created/at (str (java.time.Instant/now))}
+       (some? executed?) (assoc :tool/executed? (boolean executed?))
+       (number? ms) (assoc :tool/ms (max 0 (long ms)))))))
+
+(defn tool-summary
+  "Aggregate existing tool events without inventing a second ledger.
+  Wall time is absent on events written before :tool/ms was introduced."
+  [events]
+  (->> events
+       (filter #(= :tool (:usage/event %)))
+       (group-by #(some-> (:tool/name %) name))
+       (map (fn [[tool rows]]
+              (let [timings (keep :tool/ms rows)]
+                {:tool tool
+                 :calls (count rows)
+                 :ok (count (filter :ok rows))
+                 :error (count (filter #(= :error (:tool/status %)) rows))
+                 :denied (count (filter #(= :denied (:tool/status %)) rows))
+                 :avg-ms (when (seq timings)
+                           (long (/ (reduce + timings) (count timings))))
+                 :max-ms (when (seq timings) (reduce max timings))})))
+       (sort-by (juxt (comp - :calls) :tool))
+       vec))
+
+(defn render-tool-summary
+  "Plain-text per-tool outcome table for scripts/tool_ledger.bb."
+  [events]
+  (let [header (format "%-24s %5s %5s %5s %6s %7s %7s"
+                       "TOOL" "CALLS" "OK" "ERROR" "DENIED"
+                       "AVG-MS" "MAX-MS")]
+    (str/join
+     "\n"
+     (cons header
+           (map (fn [{:keys [tool calls ok error denied avg-ms max-ms]}]
+                  (format "%-24s %5d %5d %5d %6d %7s %7s"
+                          tool calls ok error denied
+                          (if (some? avg-ms) (str avg-ms) "-")
+                          (if (some? max-ms) (str max-ms) "-")))
+                (tool-summary events))))))
+
 
 (defn- fallback-stats [events]
   (let [hits (filter :fallback/served events)

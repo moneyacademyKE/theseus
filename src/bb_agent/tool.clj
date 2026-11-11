@@ -53,7 +53,8 @@
   approval flow unchanged."
   ([request] (handle-tool-request request {}))
   ([request cfg]
-   (let [request (normalize-request request)
+   (let [started-at (System/nanoTime)
+         request (normalize-request request)
          request (cond-> request
                    (and (:cwd cfg)
                         (contains? #{"shell" "git_status" "telegram_send_file"
@@ -114,6 +115,8 @@
        (usage/tool-event! {:tool (:tool/name request)
                            :session-id (or (:session/id cfg) (:session/id request))
                            :status (:status result)
+                           :executed? (boolean (:executed? result))
+                           :ms (quot (- (System/nanoTime) started-at) 1000000)
                            :ok (boolean (and (:executed? result)
                                              (= :ok (:status result))))
                            :denial-source (:denial/source result)})
