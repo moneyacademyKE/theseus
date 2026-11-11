@@ -70,7 +70,8 @@
                                [bb-agent.net-search-test]
                                [bb-agent.brief-universe-test]
                                [bb-agent.tool-ledger-test]
-                               [bb-agent.mcp-client-test])
+                               [bb-agent.mcp-client-test]
+                               [bb-agent.browser-tool-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -100,7 +101,8 @@
                                              'bb-agent.net-search-test
                                              'bb-agent.brief-universe-test
                                              'bb-agent.tool-ledger-test
-                                             'bb-agent.mcp-client-test)]
+                                             'bb-agent.mcp-client-test
+                                             'bb-agent.browser-tool-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"

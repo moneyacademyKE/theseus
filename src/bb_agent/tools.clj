@@ -84,6 +84,14 @@
       :required ["query"]}}}
    {:type "function"
     :function
+    {:name "browser_read"
+     :description "Read a public HTTPS web page through the local BrowserOS reader. Opens and closes one owned tab; cannot click, type, run scripts, or access credentials."
+     :parameters
+     {:type "object"
+      :properties {"url" {:type "string" :description "Public HTTPS URL to read"}}
+      :required ["url"]}}}
+   {:type "function"
+    :function
     {:name "launch_goal"
      :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
      :parameters
