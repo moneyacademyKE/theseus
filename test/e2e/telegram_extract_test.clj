@@ -89,3 +89,13 @@
         (is (< (count result) 120)))
       (finally
         (fs/delete-tree dir)))))
+
+(deftest extract-text-reads-a-real-pdf
+  (testing "committed fixture through the installed reader (poppler)"
+    (let [fixture "test/fixtures/doc-ingest.pdf"]
+      (is (fs/exists? fixture))
+      (let [text (extract/extract-text {:kind :document :path fixture
+                                        :mime-type "application/pdf"})]
+        (is (string? text))
+        (is (str/includes? (str/lower-case (str text))
+                           "pack my box with five dozen liquor jugs"))))))

@@ -92,10 +92,23 @@
       (when (zero? (:exit result)) (:out result)))
     (catch Exception _ nil)))
 
+(defn- resolve-bin
+  "Resolve a helper binary by PATH first, then common brew prefixes.
+   Launchd services run with a minimal PATH where /opt/homebrew/bin
+   is absent — bare-name lookups silently miss an installed reader."
+  [name]
+  (or (some-> (fs/which name) str)
+      (some (fn [prefix]
+              (let [candidate (str prefix "/" name)]
+                (when (fs/executable? candidate) candidate)))
+            ["/opt/homebrew/bin" "/usr/local/bin"])))
+
 (defn- pdf-text
   [path]
-  (or (command-output "pdftotext" ["-layout" (str path) "-"])
-      (command-output "mutool" ["draw" "-F" "txt" "-o" "-" (str path)])))
+  (or (some-> (resolve-bin "pdftotext")
+              (command-output ["-layout" (str path) "-"]))
+      (some-> (resolve-bin "mutool")
+              (command-output ["draw" "-F" "txt" "-o" "-" (str path)]))))
 
 (defn- raw-text
   [item]
