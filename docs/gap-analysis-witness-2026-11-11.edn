@@ -1,18 +1,23 @@
 ;; gap-analysis recommendations witness — bk-a325 + bk-c6c7 closure record
-;; Generated 2026-11-12 00:12 EAT, updated 01:15 EAT after the browser_read follow-up. Closure rule: a
-;; row is CLOSED only with its named check green in the same session; OPEN
-;; rows name the next action. Every :check names a gate that actually ran.
-{:generated-at "2026-11-12T01:15:00+03:00"
+;; Generated 2026-11-12 00:12 EAT, updated 01:15 EAT after the browser_read follow-up,
+;; and 17:00 EAT after the document-processing + live A2A borrow bundle (bk-31e2).
+;; Closure rule: a row is CLOSED only with its named check green in the same
+;; session; OPEN rows name the next action. Every :check names a gate that ran.
+{:generated-at "2026-11-12T17:00:00+03:00"
  :bead "bk-a325"
  :follow-up-bead "bk-c6c7"
  :browser-read-bead "bk-5c6a"
+ :doc-borrow-bead "bk-31e2"
  :repo "moneyacademyKE/theseus"
- :implementation-head "c8c8612"
+ :implementation-head "4e27c48"
  :commits {:web-search "5633faa, 10ecda3"
            :a2a "2c839f1"
            :tool-ledger "eb56e7d"
            :mcp-client "e6300b1"
-           :browser-read "c8c8612"}
+           :browser-read "c8c8612"
+           :ingest "d4937bc, 2a687e7"
+           :a2a-borrow "6146d0e"
+           :hygiene "4e27c48"}
  :gates {:unit-suite "bb test:bb-agent at e6300b1: 325 tests / 1511 assertions / 0 failures"
          :mcp-focused "bb -cp src:test + clojure.test: 6 tests / 30 assertions / 0 failures"
          :e2e-web "bb test:e2e:web at 2c839f1: 32 tests / 337 assertions / 0 failures"
@@ -20,7 +25,8 @@
          :state-hygiene "bb test:e2e:state-hygiene: 7 tests / 7 assertions / 0 failures"
          :remote "git ls-remote https://github.com/moneyacademyKE/theseus.git refs/heads/main -> e6300b1"
          :services "com.theseus.telegram + com.theseus.web restarted for bk-a325; agent card HTTP 200 live"
-         :browser-tool "focused 5 tests / 19 assertions; full bb test:bb-agent 337 / 1557 / 0 failures at c8c8612; kondo 0 errors / 0 warnings on the four touched files; live bb scripts/probe_browser.bb exit 0"}
+         :browser-tool "focused 5 tests / 19 assertions; full bb test:bb-agent 337 / 1557 / 0 failures at c8c8612; kondo 0 errors / 0 warnings on the four touched files; live bb scripts/probe_browser.bb exit 0"
+         :doc-borrow "full bb test:bb-agent 350 / 1618 / 0 failures at 4e27c48 (first run with bb-excel dep); e2e:telegram 71 / 362 / 0; e2e:web 32 / 337 / 0; e2e:state-hygiene 7/7 after allowlisting; kondo 0/0 on all nine touched files; live probe exit 0: discovery + 401 + pong + borrow (pdf on disk, marker sentence extracted)"}
  :rows
  [{:row 1 :capability "native internet web_search" :verdict :closed
    :check "live probe Babashka: 5 parsed, 5 relevant, book.babashka.org + github.com direct URLs; live probe Clojure spec: 5 parsed, 5 relevant; relevance gate drops unrelated WhatsApp result in fixture"}
@@ -32,9 +38,11 @@
    :check "bb scripts/probe_mcp.bb exit 0: BrowserOS neo 0.0.93, protocol 2025-03-26, mcp-session-id present and withheld, notifications/initialized accepted, 27 tools listed, read-only tabs list succeeded with payload withheld; strict id matching and JSON/SSE parsing covered by 6 tests / 30 assertions"}
   {:row "4a" :capability "browser as a model-visible registry tool" :verdict :closed
    :check "tools.clj registers browser_read as the 10th definition at c8c8612; approval gate: not in safe-auto-tools, an :auto-safe turn returns :denied; input gate: http/file/javascript urls rejected before any connection; live read of https://example.com returned 1396 chars, framed untrusted, origin-stamped; tab set identical before and after the call (zero leak); full suite 337 / 1557 / 0 failures"}
-  {:row 5 :capability "PDF/dossier generation" :verdict :deferred
-   :check "measured demand 5 uses / 60% success on OpenCrabs; borrow through the live A2A bridge before building"}
+  {:row 5 :capability "PDF/dossier generation" :verdict :closed
+   :check "bb scripts/probe_a2a_client.bb borrow exit 0: message/send -> completed with the path; /Users/moe/theseus/scratch/a2a-borrow.pdf on disk; pdftotext extraction contains 'pack my box with five dozen liquor jugs' — the borrow runs through a2a_task's localhost-only stored credential, never printed. The live probe also caught the spec gap fakes missed: message.role required (A2A v0.3), pinned by outgoing-message-is-spec-shaped."}
   {:row 6 :capability "state hygiene" :verdict :closed
    :check "password-rotation leftovers moved to mode-700 scratch/password-rotation-20261111; a2a-token allowlisted; hygiene suite 7/7"}
   {:row 7 :capability "src/bb_agent .bak-* sweep" :verdict :open
-   :check "62 .bak-* files counted live on 2026-11-12; deferred because another session's WIP is in flight in this tree"}]}
+   :check "62 .bak-* files counted live on 2026-11-12; deferred because another session's WIP is in flight in this tree"}
+  {:row 8 :capability "document attachment ingest" :verdict :closed
+   :check "pdftotext resolution: /opt/homebrew/bin/pdftotext exists (poppler 26.11); e2e telegram-extract-test extract-text-reads-a-real-pdf/real-xlsx green over committed fixtures (marker sentences asserted); resolve-bin covers launchd's minimal PATH; bb-excel 0.1.1 first maven dep; 6 tests / 22 assertions / 0 failures focused."}]}

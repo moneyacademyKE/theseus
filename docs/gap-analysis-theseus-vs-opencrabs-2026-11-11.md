@@ -19,7 +19,7 @@ Both systems are the same animal: one agent loop (turn engine), N chat transport
 
 The one layer where they truly diverge is **the tools layer**:
 
-- **Theseus: 10 tools, one flat registry, all schemas in every request.** `read_file, write_file, shell, search, web_search, browser_read, git_status, telegram_send_file, web_send_file, launch_goal`. Handlers in-process (`bb-agent.tool.*`), gated by a policy DSL + approval ledger. The real surface is "10 tools + whatever `shell` can do" — the OS is the tool, and skills are the knowledge of what shell can do. A2A is a server endpoint over the web lane, not a model-visible tool.
+- **Theseus: 11 tools, one flat registry, all schemas in every request.** `read_file, write_file, shell, search, web_search, browser_read, git_status, telegram_send_file, web_send_file, launch_goal, a2a_task`. Handlers in-process (`bb-agent.tool.*`), gated by a policy DSL + approval ledger. The real surface is "11 tools + whatever `shell` can do" — the OS is the tool, and skills are the knowledge of what shell can do. A2A is now both directions: a server endpoint over the web lane, and a model-visible `a2a_task` client that borrows remote agents (approval-gated; the stored bridge credential attaches only to localhost targets).
 - **OpenCrabs: ~75 built-in tools in tiers + 8 runtime-registered + MCP + A2A remotes + 63 skills.** Schema delivery is two-phase (46 schemas in-prompt, ~29 name-only, activated on demand) because a fat registry eats the context window; dynamic tools load from `tools.toml` without restart — the first dynamic entry here is a Babashka script, so the two systems literally already compose at this seam.
 
 **Measured (§5):** 154,260 lifetime tool calls on this box — bash alone is ~39% of them, the top 20 tools carry ~97% of ledger volume, and 18 of those 20 map to a Theseus primitive. The 75-tool breadth is mostly dormant; Theseus' measured gaps all sit in the ≤0.5%-each long tail, which argues for bridging it, not porting it.
@@ -104,17 +104,17 @@ What the numbers say:
 - **The tail is where reliability rots.** `pdf_to_images` 0/9, `a2a_send` 44%, `generate_document` 60%, `gmail_mcp` 61%. A fat registry isn't just dormant — unused tools silently fail when finally needed.
 - **OpenCrabs' #4 tool is its single biggest failure source.** `session_context`: 4,486 failures (29.5% fail rate) — roughly a third of ALL failures on this box; the JSON-corruption disease is chronic enough to have a repair recipe in the brain files. Theseus has no equivalent tool to fail: session state is files (§4, now with numbers).
 - **Phantom tools are recorded as data.** 200+ invented `done-*`/`stop-*`/`final-*` tool names, nearly all failed calls — the loop-terminator hallucination disease as a table. Theseus' validated 8-name registry makes the attempt structurally impossible.
-- **Lazy activation is a real tax that works.** 3% of all calls are `tool_search` itself (5,106 calls, 99.9% OK) — the price of fitting ~75 tools in one context window. At 10 tools Theseus pays nothing; at 75 there is no alternative. Both designs are internally consistent.
+- **Lazy activation is a real tax that works.** 3% of all calls are `tool_search` itself (5,106 calls, 99.9% OK) — the price of fitting ~75 tools in one context window. At 11 tools Theseus pays nothing; at 75 there is no alternative. Both designs are internally consistent.
 - **Telemetry without digestion.** RSI last ran 26 days ago; 21,973 tool events since have gone un-analyzed — and the two stores disagree on some tools (`hashline_edit`: 99% OK in the ledger, 62% in the DB aggregate). The ledger's value is real; the missing half is the scheduled digest.
 
 Effect on §6 and §9 (both revised below): the missing-capability list survives, now ranked by measured demand — recurring need (web search) is a native build; the ≤0.5%-each tail (browser, mail, vision, docgen) argues for borrowing via the A2A/MCP bridge instead of porting five low-usage capabilities.
 
 ## 6. Gaps — OpenCrabs has, Theseus lacks (measured leverage order)
 
-1. **Document generation** — dossiers are text today. Measured demand here: 5 calls, 60% success — borrow through the A2A bridge (now live) before building.
-2. **Runtime tool lifecycle** — tools are compiled-in; no enable/disable/reload. Cheap to accept at 10 tools, expensive at 30.
+1. **Document generation** — CLOSED 2026-11-12 (bk-31e2). Ingest is native: pdf via poppler 26.11 + PATH-robust binary resolution (`d4937bc`), xlsx via bb-excel (`2a687e7`); polished output borrows through `a2a_task` (`6146d0e`) — live receipt: OpenCrabs generated a PDF over the bridge whose marker sentence came back out through Theseus' own pdftotext lane. `skills/documents/SKILL.md` pins every working path and the dead ends.
+2. **Runtime tool lifecycle** — tools are compiled-in; no enable/disable/reload. Cheap to accept at 11 tools, expensive at 30.
 
-Closed by the 2026-11-11/12 execution: internet web search (native `web_search`, Brave + relevance gate), the A2A endpoint (live card + JSON-RPC on the deck), the MCP client module (live BrowserOS handshake + tools call), and the browser registry tool (`browser_read`, bounded page reader, `c8c8612`).
+Closed by the 2026-11-11/12 execution: internet web search (native `web_search`, Brave + relevance gate), the A2A endpoint (live card + JSON-RPC on the deck), the MCP client module (live BrowserOS handshake + tools call), the browser registry tool (`browser_read`, bounded page reader, `c8c8612`), and the document layer (native pdf/xlsx ingest `d4937bc`/`2a687e7` + the live A2A borrow `a2a_task`, `6146d0e`).
 
 ## 7. Gaps — Theseus has, OpenCrabs lacks
 
