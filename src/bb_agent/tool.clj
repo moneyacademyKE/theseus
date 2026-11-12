@@ -6,6 +6,7 @@
             [bb-agent.a2a-tool :as a2a-tool]
             [bb-agent.net-search :as net-search]
             [bb-agent.browser-tool :as browser-tool]
+            [bb-agent.tools :as tools]
             [bb-agent.tool.common :as common]
             [bb-agent.tool.file :as file]
             [bb-agent.tool.goal :as goal]
@@ -98,16 +99,22 @@
                                    (:approval/mode cfg))
                             (assoc request :approval/policy (:approval/mode cfg))
                             request)
-         result (if-let [verdict (policy/verdict request cfg)]
-                  (case verdict
-                    :allow (execute-tool-request request)
-                    :deny (deny-result request :policy))
-                  (case (approval-decision decision-request)
-                    :approved (execute-tool-request request)
-                    :ask (if (and approver (= :approved (approver request)))
-                           (execute-tool-request request)
-                           (deny-result request))
-                    :denied (deny-result request)))]
+         result (if (tools/dormant? cfg (:tool/name request))
+                  ;; Optional capability the owner never opted into: refuse
+                  ;; BEFORE policy and execution. A tool absent from the
+                  ;; prompt must not run just because a model hallucinated
+                  ;; its name (owner directive 2026-11-12).
+                  (deny-result request :dormant)
+                  (if-let [verdict (policy/verdict request cfg)]
+                    (case verdict
+                      :allow (execute-tool-request request)
+                      :deny (deny-result request :policy))
+                    (case (approval-decision decision-request)
+                      :approved (execute-tool-request request)
+                      :ask (if (and approver (= :approved (approver request)))
+                             (execute-tool-request request)
+                             (deny-result request))
+                      :denied (deny-result request))))]
      ;; THE funnel: one recording site for every tool outcome — ok, error,
      ;; or denied with its denial source (approval vs constitution). The
      ;; RSI digest builds its tool-failure table from these events; a

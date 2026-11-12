@@ -104,9 +104,15 @@
         (re-find #"(?i)image|vision|multimodal"
                  (pr-str body)))))
 
-(defmethod complete :openai-compatible [_ {:keys [model messages images provider/config]}]
+(defmethod complete :openai-compatible [_ {:keys [model messages images provider/config]
+                                           :as request}]
   (let [_base-url (require-config config :base-url)
         api-key (require-config config :api-key)
+        ;; Optional tools ride the request (:provider/tools, set by core from
+        ;; config). Absent → fail-closed default: the core registry only, not
+        ;; the dormant extras (owner directive 2026-11-12: capabilities must
+        ;; be optional).
+        advertised-tools (or (:provider/tools request) (tools/active-definitions nil))
         post! (fn [imgs]
                 (http/post (openai-url config)
                            {:headers {"authorization" (str "Bearer " api-key)
@@ -117,7 +123,7 @@
                                    {:model model
                                     :messages (openai-wire-messages
                                                (vision/attach-to-first-user messages imgs :openai))
-                                    :tools tools/definitions})}))
+                                    :tools advertised-tools})}))
         first-resp (post! images)
         first-body (json/parse-string (:body first-resp) keyword)
         [response body vision-degraded?]

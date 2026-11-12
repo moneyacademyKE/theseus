@@ -363,7 +363,11 @@
         semantic-ctx (when-not shared?
                        (semantic-memory/attach-context prompt cfg))
         brain-ctx (brain/load-brain-context)
-        skills-ctx (skill/skills-summary)]
+        skills-ctx (skill/skills-summary)
+        ;; One registry decision per turn, from config: optional capabilities
+        ;; (web_search, browser_read, a2a_task) stay dormant unless
+        ;; :tools/enable-optional opts them in (owner directive 2026-11-12).
+        active-tools (tools/active-definitions cfg)]
     (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
                                       (history-messages cfg id))
            turn {:tool/requests []
@@ -387,7 +391,8 @@
                      :model model
                      :messages messages
                      :memory/matches memory-matches
-                     :provider/config (get-in cfg [:providers provider])}
+                     :provider/config (get-in cfg [:providers provider])
+                     :provider/tools active-tools}
             request (cond-> request (seq user-images) (assoc :images user-images))
             response (complete-chain cfg request)
             tool-requests (:tool/requests response)

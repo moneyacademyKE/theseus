@@ -104,10 +104,16 @@
 (deftest registry-and-approval
   (is (some #(= "a2a_task" (get-in % [:function :name])) tools/definitions))
   (is (not (contains? common/safe-auto-tools "a2a_task")))
+  ;; Enabled via config, the auto-safe policy still refuses it: approval-gated.
   (is (= :denied (:status (tool/handle-tool-request
                            {:tool/name "a2a_task"
                             :tool/args {:url "http://127.0.0.1:18790" :text "x"}
-                            :approval/policy :auto-safe})))))
+                            :approval/policy :auto-safe}
+                           {:tools/enable-optional ["a2a_task"]}))))
+  ;; Not opted in: refused as a dormant capability before any approval logic.
+  (is (= :dormant (:denial/source (tool/handle-tool-request
+                                   {:tool/name "a2a_task"
+                                    :tool/args {:url "http://127.0.0.1:18790" :text "x"}})))))
 
 (deftest handler-maps-run-task-to-result-shapes
   (testing "completed reply becomes a bounded ok-result"

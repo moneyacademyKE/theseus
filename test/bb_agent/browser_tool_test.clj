@@ -13,9 +13,15 @@
 (deftest registry-and-approval
   (is (some #(= "browser_read" (get-in % [:function :name])) tools/definitions))
   (is (not (contains? common/safe-auto-tools "browser_read")))
+  ;; Enabled via config, the auto-safe policy still refuses it: approval-gated.
   (is (= :denied (:status (tool/handle-tool-request
                           {:tool/name "browser_read" :tool/args {:url "https://example.com"}
-                           :approval/policy :auto-safe})))))
+                           :approval/policy :auto-safe}
+                          {:tools/enable-optional ["browser_read"]}))))
+  ;; Not opted in: refused as a dormant capability before any approval logic.
+  (is (= :dormant (:denial/source (tool/handle-tool-request
+                                   {:tool/name "browser_read"
+                                    :tool/args {:url "https://example.com"}})))))
 
 (deftest lifecycle-owns-its-tab
   (let [calls (atom [])]

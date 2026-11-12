@@ -111,7 +111,47 @@
     :function
     {:name "launch_goal"
      :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
-     :parameters
-     {:type "object"
+      :parameters
+      {:type "object"
       :properties {"spec" {:type "string" :description "What to build, stated as an inspectable end state: the files that must exist and the checks that must pass"}}
       :required ["spec"]}}}])
+
+(def optional-tools
+  "Capabilities that ship dormant: low-priority extras the owner opts into per
+   deployment (owner directive 2026-11-12 — \"these new capabilities are low
+   priority. they should be optional\"). They are absent from every provider
+   prompt and refused at dispatch until config.edn opts in:
+
+     :tools/enable-optional [\"web_search\" \"browser_read\" \"a2a_task\"]"
+  #{"web_search" "browser_read" "a2a_task"})
+
+(defn- enabled-set
+  "Names cfg opted into. Strings and keywords both work (:web_search ==
+   \"web_search\"); nils and unknown names fall away — enabling is additive,
+   never a source of new tools."
+  [cfg]
+  (->> (get cfg :tools/enable-optional)
+       (filter identity)
+       (map (fn [x] (if (keyword? x) (name x) (str x))))
+       set))
+
+(defn active-definitions
+  "The tool list a turn advertises: `definitions` with dormant optional tools
+   removed. nil/absent cfg means default-off — the registry a fresh deployment
+   sees, exactly the pre-capability set."
+  [cfg]
+  (let [enabled (enabled-set cfg)]
+    (into []
+          (remove (fn [d]
+                    (let [n (get-in d [:function :name])]
+                      (and (optional-tools n)
+                           (not (contains? enabled n))))))
+          definitions)))
+
+(defn dormant?
+  "True when `name` is an optional tool cfg has NOT opted into. The dispatch
+   gate refuses these: an unadvertised tool must not execute just because a
+   model hallucinated its name."
+  [cfg name]
+  (boolean (and (optional-tools name)
+                (not (contains? (enabled-set cfg) name)))))

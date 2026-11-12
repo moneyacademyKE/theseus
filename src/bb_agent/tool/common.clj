@@ -174,6 +174,10 @@
                    "use write_file/edit_file for file edits (never perl/sed/awk -i), "
                    "mv instead of rm, absolute paths inside the home root. "
                    "Only ask the owner when no alternative exists, and name the rule.")
+      :dormant (str "Tool " name " is not enabled in this deployment — it is an optional "
+                    "capability, off by default. Recourse: answer without it, or ask the "
+                    "owner to add " name " to :tools/enable-optional in config.edn. "
+                    "Do not retry this call in this turn.")
       :approval (str "Tool " name " requires explicit approval and no approver is "
                      "present in this turn. Recourse: ask the user to approve, or "
                      "report this step as skipped — do not silently retry.")
