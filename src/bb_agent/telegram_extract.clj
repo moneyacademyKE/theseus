@@ -6,6 +6,7 @@
    available."
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [bb-excel.core :as xl]
             [clojure.string :as str]))
 
 (def ^:private default-max-chars 20000)
@@ -110,6 +111,25 @@
       (some-> (resolve-bin "mutool")
               (command-output ["draw" "-F" "txt" "-o" "-" (str path)]))))
 
+(defn- xlsx-text
+  "Spreadsheet sheets rendered for LLM context: '## <sheet name>' headers,
+   one 'A: value | B: value' line per row. bb-excel yields plain strings
+   (no formulas or styles), bounded later by extract-text like every path."
+  [path]
+  (try
+    (let [sheets (xl/get-sheets (str path))
+          text (->> (for [{sheet-title :name, rows :sheet} sheets]
+                       (str "## " sheet-title "\n"
+                            (str/join "\n"
+                                      (map (fn [row]
+                                             (str/join " | "
+                                                       (map (fn [[k v]] (str (name k) ": " v))
+                                                            (into (sorted-map) (dissoc row :_r)))))
+                                           rows))))
+                     (str/join "\n\n"))]
+      (when-not (str/blank? text) text))
+    (catch Exception _ nil)))
+
 (defn- raw-text
   [item]
   (let [path (:path item)
@@ -120,6 +140,9 @@
       (or (= "docx" ext)
           (= "application/vnd.openxmlformats-officedocument.wordprocessingml.document" mime))
       (docx-text path)
+      (or (= "xlsx" ext)
+          (= "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" mime))
+      (xlsx-text path)
       (or (= "pdf" ext) (= "application/pdf" mime))
       (pdf-text path)
       (or (contains? text-extensions ext)

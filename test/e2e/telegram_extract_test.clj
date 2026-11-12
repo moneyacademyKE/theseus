@@ -99,3 +99,16 @@
         (is (string? text))
         (is (str/includes? (str/lower-case (str text))
                            "pack my box with five dozen liquor jugs"))))))
+
+(deftest extract-text-reads-a-real-xlsx
+  (testing "committed fixture through bb-excel, sheets as row lines"
+    (let [fixture "test/fixtures/doc-ingest.xlsx"]
+      (is (fs/exists? fixture))
+      (let [text (extract/extract-text {:kind :document :path fixture
+                                        :mime-type "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})]
+        (is (string? text))
+        (is (str/includes? (str text) "## Positions"))
+        (is (str/includes? (str text) "A: ticker | B: weight"))
+        (is (str/includes? (str text) "A: AAPL | B: 0.35"))
+        (is (str/includes? (str text) "## Notes"))
+        (is (str/includes? (str text) "A: marker | B: five dozen liquor jugs"))))))
