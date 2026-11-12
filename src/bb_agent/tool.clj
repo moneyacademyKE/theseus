@@ -3,6 +3,7 @@
             [bb-agent.config :as config]
             [bb-agent.policy :as policy]
             [bb-agent.rtk :as rtk]
+            [bb-agent.a2a-tool :as a2a-tool]
             [bb-agent.net-search :as net-search]
             [bb-agent.browser-tool :as browser-tool]
             [bb-agent.tool.common :as common]
@@ -19,7 +20,8 @@
 
 (def ^:private handlers
   (merge file/handlers process/handlers telegram/handlers goal/handlers
-         web/handlers net-search/handlers browser-tool/handlers))
+         web/handlers net-search/handlers browser-tool/handlers
+         a2a-tool/handlers))
 
 (defn execute-tool-request
   "Run one tool request. The argument heal happens HERE as well as in

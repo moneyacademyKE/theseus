@@ -92,6 +92,23 @@
       :required ["url"]}}}
    {:type "function"
     :function
+    {:name "a2a_task"
+     :description (str "Send a task to a remote A2A agent and wait for its reply "
+                       "(JSON-RPC message/send + tasks/get). Use it to borrow "
+                       "capabilities this agent lacks: polished document "
+                       "generation (xlsx with formulas, styled pdf/docx), image "
+                       "analysis, or any skill the remote agent advertises. "
+                       "The local OpenCrabs bridge is at http://127.0.0.1:18790. "
+                       "Network side effect; subject to approval. The stored "
+                       "bridge credential is attached only to localhost targets.")
+     :parameters
+     {:type "object"
+      :properties {"url" {:type "string" :description "Base URL of the remote A2A agent (e.g. http://127.0.0.1:18790)"}
+                   "text" {:type "string" :description "The task to send"}
+                   "timeout-ms" {:type "integer" :description "Optional wait cap in milliseconds (default 180000, max 600000)"}}
+      :required ["url" "text"]}}}
+   {:type "function"
+    :function
     {:name "launch_goal"
      :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
      :parameters
