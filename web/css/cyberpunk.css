@@ -1,26 +1,30 @@
-/* THESEUS deck — midnight cyberpunk skin
-   A restrained orange signal layer over the existing layout. */
+/* THESEUS deck — neuromorphic cyberpunk skin
+   Obsidian surfaces with cyan control signals and semantic status colors. */
 :root {
-  --bg: #07090d;
-  --col: #0b0f16;
-  --col-head: #101722;
-  --hair: #202a37;
-  --text: #edf1f7;
-  --dim: #8793a3;
-  --faint: #5e6a79;
-  --accent: #ff6a1a;
-  --ok: #42d392;
-  --fail: #ff5b67;
-  --warn: #ffc857;
-  --glow: rgba(255, 106, 26, 0.22);
+  --bg: #0a0d13;
+  --col: #111722;
+  --col-head: #151b28;
+  --hair: #263247;
+  --text: #e8eef7;
+  --dim: #8492a6;
+  --faint: #536177;
+  --accent: #00f5d4;
+  --ok: #00e676;
+  --fail: #ff2a6d;
+  --warn: #ffb703;
+  --glow: rgba(0, 245, 212, 0.24);
+  --amber-glow: rgba(255, 183, 3, 0.24);
 }
 
+/* cyberpunk signal palette */
 body {
   background:
-    radial-gradient(circle at 12% -20%, rgba(255, 106, 26, 0.10), transparent 34rem),
-    radial-gradient(circle at 88% 110%, rgba(31, 71, 113, 0.12), transparent 30rem),
+    linear-gradient(rgba(0,245,212,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,245,212,.018) 1px, transparent 1px),
+    radial-gradient(circle at 12% -20%, rgba(0,245,212,.10), transparent 34rem),
+    radial-gradient(circle at 88% 110%, rgba(255,183,3,.08), transparent 30rem),
     var(--bg);
-  letter-spacing: 0.01em;
+  background-size: 28px 28px, 28px 28px, auto, auto, auto;
 }
 
 #topbar {
@@ -83,7 +87,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .cockpit-row #cockpit-send, #login-form button, .artifact-chip, .goal-verb:not(.danger),
 .sched-form button { background: var(--accent); color: #160a04; box-shadow: 0 0 18px var(--glow); }
-.cockpit-row #cockpit-send:hover, #login-form button:hover { filter: brightness(1.12); box-shadow: 0 0 24px rgba(255,106,26,.35); }
+.cockpit-row #cockpit-send:hover, #login-form button:hover { filter: brightness(1.12); box-shadow: 0 0 24px rgba(0,245,212,.35); }
 
 .bubble.in { background: #111a27; border-color: #2b3a4d; }
 .bubble.out { background: #29170f; border-color: #733512; box-shadow: 0 0 18px rgba(255, 106, 26, 0.06); }
@@ -98,11 +102,38 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: linear-gradient(145deg, #101722, #0b0f16);
   border-color: #344252;
   border-top-color: var(--accent);
-  box-shadow: 0 22px 80px rgba(0,0,0,.6), 0 0 28px rgba(255,106,26,.08);
+  box-shadow: 0 22px 80px rgba(0,0,0,.6), 0 0 28px rgba(0,245,212,.08);
 }
 #login::backdrop { background: rgba(3, 5, 8, 0.90); backdrop-filter: blur(8px); }
 
 @media (max-width: 640px) {
   #topbar { padding-inline: 13px; }
   .meta { gap: 9px; }
+}
+
+/* neuromorphic operator controls */
+.layout-tools { display: flex; align-items: center; gap: 6px; position: relative; margin-left: auto; }
+.layout-filter, .layout-action { min-height: 28px; border: 1px solid #2c394a; border-radius: 4px; background: #0b111a; color: var(--text); font: 11px/1 var(--mono, ui-monospace, monospace); padding: 6px 8px; }
+.layout-filter { width: 120px; }
+.layout-filter::placeholder { color: var(--faint); }
+.layout-action { color: var(--accent); cursor: pointer; text-transform: uppercase; letter-spacing: .08em; }
+.layout-action:hover { border-color: var(--accent); box-shadow: 0 0 12px var(--glow); }
+.layout-menu { position: absolute; z-index: 20; top: calc(100% + 8px); right: 0; min-width: 155px; padding: 8px; border: 1px solid #344252; border-radius: 6px; background: #0c121b; box-shadow: 0 14px 35px rgba(0,0,0,.5), 0 0 18px var(--glow); }
+.layout-menu label { display: block; padding: 6px 4px; color: var(--dim); cursor: pointer; }
+#layout-menu label:hover { color: var(--text); background: rgba(0,245,212,.08); }
+.layout-menu input { accent-color: var(--accent); }
+.col > header.drag-handle { cursor: grab; user-select: none; }
+.col > header.drag-handle::after { content: '⋮⋮'; margin-left: 8px; color: var(--faint); letter-spacing: -3px; }
+.col.dragging { opacity: .48; }
+.col.drop-target { outline: 1px dashed var(--accent); outline-offset: -4px; box-shadow: 0 0 20px var(--glow); }
+.col[hidden] { display: none; }
+.pinned-card { cursor: grab; border-left: 2px solid var(--accent); }
+.pinned-card:active { cursor: grabbing; }
+.stat-table tr { cursor: grab; }
+.stat-table tr.dragging, .card.dragging { opacity: .45; }
+@media (max-width: 640px) {
+  .layout-filter { width: 84px; }
+  .layout-action { padding-inline: 6px; }
+  #topbar { align-items: flex-start; }
+  .layout-tools { flex-wrap: wrap; justify-content: flex-end; }
 }

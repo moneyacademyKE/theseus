@@ -9,6 +9,9 @@ import { bootPip, pipPush } from './pip.js';
 import { bootUsage, refreshUsage } from './usage.js';
 import { bootSchedules } from './schedules.js';
 import { eatClock } from './time.js';
+import { bootLayout } from './layout.js';
+
+bootLayout();
 
 // One renderer per snapshot field. A throwing renderer skips its own
 // frame and never kills the others — the same isolation the old

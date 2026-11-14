@@ -49,6 +49,7 @@
    "/js/schedules.js" ["web/js/schedules.js" "text/javascript; charset=utf-8"]
    "/js/transcript.js" ["web/js/transcript.js" "text/javascript; charset=utf-8"]
    "/js/main.js"   ["web/js/main.js"    "text/javascript; charset=utf-8"]
+   "/js/layout.js" ["web/js/layout.js"  "text/javascript; charset=utf-8"]
    "/js/md.js"    ["web/js/md.js"      "text/javascript; charset=utf-8"]
    "/js/search.js" ["web/js/search.js" "text/javascript; charset=utf-8"]
    "/js/state.js" ["web/js/state.js" "text/javascript; charset=utf-8"]

@@ -62,3 +62,12 @@ test('transcript.js owns paging + untruncated render (row 12)', () => {
   assert.ok(t.includes('&page='), 'page parameter in the fetch');
   assert.ok(t.includes('getLastUserInput'), 'edit payload source');
 });
+
+test('neuromorphic layout controls stay local and composable', () => {
+  const layout = readFileSync(join(here, '../../web/js/layout.js'), 'utf8');
+  assert.ok(layout.includes('localStorage'), 'layout persists locally');
+  assert.ok(layout.includes('pinned watchlist'), 'pinned watchlist stream');
+  assert.ok(layout.includes('setupColumnDrag'), 'column drag-and-drop');
+  assert.ok(layout.includes('setupCardDrops'), 'card and telemetry row drag-and-drop');
+  assert.ok(layout.includes("add stream"), 'stream deployment control');
+});
