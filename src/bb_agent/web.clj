@@ -40,6 +40,7 @@
    "/css/content.css" ["web/css/content.css" "text/css; charset=utf-8"]
    "/css/login.css" ["web/css/login.css" "text/css; charset=utf-8"]
    "/css/cockpit.css" ["web/css/cockpit.css" "text/css; charset=utf-8"]
+   "/css/cyberpunk.css" ["web/css/cyberpunk.css" "text/css; charset=utf-8"]
    "/js/api.js"    ["web/js/api.js"     "text/javascript; charset=utf-8"]
    "/js/columns.js" ["web/js/columns.js" "text/javascript; charset=utf-8"]
    "/js/cockpit.js" ["web/js/cockpit.js" "text/javascript; charset=utf-8"]
