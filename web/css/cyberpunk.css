@@ -137,3 +137,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   #topbar { align-items: flex-start; }
   .layout-tools { flex-wrap: wrap; justify-content: flex-end; }
 }
+/* command-center polish */
+:root { --cyan: #00f5d4; --amber: #ffb703; --emerald: #00e676; --crimson: #ff2a6d; --surface-hi: #151b28; --surface-lo: #080b11; }
+body { background-color: #04060a; background-size: 38px 38px, 38px 38px, auto, auto, auto; font-family: "Space Grotesk", Inter, system-ui, sans-serif; }
+body.scanlines::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 50; opacity: .09; background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(0,245,212,.16) 4px); mix-blend-mode: screen; }
+body.compact .col { min-width: 260px; } body.compact .card { padding-block: 6px; }
+.col, .card, .session-card { box-shadow: 8px 8px 18px rgba(0,0,0,.42), -5px -5px 14px rgba(34,45,63,.16), inset 0 1px rgba(255,255,255,.025); }
+.col > header { position: relative; } .col > header::before { content: ''; position: absolute; inset: 0 0 auto; height: 1px; background: linear-gradient(90deg, var(--cyan), transparent 70%); opacity: .55; }
+.stream-remove { margin-left: auto; border: 0; background: transparent; color: var(--dim); cursor: pointer; } .stream-remove:hover { color: var(--crimson); }
+#deck-inspector { min-width: min(620px, 90vw); color: var(--text); background: rgba(10,13,19,.96); border: 1px solid var(--cyan); box-shadow: 0 0 40px rgba(0,245,212,.18); }
+#deck-inspector::backdrop { background: rgba(0,0,0,.72); backdrop-filter: blur(8px); }
+.deck-inspector-head { display: flex; align-items: center; justify-content: space-between; } .deck-inspector-head button { color: var(--cyan); background: transparent; border: 0; font-size: 1.4rem; cursor: pointer; }
+#deck-inspector pre { max-height: 55vh; overflow: auto; color: var(--cyan); font: 12px/1.55 "JetBrains Mono", ui-monospace, monospace; }
+.card:hover { background: rgba(0,245,212,.035); }
