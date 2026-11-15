@@ -7,19 +7,20 @@
               :pred     (fn [tool args] ...)  ; tool is a string, args the tool map
               :decision :allow}]}
 
-  First truthy pred wins. No match, disabled policy, missing file, unparseable
-  file, throwing pred, or pred running past `eval-timeout-ms` -> verdict nil ->
-  the ordinary approval classifier decides. Fail-to-baseline: a broken rules
-  file can make the agent neither more permissive nor more restrictive than
-  the configured baseline.
+  Every matching predicate is measured. A matching :deny wins over every
+  matching :allow, so a grant cannot shadow a safety floor when rules are
+  reordered. The returned decision also names the rule and category, which
+  makes a refusal recoverable instead of a mystery.
+
+  An enabled policy that is missing, invalid, throwing, or timed out always
+  denies: without the policy even a normally safe read could reveal a secret.
 
   Sandbox (pinned by e2e.policy-test/sandbox-contract-pin): sci default
   context — no io, no slurp/spit, no Java interop, no threads. Rules classify;
   they cannot touch the world. This sci build ignores :timeout-ms (verified
-  empirically), so both file eval and every pred call run inside a future
-  bounded by a deref timeout. A timed-out pred's thread cannot be killed on
-  the JVM — bounded waste (one spinning thread per runaway eval), never a
-  hang."
+  empirically), so file eval and every predicate run inside a future bounded
+  by a deref timeout. A timed-out predicate's thread cannot be killed on the
+  JVM — bounded waste (one spinning thread per runaway eval), never a hang."
   (:require [babashka.fs :as fs]
             [bb-agent.brain :as brain]
             [sci.core :as sci]))
@@ -36,27 +37,81 @@
                rules)))
 
 (defn- eval-rules [code]
-  (let [result (deref (future (sci/eval-string code {})) eval-timeout-ms ::timed-out)]
-    (when (and (map? result) (valid-rules? (:rules result)))
-      result)))
+  (try
+    (let [result (deref (future (sci/eval-string code {}))
+                        eval-timeout-ms
+                        ::timed-out)]
+      (cond
+        (= ::timed-out result) {:status :error :reason :timeout}
+        (and (map? result) (valid-rules? (:rules result)))
+        {:status :ok :rules (:rules result)}
+        :else {:status :error :reason :invalid}))
+    (catch Exception _
+      {:status :error :reason :exception})))
 
 (defn- pred-verdict [pred tool args]
-  (deref (future (pred tool args)) eval-timeout-ms ::timed-out))
+  (try
+    (let [result (deref (future (pred tool args))
+                        eval-timeout-ms
+                        ::timed-out)]
+      (if (= ::timed-out result)
+        {:status :error :reason :timeout}
+        {:status :ok :hit (boolean result)}))
+    (catch Exception _
+      {:status :error :reason :exception})))
 
-(defn verdict
-  "Returns :allow, :deny, or nil. nil means no policy verdict — the caller
-  falls back to the approval classifier unchanged."
+(defn- policy-failure [reason]
+  {:decision :deny
+   :rule "policy-integrity"
+   :category :policy-integrity
+   :reason reason})
+
+(defn- rule-category [{:keys [category decision]}]
+  (or category
+      (if (= :deny decision) :safety-floor :grant)))
+
+(defn- decision-for [rule]
+  {:decision (:decision rule)
+   :rule (if (nil? (:name rule)) "<unnamed>" (str (:name rule)))
+   :category (rule-category rule)
+   :reason :matched})
+
+(defn- evaluate-rules [rules tool args]
+  (loop [remaining rules
+         matches []]
+    (if (empty? remaining)
+      (if-let [winner (or (some #(when (= :deny (:decision %)) %) matches)
+                          (some #(when (= :allow (:decision %)) %) matches))]
+        (decision-for winner)
+        {:decision nil :reason :no-match})
+      (let [rule (first remaining)
+            result (pred-verdict (:pred rule) tool args)]
+        (if (= :error (:status result))
+          {:status :error :reason (:reason result)}
+          (recur (rest remaining)
+                 (if (:hit result) (conj matches rule) matches)))))))
+
+(defn evaluate
+  "Returns a data decision: :decision is :allow, :deny, or nil; :rule and
+  :category explain a match. An enabled policy-integrity failure denies."
   [{:tool/keys [name args]} cfg]
-  (when (get-in cfg [:policy :enabled])
+  (if-not (get-in cfg [:policy :enabled])
+    {:decision nil :reason :disabled}
     (try
       (let [f (rules-file)]
-        (when (fs/exists? f)
-          (when-let [{:keys [rules]} (eval-rules (slurp (str f)))]
-            (loop [rules rules]
-              (when-let [{:keys [pred decision]} (first rules)]
-                (let [hit (pred-verdict pred name args)]
-                  (cond
-                    (= ::timed-out hit) nil
-                    hit decision
-                    :else (recur (rest rules)))))))))
-      (catch Exception _ nil))))
+        (if-not (fs/exists? f)
+          (policy-failure :missing)
+          (let [{:keys [status rules reason]} (eval-rules (slurp (str f)))]
+            (if (= :ok status)
+              (let [result (evaluate-rules rules name args)]
+                (if (= :error (:status result))
+                  (policy-failure (:reason result))
+                  result))
+              (policy-failure reason)))))
+      (catch Exception _
+        (policy-failure :exception)))))
+
+(defn verdict
+  "Compatibility projection of evaluate: returns :allow, :deny, or nil."
+  [request cfg]
+  (:decision (evaluate request cfg)))

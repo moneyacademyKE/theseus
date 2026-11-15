@@ -77,7 +77,7 @@
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
                      :model "fake-deterministic"
-                     :policy {:enabled true}
+                     :policy {:enabled (boolean rules-content)}
                      :telegram (merge {:token "TESTTOKEN"
                                        :base-url (str "http://127.0.0.1:" port)
                                        :allowed-user-ids [owner-id]}
