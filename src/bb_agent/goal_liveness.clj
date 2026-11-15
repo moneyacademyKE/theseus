@@ -203,6 +203,81 @@
    accused of anything."
   [d]
   (= :rejected (:status d)))
+(def authoring-success-verdict
+  "The one `:result` goal_bridge records when authoring produced a usable
+   config — goal_bridge.clj:382, `(nil? result) :authored`. Its full vocabulary
+   there is `:stalled | :timed-out | :authored | :invalid`, plus `:error` at
+   :376. So \"did authoring succeed?\" is ONE comparison against this keyword
+   rather than a hand-kept list of the bad ones — a list that has to be
+   extended every time the bridge grows a verdict, which is exactly how
+   `:invalid` and `:timed-out` went unrecognised for ten weeks.
+
+   Measured on the live goals root 2026-11-15:
+   `grep -ho \":result [a-z:-]*\" */authoring.edn | sort | uniq -c`
+   -> 5 :authored, 5 :error, 1 :invalid, 1 :timed-out. Two of the three
+   unrecognised kinds were sitting in the corpus the whole time."
+  :authored)
+
+(defn authoring-failed?
+  "True when authoring.edn records a `:result` that is PRESENT and not the
+   success verdict. An absent or nil `:result` is unknown, never a failure —
+   the same rule read-authoring applies to unreadable bytes, because
+   manufacturing a verdict out of missing evidence is how a false FAILED is
+   born. This lane has met the mirror image twice (a false :receipted on
+   2026-11-03, a false :errored refused by later-receipt? below)."
+  [auth]
+  (let [r (:result auth)]
+    (and (some? r) (not= authoring-success-verdict r))))
+
+(defn authoring-reason
+  "The human string beside a bad verdict: `:error` first, then `:problems`
+   (what `:invalid` carries — goal_bridge.clj:389), then a sentence naming the
+   verdict itself. `:timed-out` and `:stalled` carry NO message at all, and a
+   report that prints a verdict with no reason is a dead end for the reader, so
+   the fallback names what happened rather than printing an empty string."
+  [auth verdict]
+  (or (:error auth)
+      (:problems auth)
+      (str "authoring returned :" (name verdict) " and recorded no message")))
+
+(defn- receipt-mtime-ms
+  "mtime in millis, 0 for a path that cannot be stat'd — a missing file must not
+   win a comparison by throwing, and 0 loses every comparison it should lose."
+  [p]
+  (try (-> p fs/last-modified-time .toMillis) (catch Exception _ 0)))
+
+(defn later-receipt?
+  "Is any receipt file NEWER than authoring.edn? A stale failure verdict must
+   not hide a resume that succeeded afterwards.
+
+   Measured 2026-11-15, which is why this exists rather than a blanket rule:
+   `goals/make-rsi-do-this-983334` carries authoring.edn
+   `{:result :invalid, :problems \"Config missing required key: :name\"}` from
+   2026-09-26T22:42:25Z AND config.edn + run.log from 2026-09-30T05:06 whose
+   last line is `GOAL ALREADY SATISFIED`. Classifying every non-:authored
+   verdict as ERRORED would have called that goal dead — a false FAILED about
+   work that demonstrably completed four days later, and it is the goal whose
+   act.sh this lane has cited as the dispatch gate for 30+ entries.
+   `exp-max-report-studio` ({:result :timed-out}, 75 rounds, 45 min) has no
+   config.edn and no run.log at all, so nothing supersedes it and it IS a dead
+   authoring that read as :receipted for ten weeks.
+
+   Comparison is strict `>`: equal timestamps favour the failure verdict, which
+   is the pre-existing contract (an error outranks a receipt written beside it)
+   rather than a new guess. Recovery is an ANNOTATION, never a status bucket, so
+   the partition still sums — the same contract :delivery-blind holds."
+  [ws]
+  (let [auth-f (fs/path ws "authoring.edn")
+        t (receipt-mtime-ms auth-f)]
+    (and (fs/regular-file? auth-f)
+         (boolean
+          (some (fn [[file _]]
+                  (let [f (fs/path ws file)]
+                    (and (not= "authoring.edn" file)
+                         (fs/regular-file? f)
+                         (> (receipt-mtime-ms f) t))))
+                receipt-files)))))
+
 (defn classify
   "One workspace → {:name :ws :status :stamp-status :authoring-pid :receipts
    :age-minutes :age}. Opts: :alive? (pid → bool, default registry/pid-alive?),
@@ -217,13 +292,19 @@
          rcpts (receipts ws)
          mins (age-minutes ws now-ms)
          auth (read-authoring ws)
-         verdict (when (= :error (:result auth)) :error)
+         verdict (when (authoring-failed? auth) (:result auth))
+         ;; A bad verdict that a LATER receipt supersedes is history, not a
+         ;; live failure: make-rsi-do-this-983334 is :invalid from 09-26 with
+         ;; config.edn + run.log from 09-30 ending GOAL ALREADY SATISFIED.
+         recovered? (and (some? verdict) (later-receipt? ws))
          dlv (delivery ws)
          status (cond
-                  ;; An authoring turn that returned an error outranks every other
-                  ;; receipt, including run.log: a run that halted is not a run that
-                  ;; finished, and :receipted would read as success.
-                  verdict :errored
+                  ;; An authoring turn that did not succeed outranks every
+                  ;; receipt written beside it, including run.log: a run that
+                  ;; halted is not a run that finished, and :receipted would
+                  ;; read as success. UNLESS a later receipt supersedes it —
+                  ;; see later-receipt?, measured on the live goals root.
+                  (and verdict (not recovered?)) :errored
                   (seq rcpts) :receipted
                   (and (number? pid) (not (alive? pid))) :failed
                   (number? pid) :live
@@ -238,7 +319,8 @@
               :age-minutes mins
               :age (human-age mins)}
        verdict (assoc :authoring-verdict verdict
-                      :authoring-error (or (:error auth) "(no message recorded)"))
+                      :authoring-error (authoring-reason auth verdict))
+       true (assoc :authoring-recovered? (boolean recovered?))
        true (assoc :delivery dlv)
        (delivery-blind? dlv) (assoc :delivery-blind? true)))))
 
@@ -265,6 +347,10 @@
                :workspaces (count classified)
                :rows classified
                :delivery-blind (filterv :delivery-blind? classified)
+               ;; annotation, not a status: these rows stay in :receipted, so
+               ;; the partition still sums and a recovered goal is counted once.
+               :recovered-after-bad-authoring
+               (filterv :authoring-recovered? classified)
                :opts opts}
               (group-by :status classified))))))
 
@@ -277,6 +363,7 @@
     (let [failed (:failed a) abandoned (:abandoned a) unstamped (:unstamped a)
           errored (:errored a)
           blind (:delivery-blind a)
+          recovered (:recovered-after-bad-authoring a)
           idle (or (:idle-minutes (:opts a)) default-idle-minutes)]
       (str/join
        "\n"
@@ -288,9 +375,14 @@
                         (count failed) (count errored) (count abandoned)
                         (count unstamped) (count blind))]
          (seq errored)
-         (into (for [{:keys [name authoring-error age]} errored]
-                 (str "ERRORED (authoring returned an error): " name
-                      " [idle " age "] — " authoring-error)))
+         (into (for [{:keys [name authoring-error authoring-verdict age]} errored]
+                 (str "ERRORED (authoring returned :" (clojure.core/name authoring-verdict)
+                      "): " name " [idle " age "] — " authoring-error)))
+         (seq recovered)
+         (into (for [{:keys [name authoring-error authoring-verdict age]} recovered]
+                 (str "RECOVERED (bad authoring verdict, superseded by a later receipt): "
+                      name " [:" (clojure.core/name authoring-verdict) ", idle " age
+                      "] — " authoring-error)))
          (seq failed)
          (into (for [{:keys [name authoring-pid age]} failed]
                  (str "FAILED (authoring pid dead, no receipt): " name
@@ -310,7 +402,12 @@
                     "inferred from age alone (no pid was ever recorded). A receipt proves "
                     "the authoring turn returned, not that it built anything — that is what "
                     "ERRORED separates out, and a workspace with no receipt file is not "
-                    "evidence of work done either way. DELIVERY-BLIND is an annotation, "
+                    "evidence of work done either way. RECOVERED marks a bad "
+                    "authoring verdict that a later receipt supersedes — do not "
+                    "re-dispatch those, and do not read the verdict as absent. "
+                    "Recovery is inferred from file mtimes only, so an authoring "
+                    "that failed and left NO receipt at all cannot be told apart "
+                    "from one still in flight. DELIVERY-BLIND is an annotation, "
                     "not a status: it says the dispatch's own progress message was refused "
                     "by the wire, so an ack printed locally is not evidence that a topic "
                     "saw it — and an absent or unparseable launch.log is :unknown, never "

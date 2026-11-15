@@ -162,10 +162,20 @@
       (spit (str (fs/path w "authoring.edn")) (pr-str {:result :error :error "boom"}))
       (is (= :errored (:status (gl/classify w {:alive? (alive-fn)})))))))
 
+;; SUPERSEDED 2026-11-15 (mechanical-confidence-supersede.md): the six fixtures
+;; below used to write {:result :ok}, a value no production code writes —
+;; goal_bridge.clj:385 records :authored for success (vocabulary: :stalled |
+;; :timed-out | :authored | :invalid, plus :error at :376), and
+;; `grep -rn ":result :ok" src/ scripts/` returns 0 hits. Under the old
+;; contract (only :error is a failure) any other keyword read as healthy, so
+;; those fixtures asserted a contract about a word that does not exist — the
+;; same blind spot that let :invalid and :timed-out sit unrecognised for ten
+;; weeks. Corrected to :authored rather than deleted, with the reason kept here
+;; so the next reader cannot "fix" the code back into ignoring unknown verdicts.
 (deftest healthy-authoring-still-receipts-test
-  (testing "no-regression: an authoring.edn without an error verdict is still :receipted"
+  (testing "no-regression: an authoring.edn recording the success verdict is still :receipted"
     (let [w (stamp! "fine" 66)]
-      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :ok :rounds 9}))
+      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :authored :rounds 9}))
       (is (= :receipted (:status (gl/classify w {:alive? (alive-fn)}))))
       (is (nil? (:authoring-verdict (gl/classify w {:alive? (alive-fn)})))))))
 
@@ -198,7 +208,7 @@
     (let [bad (stamp! "bad" 111)
           ok (stamp! "ok" 222)]
       (spit (str (fs/path bad "authoring.edn")) (pr-str {:result :error :error "x"}))
-      (spit (str (fs/path ok "authoring.edn")) (pr-str {:result :ok}))
+      (spit (str (fs/path ok "authoring.edn")) (pr-str {:result :authored}))
       (let [a (gl/audit *root* {:alive? (alive-fn)})]
         (is (= 1 (count (:errored a))))
         (is (= 1 (count (:receipted a))))
@@ -263,7 +273,7 @@
             :delivery-blind? — the partition still sums, because this is an
             annotation about the wire, not a verdict about the work"
     (let [w (log! (stamp! "blinded" 31) "Wed Nov 04 10:56:51 EAT 2026 sendMessage ok=false res=Bad Request: chat not found")]
-      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :ok :rounds 9}))
+      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :authored :rounds 9}))
       (let [row (gl/classify w {:alive? (alive-fn)})]
         (is (= :receipted (:status row)) "the work receipt is unchanged")
         (is (true? (:delivery-blind? row)))
@@ -275,8 +285,8 @@
             delivered them"
     (let [blind (log! (stamp! "blind-1" 41) "Wed Nov 04 10:56:51 EAT 2026 sendMessage ok=false res=Bad Request: chat not found")
           seen (log! (stamp! "seen-1" 42) "Sun Sep 27 01:42:25 EAT 2026 editMessageText ok=true res=897")]
-      (spit (str (fs/path blind "authoring.edn")) (pr-str {:result :ok}))
-      (spit (str (fs/path seen "authoring.edn")) (pr-str {:result :ok}))
+      (spit (str (fs/path blind "authoring.edn")) (pr-str {:result :authored}))
+      (spit (str (fs/path seen "authoring.edn")) (pr-str {:result :authored}))
       (let [a (gl/audit *root* {:alive? (alive-fn)})]
         (is (= ["blind-1"] (mapv :name (:delivery-blind a))))
         (is (= 2 (:workspaces a)) "annotation, not a bucket: nothing left :receipted")
@@ -299,10 +309,134 @@
             count — a zero that is measured says so, and a zero that is
             unmeasured is not the same number"
     (let [w (log! (stamp! "clean" 61) "Sun Sep 27 01:42:25 EAT 2026 editMessageText ok=true res=897")]
-      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :ok}))
+      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :authored}))
       (let [a (gl/audit *root* {:alive? (alive-fn)})
             r (gl/report a)]
         (is (= 0 (count (:delivery-blind a))))
         (is (str/includes? r "delivery-blind 0"))
         (is (not (str/includes? r "DELIVERY-BLIND (dispatch ack rejected)"))
             "no rows when nothing was blind")))))
+
+;; ---------- 2026-11-15: :error is not the only non-success authoring verdict ----------
+;; Measured on the live goals root before writing this: `grep -ho ":result [a-z:-]*"
+;; */authoring.edn | sort | uniq -c` -> 5 :authored, 5 :error, 1 :invalid,
+;; 1 :timed-out. goal_bridge.clj:382 writes FOUR non-success results
+;; (:stalled / :timed-out / :invalid / :error), and classify only recognised :error.
+;; So `exp-max-report-studio` ({:result :timed-out}, 75 rounds, 45 min, no
+;; config.edn, no run.log — nothing was ever built) read as :receipted.
+;; The second half of the measurement is what stops this from over-reaching:
+;; `make-rsi-do-this-983334` carries {:result :invalid} at 2026-09-26T22:42 and
+;; ALSO carries config.edn + run.log written 2026-09-30T05:06, i.e. a resume
+;; succeeded four days later and its run.log ends "GOAL ALREADY SATISFIED".
+;; Blanket-reclassifying every non-success verdict would have called a recovered
+;; goal dead — a false FAILED, the mirror image of the false :receipted.
+
+(deftest timed-out-authoring-with-no-later-receipt-is-errored-test
+  (testing ":timed-out is a non-success verdict, and with nothing after it the
+            goal never produced a config — so it is not a receipt of work"
+    (let [w (stamp! "exp-max-report-studio" 75)]
+      (spit (str (fs/path w "authoring.edn"))
+            (pr-str {:model "ali/qwen3.8-max" :rounds 75 :duration-ms 2700105
+                     :result :timed-out :finished "2026-09-12T19:37:04Z"}))
+      (let [row (gl/classify w {:alive? (alive-fn)})]
+        (is (= :errored (:status row)))
+        (is (= :timed-out (:authoring-verdict row)))
+        (is (false? (:authoring-recovered? row))
+            "no later receipt, so nothing recovered it")
+        (is (str/includes? (str (:authoring-error row)) "timed-out")
+            "the report has something to print even with no :error message")))))
+
+(deftest invalid-authoring-carries-its-problems-test
+  (testing ":invalid carries :problems rather than :error, and that text is what
+            the report must name — a verdict with no reason is a dead end"
+    (let [w (stamp! "bad-config" 41)]
+      (spit (str (fs/path w "authoring.edn"))
+            (pr-str {:result :invalid :rounds 41
+                     :problems "Config missing required key: :name"}))
+      (let [row (gl/classify w {:alive? (alive-fn)})]
+        (is (= :errored (:status row)))
+        (is (= :invalid (:authoring-verdict row)))
+        (is (str/includes? (str (:authoring-error row)) "Config missing required key")
+            ":problems is the reason when :error is absent")))))
+
+(deftest stalled-authoring-is-also-not-a-receipt-test
+  (testing ":stalled is the fourth non-success verdict goal_bridge writes"
+    (let [w (stamp! "stalled" 17)]
+      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :stalled :rounds 17}))
+      (is (= :errored (:status (gl/classify w {:alive? (alive-fn)}))))
+      (is (= :stalled (:authoring-verdict (gl/classify w {:alive? (alive-fn)})))))))
+
+(deftest bad-authoring-recovered-by-a-later-run-stays-receipted-test
+  (testing "a non-success verdict older than a receipt that proves the goal went
+            on is HISTORY, not a live failure — the live make-rsi-do-this-983334
+            shape (:invalid 2026-09-26, config.edn + run.log 2026-09-30)"
+    (let [w (stamp! "recovered" 41)
+          au (fs/path w "authoring.edn")]
+      (spit (str au) (pr-str {:result :invalid :problems "Config missing required key: :name"}))
+      ;; push the verdict into the past, then let a later attempt leave a receipt
+      (fs/set-last-modified-time au (java.time.Instant/parse "2026-09-26T22:42:25Z"))
+      (spit (str (fs/path w "run.log")) "iter-000 GOAL ALREADY SATISFIED\n")
+      (fs/set-last-modified-time (fs/path w "run.log")
+                                 (java.time.Instant/parse "2026-09-30T05:06:29Z"))
+      (let [row (gl/classify w {:alive? (alive-fn)})]
+        (is (= :receipted (:status row))
+            "calling this ERRORED would be a false FAILED: something newer proved it ran")
+        (is (true? (:authoring-recovered? row)))
+        (is (= :invalid (:authoring-verdict row))
+            "the bad verdict stays visible — recovered is not the same as never-happened")
+        (is (contains? (:receipts row) :run-log))))))
+
+(deftest authored-verdict-is-not-recovered-and-not-errored-test
+  (testing "no-regression: :authored is a success, so it carries no verdict and no
+            recovery annotation (a false :authoring-recovered? would be noise)"
+    (let [w (stamp! "fine" 9)]
+      (spit (str (fs/path w "authoring.edn")) (pr-str {:result :authored :rounds 9}))
+      (let [row (gl/classify w {:alive? (alive-fn)})]
+        (is (= :receipted (:status row)))
+        (is (nil? (:authoring-verdict row)))
+        (is (false? (:authoring-recovered? row)))))))
+
+(deftest audit-groups-recovered-as-an-annotation-not-a-bucket-test
+  (testing "recovered rows stay in :receipted and are listed separately, so the
+            partition still sums — the same contract :delivery-blind holds"
+    (let [bad (stamp! "timed-out-goal" 75)
+          rec (stamp! "resumed-goal" 41)]
+      (spit (str (fs/path bad "authoring.edn")) (pr-str {:result :timed-out}))
+      (spit (str (fs/path rec "authoring.edn")) (pr-str {:result :invalid :problems "x"}))
+      (fs/set-last-modified-time (fs/path rec "authoring.edn")
+                                 (java.time.Instant/parse "2026-09-26T22:42:25Z"))
+      (spit (str (fs/path rec "run.log")) "GOAL ALREADY SATISFIED\n")
+      (fs/set-last-modified-time (fs/path rec "run.log")
+                                 (java.time.Instant/parse "2026-09-30T05:06:29Z"))
+      (let [a (gl/audit *root* {:alive? (alive-fn)})]
+        (is (= ["timed-out-goal"] (mapv :name (:errored a))))
+        (is (= ["resumed-goal"] (mapv :name (:recovered-after-bad-authoring a))))
+        (is (= 1 (count (:receipted a)))
+            "annotation, not a bucket: the recovered goal is still counted once")
+        (is (= 2 (:workspaces a)))
+        (is (= (:workspaces a)
+               (+ (count (:errored a)) (count (:receipted a))))
+            "partition sums")))))
+
+(deftest report-names-recovered-and-unrecovered-separately-test
+  (testing "the human receipt distinguishes a dead verdict from a historical one,
+            because they call for opposite responses: re-dispatch versus nothing"
+    (let [bad (stamp! "dead-goal" 75)
+          rec (stamp! "resumed-goal" 41)]
+      (spit (str (fs/path bad "authoring.edn"))
+            (pr-str {:result :timed-out :finished "2026-09-12T19:37:04Z"}))
+      (spit (str (fs/path rec "authoring.edn"))
+            (pr-str {:result :invalid :problems "Config missing required key: :name"}))
+      (fs/set-last-modified-time (fs/path rec "authoring.edn")
+                                 (java.time.Instant/parse "2026-09-26T22:42:25Z"))
+      (spit (str (fs/path rec "run.log")) "GOAL ALREADY SATISFIED\n")
+      (fs/set-last-modified-time (fs/path rec "run.log")
+                                 (java.time.Instant/parse "2026-09-30T05:06:29Z"))
+      (let [r (gl/report (gl/audit *root* {:alive? (alive-fn)}))]
+        (is (str/includes? r "ERRORED"))
+        (is (str/includes? r "dead-goal"))
+        (is (str/includes? r "RECOVERED"))
+        (is (str/includes? r "resumed-goal"))
+        (is (str/includes? r "later receipt"))
+        (is (not (str/includes? r "ERRORED (authoring did not succeed): resumed-goal"))
+            "a recovered goal is not named as a live failure")))))

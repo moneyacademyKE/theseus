@@ -77,11 +77,19 @@
        :goal/abandoned (count (:abandoned a))
        :goal/unstamped (count (:unstamped a))
        :goal/delivery-blind (count (:delivery-blind a))
+       ;; ANNOTATION of :receipted rows (a bad authoring verdict a later
+       ;; receipt superseded), so it never joins the partition sum — the
+       ;; same contract :goal/delivery-blind holds. Added 2026-11-15 with
+       ;; goal-liveness/:recovered-after-bad-authoring: a measurement only
+       ;; one command reports is a measurement nobody runs.
+       :goal/recovered (count (:recovered-after-bad-authoring a))
        :goal/workspaces-audited (:workspaces a)
        :goal/dead-names (->> (concat (:failed a) (:abandoned a))
                              (map :name) sort vec)
        :goal/errored-names (->> (:errored a) (map :name) sort vec)
-       :goal/blind-names (->> (:delivery-blind a) (map :name) sort vec)})))
+       :goal/blind-names (->> (:delivery-blind a) (map :name) sort vec)
+       :goal/recovered-names (->> (:recovered-after-bad-authoring a)
+                                  (map :name) sort vec)})))
 (defn summary []
   {:usage (usage/report)
    :outbox (outbox-summary)
@@ -102,15 +110,19 @@
     (println "liveness:   goals root not read — not-found, not zero")
     (let [summed (+ (:goal/live l) (:goal/receipted l) (:goal/dead-authoring l)
                     (:goal/errored l) (:goal/abandoned l) (:goal/unstamped l))]
-      (println (format "liveness:   %d live, %d receipted, %d FAILED (dead authoring), %d errored, %d abandoned, %d unstamped, %d delivery-blind%s%s"
+      (println (format "liveness:   %d live, %d receipted, %d FAILED (dead authoring), %d errored, %d abandoned, %d unstamped, %d delivery-blind, %d recovered%s%s%s"
                        (:goal/live l) (:goal/receipted l) (:goal/dead-authoring l)
                        (:goal/errored l) (:goal/abandoned l) (:goal/unstamped l)
-                       (:goal/delivery-blind l)
+                       (:goal/delivery-blind l) (or (:goal/recovered l) 0)
                        (if (seq (:goal/dead-names l))
                          (str " — " (str/join ", " (:goal/dead-names l)))
                          "")
                        (if (seq (:goal/blind-names l))
                          (str " | delivery-blind: " (str/join ", " (:goal/blind-names l)))
+                         "")
+                       (if (seq (:goal/recovered-names l))
+                         (str " | recovered (do not re-dispatch): "
+                              (str/join ", " (:goal/recovered-names l)))
                          "")))
       (when (not= summed (:goal/workspaces-audited l))
         (println (format "liveness:   [PARTITION DOES NOT SUM] %d classified of %d workspace(s) audited — a bucket is missing, so the counts above are not a census"
