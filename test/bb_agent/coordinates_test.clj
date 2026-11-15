@@ -520,3 +520,125 @@
           "stated, not left to the reader")
       (is (str/includes? out "1 drifted, 1 unsupported")
           "the two counts are printed separately, so one number cannot hide the other"))))
+
+;; ---------- 2026-11-09: byte-identical copies are ONE candidate, not a guess ----------
+;; Measured live before this test existed: a release build at
+;; $THESEUS_HOME/build/theseus-v1.2.0/ (227 code files, sha256-identical to the
+;; live tree — spot-checked on knowledge.clj, preflight.clj, goal_bridge.clj)
+;; made 130 of 164 `:ambiguous` rows in `bb coords` carry the value 2, every one
+;; a FULLY PINNED relative cite such as src/bb_agent/brief.clj. Sampled pair:
+;;   build/theseus-v1.2.0/src/bb_agent/brief.clj   31427 bytes
+;;   theseus/src/bb_agent/brief.clj                31427 bytes
+;; `index-files`' `distinct` dedupes PATH STRINGS, and the 2026-11-01 fix was
+;; about one file walked twice through nested index dirs — the same string. Two
+;; paths holding the same BYTES survive it, so every pinned cite became a
+;; "guess", `page-machines` dropped them all, and `bb knowledge guards` printed
+;; G = 1/29 pages machine-backed (3%) against G = 2/29 measured with the build
+;; dir excluded. Second false-DIRTY in this lane (first: 2026-11-01, double
+;; walk). Shape stolen from Aatzer0/dsh-experience lib/evidence.js: "The result
+;; fingerprint (same artifact, green tests) outranks step similarity: a run that
+;; re-proves the same terminal state is a 1.0 no matter how lean it was" —
+;; identity is the CONTENT, not the path or the text that produced it.
+
+(deftest byte-identical-copies-are-one-candidate-test
+  (let [r (str (fs/create-temp-dir {:prefix "coords-copies"}))]
+    (fs/create-dirs (str r "/a/src"))
+    (fs/create-dirs (str r "/b/src"))
+    (fs/create-dirs (str r "/brain/knowledge"))
+    (spit (str r "/a/src/thing.clj") (str/join "\n" (for [i (range 1 11)] (str ";; line " i))))
+    (spit (str r "/b/src/thing.clj") (str/join "\n" (for [i (range 1 11)] (str ";; line " i))))
+    (spit (str r "/brain/knowledge/pinned.md")
+          "# Pinned\n- at: src/thing.clj:4\n- bare: thing.clj:9\n")
+    (try
+      (let [res (c/audit (str r "/brain") [(str r "/a") (str r "/b")])
+            rows (concat (:resolved res) (:out-of-range res) (:dangling res))
+            pinned (first (filter #(= 4 (:line %)) rows))
+            bare (first (filter #(= 9 (:line %)) rows))]
+        (testing "two paths holding the same bytes are one candidate"
+          (is (nil? (:ambiguous pinned))
+              "the deciding set had two members that are one file, so the verdict cannot differ")
+          (is (= 2 (:immaterial pinned))
+              "and the row still says how many identical copies it collapsed, because a silent collapse is an uncheckable one"))
+        (testing "a bare basename collapses the same way"
+          (is (nil? (:ambiguous bare)))
+          (is (= 2 (:immaterial bare))))
+        (testing "the partition still sums"
+          (is (= (:total res)
+                 (+ (count (:resolved res)) (count (:dangling res))
+                    (count (:external res)) (count (:undecidable res))
+                    (count (:out-of-range res))))))
+        (testing "the CLI names the collapse instead of hiding it"
+          (let [out (with-out-str (c/-main ["coords" (str r "/brain")
+                                            "--index" (str r "/a")
+                                            "--index" (str r "/b")]))]
+            (is (str/includes? out "2 byte-identical copies"))
+            (is (not (str/includes? out "verdict is a guess"))
+                "an immaterial choice is not printed as a guess"))))
+      (finally (fs/delete-tree r)))))
+
+(deftest byte-different-copies-stay-a-guess-test
+  (let [r (str (fs/create-temp-dir {:prefix "coords-differ"}))]
+    (fs/create-dirs (str r "/a/src"))
+    (fs/create-dirs (str r "/b/src"))
+    (fs/create-dirs (str r "/brain/knowledge"))
+    (spit (str r "/a/src/thing.clj") (str/join "\n" (for [i (range 1 11)] (str ";; a " i))))
+    (spit (str r "/b/src/thing.clj") (str/join "\n" (for [i (range 1 41)] (str ";; b " i))))
+    (spit (str r "/brain/knowledge/pinned.md") "# P\n- at: src/thing.clj:4\n")
+    (try
+      (let [res (c/audit (str r "/brain") [(str r "/a") (str r "/b")])
+            pinned (first (filter #(= 4 (:line %))
+                                  (concat (:resolved res) (:out-of-range res))))]
+        (testing "different bytes are a real choice, so the guess flag stays"
+          (is (= 2 (:ambiguous pinned))
+              "content-identity narrows guesses; it must never erase a real one")
+          (is (nil? (:immaterial pinned)))
+          (is (= 10 (:lines pinned)) "resolved to the first, deterministically")))
+      (finally (fs/delete-tree r)))))
+
+(deftest immaterial-copies-are-reported-as-data-test
+  (let [r (str (fs/create-temp-dir {:prefix "coords-immat"}))]
+    (fs/create-dirs (str r "/a/src"))
+    (fs/create-dirs (str r "/b/src"))
+    (fs/create-dirs (str r "/brain/knowledge"))
+    (spit (str r "/a/src/thing.clj") "(ns thing)\n")
+    (spit (str r "/b/src/thing.clj") "(ns thing)\n")
+    (spit (str r "/brain/knowledge/p.md") "# P\n- at: src/thing.clj:1\n")
+    (try
+      (let [res (c/audit (str r "/brain") [(str r "/a") (str r "/b")])]
+        (testing "the audit counts collapsed citations as data"
+          (is (= 1 (:immaterial-rows res))
+              "so a future index change that resurrects the guesses is visible as a number")))
+      (finally (fs/delete-tree r)))))
+
+;; ---------- 2026-11-11: a truncated list names what it dropped ----------
+;; Measured live before this test existed: `bb coords` printed 31 LINE DRIFTED
+;; rows, 10 of which carry MORE than 6 candidate lines (max 19). The row listed
+;; six numbers and read as the whole set, so a re-pin looked exhaustive when 43
+;; of 170 candidates were silently dropped. Rule: ruslanudintsev-ai/
+;; agent-self-learning-core core/commands/base.py:279-280,287 — _budget_notice
+;; prints total_count beside shown_count, because a truncation that does not
+;; announce itself is a count over unexamined data.
+(deftest claim-report-says-how-many-candidate-lines-it-dropped-test
+  (let [r (fs/create-temp-dir)
+        _ (fs/create-dirs (fs/path r "src"))
+        ;; nine defn lines for one symbol: more than the six the row prints
+        _ (spit (str (fs/path r "src" "thing.clj"))
+                (str/join "\n"
+                          (concat ["(ns thing)" ""]
+                                  (for [i (range 9)]
+                                    (str "(defn page-status-" i " [] nil)")))))
+        _ (do (fs/create-dirs (fs/path r "brain"))
+              (spit (str (fs/path r "brain" "p.md"))
+                    "# p\n\n- `src/thing.clj:1` — `page-status` drifted.\n"))
+        rows (c/unsupported-claims (str (fs/path r "brain")) [r])
+        out (with-out-str (c/claims-print! rows))]
+    (is (= 1 (count rows)) "the fixture yields exactly one drifted row")
+    (is (= :drifted (:kind (first rows))))
+    (is (<= 9 (count (:elsewhere (first rows))))
+        "the data carries every candidate — only the PRINT was truncated")
+    (is (str/includes? out "more)")
+        "a truncated list must say it was truncated")
+    (is (some? (re-find #"\(\+\d+ more\)" out))
+        "and by how many, so the reader knows the row is not the whole set")
+    (is (not (str/includes? out "+0 more"))
+        "a row that fits prints no suffix: the annotation carries news only")))

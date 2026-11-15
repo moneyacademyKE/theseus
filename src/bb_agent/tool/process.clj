@@ -1,6 +1,5 @@
 (ns bb-agent.tool.process
-  (:require [babashka.fs :as fs]
-            [babashka.process :as p]
+  (:require [babashka.process :as p]
             [bb-agent.config :as config]
             [bb-agent.tool.common :as common]
             [bb-agent.tool.path :as path]
@@ -124,8 +123,44 @@
 
       :else
       (let [text (slurp (str target))
+            total (count text)
+            budget common/max-doc-chars
+            ;; Output budgeting: the cut is DATA, not a fact the tool keeps to
+            ;; itself. Before this change document_read returned exactly
+            ;; max-doc-chars of a longer file with no marker of any kind, so a
+            ;; 20000-char slice of a 635358-char file was indistinguishable from
+            ;; the whole file — a false-clean payload, measured 2026-11-11 on
+            ;; brain/improvements.md: keys back were :path and :text, and
+            ;; nothing said the read had been cut.
+            ;; Shape from ruslanudintsev-ai/agent-self-learning-core,
+            ;; core/commands/base.py:261 _apply_output_budgets, which appends
+            ;; "... [TRUNCATED {excess} chars by Output Budget. Use specific
+            ;; query/slice] ..." and sets truncated plus _budget_notice with the
+            ;; real total beside what was shown.
+            ;; Two decisions are ours: the marker stays INSIDE the budget, since
+            ;; a notice that pushed the payload past its own ceiling would defeat
+            ;; the point; and the marker names a recovery command, because a
+            ;; count alone tells the reader nothing it can act on. The excess
+            ;; depends on the marker's own length, so the slice is solved by
+            ;; bounded fixed-point iteration and asserted at or under budget by
+            ;; a test rather than trusted.
+            truncated? (> total budget)
+            marker (fn [excess]
+                     (str "\n... [TRUNCATED " excess " of " total " chars by the"
+                          " document_read budget of " budget ". Read the rest:"
+                          " shell sed -n 'A,Bp' " target "] ..."))
+            kept (if truncated?
+                   (loop [k (max 0 (- budget (count (marker 0)))) i 0]
+                     (let [k2 (max 0 (- budget (count (marker (- total k)))))]
+                       (if (or (= k2 k) (>= i 8)) k2 (recur k2 (inc i)))))
+                   total)
             document {:path (str target)
-                      :text (subs text 0 (min (count text) common/max-doc-chars))}]
+                      :text (if truncated?
+                              (str (subs text 0 kept) (marker (- total kept)))
+                              text)
+                      :total-chars total
+                      :shown-chars kept
+                      :truncated truncated?}]
         (common/ok-result "document_read"
                           {:path (str target)
                            :stdout (json/generate-string document)

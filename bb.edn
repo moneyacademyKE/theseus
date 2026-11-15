@@ -23,7 +23,7 @@
      preflight {:doc "Content guard for files leaving the repo. Usage: bb preflight [--strict] <file>..."
                  :requires ([bb-agent.preflight :as pf])
                  :task (System/exit (pf/-main *command-line-args*))}
-     knowledge {:doc "Knowledge-corpus measurement. Usage: bb knowledge prune [dir] [ledger...] | bb knowledge curator [dir] | bb knowledge guards [dir] [--index dir]... | bb knowledge routing | bb knowledge tiers [home]"
+     knowledge {:doc "Knowledge-corpus measurement. Usage: bb knowledge prune [dir] [ledger...] | bb knowledge curator [dir] | bb knowledge guards [dir] [--index dir]... | bb knowledge routing | bb knowledge tiers [home] | bb knowledge appends [home]"
                  :requires ([bb-agent.knowledge :as k])
                  :task (System/exit (k/-main *command-line-args*))}
      notify-listen {:doc "Goal-runner halt->Telegram listener. Usage: bb notify-listen [--port N]"
@@ -35,10 +35,18 @@
      coords {:doc "Coordinate audit: do the file:line cites in brain/*.md resolve? Usage: bb coords [brain-dir] [--index dir]... | bb coords externals [brain-dir] [--fetch]"
              :requires ([bb-agent.coordinates :as coord])
              :task (System/exit (coord/-main *command-line-args*))}
+     context-cost {:doc "What the always-on brain injection costs, per file, biggest first. Report-only: nothing is trimmed. Usage: bb context-cost [brain-dir]"
+                   :requires ([bb-agent.brain :as brain])
+                   :task (System/exit (brain/-main *command-line-args*))}
+     test-roster {:doc "Which test namespaces does any runner actually name? Assigned-vs-executed: a suite no run-tests call names is invisible to every gate while the suite beside it is green. Report-only, never edits bb.edn. Usage: bb test-roster [repo-root]"
+                   :requires ([bb-agent.test-roster :as tr])
+                   :task (System/exit (tr/-main *command-line-args*))}
      goal-liveness {:doc "Dispatch liveness: did a goal's authoring leave a receipt? Usage: bb goal-liveness [goals-root]"
                     :requires ([bb-agent.goal-liveness :as gl])
                     :task (System/exit (gl/-main *command-line-args*))}
-     test:goal {:doc "Run goal-runner unit tests."
+     test {:doc "Run all registered tests."
+         :depends [test:e2e:all]}
+   test:goal {:doc "Run goal-runner unit tests."
                  :task (shell "bb" "-m" "bb-agent.goal.run-tests")}
      test:bb-agent {:doc "Run bb_agent unit tests (notify listener, brain, autonomy)."
                     :extra-paths ["test"]
@@ -72,8 +80,10 @@
                                [bb-agent.brief-universe-test]
                                [bb-agent.tool-ledger-test]
                                [bb-agent.mcp-client-test]
+                               [bb-agent.test-roster-test]
                                [bb-agent.browser-tool-test]
-                               [bb-agent.a2a-client-test])
+                               [bb-agent.a2a-client-test]
+                               [bb-agent.hot-reload-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -104,8 +114,10 @@
                                              'bb-agent.brief-universe-test
                                              'bb-agent.tool-ledger-test
                                              'bb-agent.mcp-client-test
+                                             'bb-agent.test-roster-test
                                              'bb-agent.browser-tool-test
-                                             'bb-agent.a2a-client-test)]
+                                             'bb-agent.a2a-client-test
+                                             'bb-agent.hot-reload-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"

@@ -62,7 +62,13 @@
     (is (= :forbidden (k/tier-of "config.edn")))
     (is (= :strict (k/tier-of "brain/improvements.md")))
     (is (= :soft (k/tier-of "state/usage.edn")))
-    (is (= :unclassified (k/tier-of "src/bb_agent/knowledge.clj")))))
+    ;; SUPERSEDED 2026-11-12: this asserted :unclassified for
+    ;; src/bb_agent/knowledge.clj because that file WAS unclassified. It is
+    ;; an :instrument now (nmarchand73/ai-factory: a system must not tune its
+    ;; own grader), so the honest assertion is the new contract, plus a file
+    ;; that is genuinely neither - an ordinary source file.
+    (is (= :instrument (k/tier-of "src/bb_agent/knowledge.clj")))
+    (is (= :unclassified (k/tier-of "src/bb_agent/brief.clj")))))
 
 (deftest check-write-test
   (testing "forbidden always throws"
@@ -1027,3 +1033,457 @@
       (is (str/includes? out "MISSING"))
       (is (str/includes? out "UNBASELINED"))
       (is (str/includes? out "not checked")))))
+
+;; ---------------------------------------------------------------------
+;; 2026-11-12 — the tools that PRODUCE this lane's verdicts were :unclassified,
+;; so editing a grader left no trace and no snapshot. Red first.
+;;
+;; Source, level 2: nmarchand73/ai-factory
+;; * https://github.com/nmarchand73/ai-factory/blob/main/docs/EVOLUTION.md#L33-L35
+;;   "Protected (the plan is rejected if it targets them): eval-judge,
+;;   retrospective, factory/bin/*, evals/criteria.json, factory/config.json.
+;;   A system must not tune its own grader."
+;; * https://github.com/nmarchand73/ai-factory/blob/main/factory/bin/evolve#L43
+;;   PROTECTED_AGENTS = {"eval-judge", "retrospective"}, enforced at #L370-L371
+;;   and #L387 — a change targeting a protected path is a plan-check ERROR.
+;;
+;; Measured live before writing this, not argued:
+;;   (k/tier-of "src/bb_agent/coordinates.clj") -> :unclassified
+;;   (k/tier-of "src/bb_agent/knowledge.clj")   -> :unclassified
+;;   (k/tier-of "src/bb_agent/preflight.clj")   -> :unclassified
+;; and `guard-write!` therefore returned {:tier :unclassified :verdict :allowed
+;; :snapshot nil} for all three: a grader edit moved bytes with no pre-write copy
+;; and no classification. The cost was already paid twice — on 2026-11-09 an edit
+;; to coordinates.clj moved `bb knowledge guards` from G = 8/29 to G = 7/29 inside
+;; the same turn that reported both, and on 2026-11-11 the first test-roster probe
+;; reported five real suites as NEVER-RUN because the instrument was wrong.
+;;
+;; Scope, deliberately narrower than the source: we SNAPSHOT and NAME instruments,
+;; we do not block writes to them. ai-factory refuses its own loop from touching a
+;; grader and then says "we fixed those by hand" — a human turn legitimately fixes
+;; a misjudging grader, so a gate that refused would strand the fix. Same call as
+;; 2026-10-12: a guard that rejects truthful provenance is worse than a report that
+;; names it.
+
+(deftest instrument-tier-names-the-tools-that-produce-verdicts-test
+  (testing "a measurement tool is :instrument, not :unclassified"
+    (is (= :instrument (k/tier-of "src/bb_agent/coordinates.clj")))
+    (is (= :instrument (k/tier-of "src/bb_agent/knowledge.clj")))
+    (is (= :instrument (k/tier-of "src/bb_agent/preflight.clj")))
+    (is (= :instrument (k/tier-of "src/bb_agent/test_roster.clj")))
+    (is (= :instrument (k/tier-of "src/bb_agent/goal_liveness.clj"))))
+  (testing "the tiers that already existed did not move (no-regression)"
+    (is (= :forbidden (k/tier-of "brain/rules.clj")))
+    (is (= :forbidden (k/tier-of "config.edn")))
+    (is (= :strict (k/tier-of "brain/improvements.md")))
+    (is (= :soft (k/tier-of "state/usage.edn")))
+    (is (= :unclassified (k/tier-of "src/bb_agent/brief.clj"))
+        "an ordinary source file is not an instrument"))
+  (testing ":forbidden still wins over :instrument — the law is not downgraded"
+    (is (= :forbidden (k/tier-of "brain/rules.clj")))
+    (is (thrown? Exception (k/check-write! "brain/rules.clj" {:justification "please"})))))
+
+(deftest guard-write-snapshots-an-instrument-test
+  (let [home (str (fs/create-temp-dir {:prefix "k-instrument"}))]
+    (fs/create-dirs (fs/path home "src" "bb_agent"))
+    (spit (str home "/src/bb_agent/coordinates.clj") "(ns coordinates)\n;; v1\n")
+    (with-redefs [config/home (constantly home)]
+      (let [v (k/guard-write! (str home "/src/bb_agent/coordinates.clj"))]
+        (is (= :allowed (:verdict v))
+            "an instrument is NOT blocked — a human turn fixes graders by hand")
+        (is (= :instrument (:tier v)))
+        (is (:snapshot v) "a grader edit leaves a pre-write copy behind")
+        (is (= "(ns coordinates)\n;; v1\n" (slurp (:snapshot v)))
+            "the snapshot holds the bytes the verdicts were measured under"))
+      (testing "`..` cannot dodge the instrument tier either"
+        (let [v (k/guard-write! (str home "/src/bb_agent/../bb_agent/coordinates.clj"))]
+          (is (= :instrument (:tier v))))))
+    (fs/delete-tree (fs/path home))))
+
+(deftest tiers-report-names-the-instruments-test
+  (testing "the receipt lists the instruments beside the :forbidden verdicts"
+    (let [out (k/tiers-report (k/tier-digests "/tmp/no-such-home-xyz-1112") nil
+                              (k/instrument-rows "/tmp/no-such-home-xyz-1112"))]
+      (is (str/includes? out "instruments:"))
+      (is (str/includes? out "src/bb_agent/coordinates.clj"))
+      (is (str/includes? out "a system must not tune its own grader"))
+      (is (str/includes? out "named and snapshotted, never blocked")
+          "the report states its own scope, so a reader cannot read it as a gate")))
+  (testing "a missing instrument file is MISSING, never silently absent"
+    (let [home (str (fs/create-temp-dir {:prefix "k-inst-missing"}))
+          rows (k/instrument-rows home)]
+      (is (seq rows) "the rows exist even when the files do not")
+      (is (= :missing (:verdict (first rows))))
+      (is (nil? (:digest (first rows))))
+      (fs/delete-tree (fs/path home)))))
+;; ------------------------------------------------ append integrity (2026-11-13)
+;; Source: lucamartins/ouroboros `scripts/textdiff.mjs:16-95` (`isInsertion` +
+;; `joinsExisting`), read this turn. Their question is "does this edit need
+;; approval?"; ours is narrower and about our own append-only ledgers: "did
+;; anything they already said disappear?" Red first — these failed at analysis
+;; with `Unable to resolve symbol: k/append-rows` before the fns existed.
+
+(deftest append-integrity-insertion-only-test
+  (let [home (str (fs/create-temp-dir {:prefix "k-append-ok"}))
+        brain (fs/path home "brain")]
+    (fs/create-dirs brain)
+    (spit (str (fs/path brain "wins.md")) "## entry A\n- evidence: a\n\n## entry B\n- evidence: b\n")
+    (spit (str (fs/path brain "wins.md.bak-20261113")) "## entry A\n- evidence: a\n")
+    (spit (str (fs/path brain "improvements.md")) "## x\n- act: knowledge\n")
+    (testing "a pure append reads as INSERTION-ONLY"
+      (let [rows (k/append-rows home)]
+        (is (= 1 (count rows)))
+        (is (= :insertion-only (:verdict (first rows))))
+        (is (nil? (:first-lost (first rows))))))
+    (testing "the report says so and prints the partition it counted"
+      (let [out (str/join "\n" (k/append-report (k/append-rows home)))]
+        (is (str/includes? out "insertion-only 1"))
+        (is (str/includes? out "lost 0"))
+        (is (not (str/includes? out "UNVERIFIED")))))
+    (fs/delete-tree (fs/path home))))
+
+(deftest append-integrity-lost-line-test
+  (let [home (str (fs/create-temp-dir {:prefix "k-append-lost"}))
+        brain (fs/path home "brain")]
+    (fs/create-dirs brain)
+    ;; The real 2026-11-13 shape: two whole entries in wins.md.bak-20261012
+    ;; that no later snapshot and no live file contains.
+    (spit (str (fs/path brain "wins.md")) "## 2026-10-13T06:10Z — the prune landed\n- evidence: page-fires\n")
+    (spit (str (fs/path brain "wins.md.bak-20261012"))
+          "## 2026-09-27 — six scout recommendations implemented\n- evidence: commit 8e589b4; suite 133 tests\n\n## 2026-10-13T06:10Z — the prune landed\n- evidence: page-fires\n")
+    (spit (str (fs/path brain "improvements.md")) "## x\n")
+    (testing "a line with no live analogue anywhere is LOST, and the report quotes it"
+      (let [rows (k/append-rows home)
+            r (first rows)]
+        (is (= :lost (:verdict r)))
+        ;; SUPERSEDED 2026-11-13: this asserted (= 2 (:lost-count r)) from my
+        ;; expectation of the fixture, not from a measurement of it. The real
+        ;; answer is 3 — the snapshot holds two absent headings AND one absent
+        ;; evidence bullet. The code counted correctly; the assertion was
+        ;; wrong. Corrected rather than the code bent to fit the guess.
+        (is (= 3 (:lost-count r)))
+        (is (str/includes? (:first-lost r) "2026-09-27"))))
+    (testing "LOST rows sort ahead of clean ones — a finding is not buried"
+      (let [out (str/join "\n" (k/append-report (k/append-rows home)))]
+        (is (str/includes? out "lost 1"))
+        (is (< (str/index-of out "LOST") (str/index-of out "verdicts:")))
+        (is (str/includes? out "gone:"))))
+    (fs/delete-tree (fs/path home))))
+
+(deftest append-integrity-reworded-vs-lost-test
+  (let [home (str (fs/create-temp-dir {:prefix "k-append-reword"}))
+        brain (fs/path home "brain")]
+    (fs/create-dirs brain)
+    (spit (str (fs/path brain "improvements.md"))
+          "- found by running the audit on prose written ten minutes earlier: fixing absolute paths left bare basenames resolving through the goals/make-rsi-do-this-983334/act.sh:24 first-match bucket\n")
+    ;; Same sentence with a bare basename: the 2026-10-19 rewording, whose two
+    ;; sides share a 212-char prefix (measured this turn).
+    (spit (str (fs/path brain "improvements.md.bak-20261019"))
+          "- found by running the audit on prose written ten minutes earlier: fixing absolute paths left bare basenames resolving through the act.sh:24 first-match bucket\n")
+    (spit (str (fs/path brain "wins.md")) "## a\n")
+    (testing "a line rewritten in place is REWORDED, not LOST"
+      (let [r (first (k/append-rows home))]
+        (is (= :reworded (:verdict r)))
+        (is (nil? (:first-lost r)))
+        (is (= 1 (:lost-count r)))))
+    (testing "the 24-char prefix bar is above the markdown collisions it must not trip on"
+      ;; `## 2026-1` is shared by every dated heading of a month (8 chars) and
+      ;; `- evidence: ` by nearly every ledger bullet (12 chars); a bar that
+      ;; low would call an unrelated heading a rewording and hide a deletion.
+      (is (>= k/reword-prefix-chars 24))
+      (let [home2 (str (fs/create-temp-dir {:prefix "k-append-collide"}))
+            b2 (fs/path home2 "brain")]
+        (fs/create-dirs b2)
+        (spit (str (fs/path b2 "wins.md")) "## 2026-10-14T06:50Z — not found is not zero\n")
+        (spit (str (fs/path b2 "wins.md.bak-20261012")) "## 2026-10-13T06:10Z — the prune landed\n")
+        (spit (str (fs/path b2 "improvements.md")) "## x\n")
+        (is (= :lost (:verdict (first (k/append-rows home2))))
+            "a shared `## 2026-1` prefix must not read as a rewording")
+        (fs/delete-tree (fs/path home2))))
+    (fs/delete-tree (fs/path home))))
+
+(deftest append-integrity-no-snapshots-is-unverified-test
+  (let [home (str (fs/create-temp-dir {:prefix "k-append-none"}))
+        brain (fs/path home "brain")]
+    (fs/create-dirs brain)
+    (spit (str (fs/path brain "wins.md")) "## a\n")
+    (spit (str (fs/path brain "improvements.md")) "## x\n")
+    (testing "zero snapshots compares zero pairs — and says so instead of passing"
+      (let [rows (k/append-rows home)
+            out (str/join "\n" (k/append-report rows))]
+        (is (= 0 (count rows)))
+        (is (str/includes? out "UNVERIFIED"))
+        (is (str/includes? out "not evidence of a clean corpus"))))
+    (testing "a missing ledger is LIVE-ABSENT, never a clean verdict"
+      (let [home2 (str (fs/create-temp-dir {:prefix "k-append-absent"}))
+            b2 (fs/path home2 "brain")]
+        (fs/create-dirs b2)
+        (spit (str (fs/path b2 "wins.md.bak-20261113")) "## a\n")
+        (spit (str (fs/path b2 "improvements.md")) "## x\n")
+        (let [r (first (k/append-rows home2))]
+          (is (= :live-absent (:verdict r)))
+          (is (nil? (:live-lines r))))
+        (fs/delete-tree (fs/path home2))))
+    (fs/delete-tree (fs/path home))))
+
+(deftest append-integrity-cli-test
+  (let [home (str (fs/create-temp-dir {:prefix "k-append-cli"}))
+        brain (fs/path home "brain")]
+    (fs/create-dirs brain)
+    (spit (str (fs/path brain "wins.md")) "## 2026-11-13 — live\n")
+    (spit (str (fs/path brain "wins.md.bak-20261012")) "## 2026-09-27 — gone\n\n## 2026-11-13 — live\n")
+    (spit (str (fs/path brain "improvements.md")) "## x\n")
+    (testing "`bb knowledge appends <home>` prints the finding and exits 0 — report, never gate"
+      (let [out (with-out-str (is (= 0 (k/-main ["appends" home]))))]
+        (is (str/includes? out "append integrity:"))
+        (is (str/includes? out "LOST"))
+        (is (str/includes? out "2026-09-27"))
+        (is (str/includes? out "negative scope"))))
+    (testing "a missing home exits 2 rather than reporting a clean zero"
+      (is (= 2 (k/-main ["appends" "/tmp/no-such-home-xyz-1113"]))))
+    (testing "the usage line advertises the subcommand"
+      (let [out (with-out-str (is (= 2 (k/-main []))))]
+        (is (str/includes? out "appends"))))
+    (fs/delete-tree (fs/path home))))
+
+(defn mk-home
+  "A throwaway home holding one append-only ledger, one snapshot that lost a
+   line, and optionally a waiver file."
+  [prefix waiver-edn]
+  (let [home (str (fs/create-temp-dir {:prefix prefix}))
+        brain (fs/path home "brain")]
+    (fs/create-dirs brain)
+    (spit (str (fs/path brain "wins.md")) "## 2026-11-13 — live\n")
+    (spit (str (fs/path brain "wins.md.bak-20261012")) "## 2026-09-27 — gone\n\n## 2026-11-13 — live\n")
+    (spit (str (fs/path brain "improvements.md")) "## x\n")
+    (when waiver-edn
+      (spit (str (fs/path brain "append-waivers.edn")) waiver-edn))
+    home))
+
+(deftest append-waivers-read-status-test
+  (testing "an absent waiver file is :missing with an empty set — not-found is not zero"
+    (let [home (mk-home "k-waive-missing" nil)
+          r (k/read-waivers home)]
+      (is (= :missing (:status r)))
+      (is (= {} (:waivers r)))
+      (is (nil? (:detail r)))
+      (fs/delete-tree (fs/path home))))
+  (testing "a readable waiver map is :read with string keys and values"
+    (let [home (mk-home "k-waive-read" "{\"wins.md.bak-20261012\" \"deliberate cleanup 2026-10-09\"}")
+          r (k/read-waivers home)]
+      (is (= :read (:status r)))
+      (is (= 1 (count (:waivers r))))
+      (is (str/includes? (get (:waivers r) "wins.md.bak-20261012") "deliberate"))
+      (fs/delete-tree (fs/path home))))
+  (testing "malformed EDN is :unreadable with a detail, never a silent empty map"
+    (let [home (mk-home "k-waive-bad" "{this is not edn")
+          r (k/read-waivers home)]
+      (is (= :unreadable (:status r)))
+      (is (= {} (:waivers r)) "nothing is waived when the file could not be read")
+      (is (seq (:detail r)) "and the reason is carried, not swallowed")
+      (fs/delete-tree (fs/path home))))
+  (testing "a non-map EDN value is :unreadable"
+    (let [home (mk-home "k-waive-vec" "[\"wins.md.bak-20261012\"]")
+          r (k/read-waivers home)]
+      (is (= :unreadable (:status r)))
+      (is (= {} (:waivers r)))
+      (fs/delete-tree (fs/path home)))))
+
+(deftest append-waivers-mark-lost-only-test
+  (testing "a waived LOST row becomes :waived and keeps its measurement"
+    (let [rows [{:verdict :lost :snapshot "/x/wins.md.bak-20261012"
+                 :lost-count 2 :first-lost "## 2026-09-27 — gone"}]
+          out (k/apply-waivers rows {"wins.md.bak-20261012" "deliberate cleanup"})
+          r (first out)]
+      (is (= :waived (:verdict r)))
+      (is (= "deliberate cleanup" (:waiver r)))
+      (is (= 2 (:lost-count r)) "the measurement survives the waiver")
+      (is (= "## 2026-09-27 — gone" (:first-lost r)))))
+  (testing "an unwaived LOST row stays LOST"
+    (let [rows [{:verdict :lost :snapshot "/x/wins.md.bak-20261012" :lost-count 2}]
+          r (first (k/apply-waivers rows {"other.bak" "reason"}))]
+      (is (= :lost (:verdict r)))
+      (is (nil? (:waiver r)))))
+  (testing "only :lost rows can be waived — an insertion-only row has nothing to waive"
+    (let [rows [{:verdict :insertion-only :snapshot "/x/wins.md.bak-1"}
+                {:verdict :reworded :snapshot "/x/wins.md.bak-2"}
+                {:verdict :live-absent :snapshot "/x/wins.md.bak-3"}]
+          w {"wins.md.bak-1" "r1" "wins.md.bak-2" "r2" "wins.md.bak-3" "r3"}
+          out (k/apply-waivers rows w)]
+      (is (= [:insertion-only :reworded :live-absent] (mapv :verdict out)))
+      (is (every? nil? (map :waiver out)))))
+  (testing "a waiver never hides a NEW loss in the same snapshot"
+    ;; The row still carries :lost-count and :first-lost, so a reader can see
+    ;; the loss changed even though the verdict is waived.
+    (let [rows [{:verdict :lost :snapshot "/x/wins.md.bak-20261012"
+                 :lost-count 5 :first-lost "## something new"}]
+          r (first (k/apply-waivers rows {"wins.md.bak-20261012" "old reason"}))]
+      (is (= :waived (:verdict r)))
+      (is (= 5 (:lost-count r)))
+      (is (= "## something new" (:first-lost r))))))
+
+(deftest append-waivers-report-test
+  (testing "the report separates waived from lost and prints the reason"
+    (let [home (mk-home "k-waive-report" "{\"wins.md.bak-20261012\" \"deliberate cleanup 2026-10-09\"}")
+          wi (k/read-waivers home)
+          rows (k/apply-waivers (k/append-rows home) (:waivers wi))
+          out (str/join "\n" (k/append-report-waived rows wi))]
+      (is (str/includes? out "waived 1"))
+      (is (str/includes? out "lost 0"))
+      (is (str/includes? out "WAIVED"))
+      (is (str/includes? out "deliberate cleanup 2026-10-09"))
+      (is (str/includes? out "waivers: brain/append-waivers.edn read, 1 entry(ies)"))
+      (fs/delete-tree (fs/path home))))
+  (testing "with no waiver file the report says nothing is waived, not that all is clean"
+    (let [home (mk-home "k-waive-noreport" nil)
+          wi (k/read-waivers home)
+          rows (k/apply-waivers (k/append-rows home) (:waivers wi))
+          out (str/join "\n" (k/append-report-waived rows wi))]
+      (is (str/includes? out "lost 1"))
+      (is (str/includes? out "waived 0"))
+      (is (str/includes? out "not present, so nothing is waived"))
+      (fs/delete-tree (fs/path home))))
+  (testing "an unreadable waiver file is named in the report rather than read as empty"
+    (let [home (mk-home "k-waive-unreadable" "{broken")
+          wi (k/read-waivers home)
+          rows (k/apply-waivers (k/append-rows home) (:waivers wi))
+          out (str/join "\n" (k/append-report-waived rows wi))]
+      (is (str/includes? out "UNREADABLE"))
+      (is (str/includes? out "nothing is waived rather than waived-blindly"))
+      (is (str/includes? out "lost 1"))
+      (fs/delete-tree (fs/path home)))))
+
+(deftest append-waivers-cli-test
+  (testing "`bb knowledge appends <home>` reads the waiver file and prints the waiver scope"
+    (let [home (mk-home "k-waive-cli" "{\"wins.md.bak-20261012\" \"deliberate cleanup\"}")
+          out (with-out-str (is (= 0 (k/-main ["appends" home]))))]
+      (is (str/includes? out "waived 1"))
+      (is (str/includes? out "WAIVED"))
+      (is (str/includes? out "waivers: brain/append-waivers.edn"))))
+  (testing "exit stays 0 — a waiver is a report annotation, never a gate")
+  (let [home (mk-home "k-waive-cli2" nil)]
+    (with-out-str (is (= 0 (k/-main ["appends" home]))))))
+
+
+;; ------------------------------------------------ absent vs unknown (2026-11-14)
+;; Source: wilbur-labs/Agora `backend/agora/fsprobe.py` — "Only FileNotFoundError
+;; is absence. Every other OSError is unknown." Measured before any code moved, on
+;; this machine, against the report that names our own graders:
+;;   $ THESEUS_HOME=/tmp/tiers-home bb knowledge tiers   # coordinates.clj chmod 000
+;;   ----- Error -----  Type: java.nio.file.AccessDeniedException
+;; and NO census at all, not even the four readable instruments. The predicates we
+;; chain do not even agree with each other: `fs/exists?` is FALSE for a file under
+;; an unreadable directory while `fs/regular-file?` is TRUE for a mode-000 file,
+;; so a fallback chain of them cannot recover a distinction each link already lost.
+;; NOT taken from Agora: its Environment protocol (run + probe), the Windows
+;; launcher, or the symlink-following second stat.
+;;
+;; Three real fixture bugs in my first draft of these tests, all caught by running
+;; them rather than by reading them: an 8-char mode string ("Invalid mode" — the
+;; POSIX string form is exactly 9), locking a file BEFORE writing it
+;; (NoSuchFileException), and `(fs/create-dirs (fs/path <the FILE path>))` which
+;; turned the instrument into a directory ("Is a directory"). Corrected here.
+
+(defn- lock!
+  "Set a path's POSIX mode, returning the path as a string. The mode is a STRING
+   of exactly 9 chars (`fs/set-posix-file-permissions` 2-arity in this bb — a
+   3-arity call throws ArityException, a permission SET throws, and 8 dashes
+   throws `Invalid mode`; all three measured)."
+  [path mode]
+  (fs/set-posix-file-permissions (fs/path (str path)) mode)
+  (str path))
+
+(deftest probe-path-keeps-absent-and-unknown-apart-test
+  (let [d (str (fs/create-temp-dir {:prefix "k-probe"}))
+        real (str (fs/path d "real.md"))
+        _ (spit real "# x\n")
+        dir (str (fs/path d "sub"))
+        child (str (fs/path dir "child"))
+        _ (fs/create-dirs (fs/path child))
+        inside (str (fs/path child "in.md"))
+        _ (spit inside "# y\n")
+        absent (str (fs/path d "nope.md"))]
+    (testing "a present file, a dir and a genuine absence each get their own answer"
+      (is (= :file (:kind (k/probe-path real))))
+      (is (= :dir (:kind (k/probe-path d))))
+      (is (= :absent (:kind (k/probe-path absent)))
+          "a definite negative, and the only one that licenses 'create it'")
+      (is (= :absent (:kind (k/probe-path (str d "/a/b/c/deep/nope.md"))))
+          "an absent file under readable parents is still absent"))
+    (testing "an unreadable PARENT makes the child unknown, not absent"
+      (lock! dir "---------")
+      (is (= :unknown (:kind (k/probe-path inside)))
+          "stat cannot answer; that is not the same as 'nothing is there'")
+      (is (= :unknown (:kind (k/probe-path (str child "/nope.md"))))
+          "nor is it absence-of-the-child — either way the process could not find out")
+      (is (some? (:detail (k/probe-path inside)))
+          "keeps the cause so a caller names it instead of guessing"))
+    (testing "a probe never raises — the observation failing is one of its outcomes"
+      (is (map? (k/probe-path inside)))
+      (is (map? (k/probe-path (str d "/does/not/exist")))))
+    (lock! dir "rwx------")
+    (fs/delete-tree (fs/path d))))
+
+(deftest sha256-verbatim-distinguishes-an-unreadable-file-from-an-absent-one-test
+  (let [d (str (fs/create-temp-dir {:prefix "k-sha3"}))
+        real (str (fs/path d "r.clj"))
+        _ (spit real "(ns r)\n")
+        locked (str (fs/path d "l.clj"))
+        _ (spit locked "(ns l)\n")
+        _ (lock! locked "---------")
+        absent (str (fs/path d "gone.clj"))]
+    (testing "a mode-000 file STATS fine, so the read is the layer that must not throw"
+      (is (= :file (:kind (k/probe-path locked)))))
+    (testing "sha256-verbatim reports the three states as data"
+      (is (= :file (:kind (k/sha256-verbatim real))))
+      (is (= 64 (count (:digest (k/sha256-verbatim real)))))
+      (is (= :absent (:kind (k/sha256-verbatim absent))))
+      (is (= :unknown (:kind (k/sha256-verbatim locked)))
+          "not-found and could-not-read call for opposite responses, never one nil")
+      (is (str/includes? (str (:detail (k/sha256-verbatim locked))) "unreadable")))
+    (testing "the nil-only form still holds for callers that do not need the split"
+      (is (= 64 (count (k/sha256-file real))))
+      (is (nil? (k/sha256-file absent)))
+      (is (nil? (k/sha256-file locked))
+          "it no longer THROWS on a file it cannot read — that is what ate the census"))
+    (lock! locked "rw-------")
+    (fs/delete-tree (fs/path d))))
+
+(deftest instrument-rows-reports-an-unreadable-grader-test
+  (let [d (str (fs/create-temp-dir {:prefix "k-inst-unread"}))
+        inst (str (fs/path d "theseus" "src" "bb_agent" "coordinates.clj"))
+        _ (fs/create-dirs (fs/path d "theseus" "src" "bb_agent"))
+        _ (spit inst "(ns coordinates)\n")
+        _ (lock! inst "---------")
+        rows (k/instrument-rows d)
+        row (first (filter #(= "theseus/src/bb_agent/coordinates.clj" (:rel %)) rows))]
+    (testing "a mode-000 instrument is :unreadable, never :missing"
+      (is (= :unreadable (:verdict row))
+          "absent says 'create it'; unreadable says 'fix the permission'")
+      (is (nil? (:digest row)))
+      (is (some? (:detail row)) "names the cause"))
+    (testing "one unreadable file does not eat the census of the other four"
+      (is (= 5 (count rows)))
+      (is (= 4 (count (filter #(= :missing (:verdict %)) rows)))))
+    (lock! inst "rw-------")
+    (fs/delete-tree (fs/path d))))
+
+(deftest tiers-cli-survives-an-unreadable-instrument-test
+  (let [d (str (fs/create-temp-dir {:prefix "k-tiers-unread"}))
+        inst (str (fs/path d "theseus" "src" "bb_agent" "knowledge.clj"))
+        _ (fs/create-dirs (fs/path d "theseus" "src" "bb_agent"))
+        _ (spit inst "(ns knowledge)\n")
+        _ (lock! inst "---------")
+        out (binding [k/*tiers-baseline* (str (fs/path d "brain" "tier-baseline.edn"))]
+              (with-out-str (is (= 1 (k/-main ["tiers" d])))))]
+    (testing "the CLI prints a census instead of a stack trace"
+      (is (str/includes? out "INSTRUMENT UNREADABLE"))
+      (is (str/includes? out "theseus/src/bb_agent/knowledge.clj"))
+      (is (str/includes? out "instruments:")
+          "the report still runs; the unreadable row is inside it")
+      (is (str/includes? out "fix the permission")
+          "names the response that absent does not license")
+      (is (not (str/includes? out "----- Error"))
+          "no exception escapes a report whose whole job is to observe"))
+    (lock! inst "rw-------")
+    (fs/delete-tree (fs/path d))))

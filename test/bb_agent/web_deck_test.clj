@@ -261,3 +261,35 @@
         (let [own (web/app {:request-method :get :uri uri :headers {}})]
           (is (= 200 (:status own)) uri)
           (is (= "no-cache" (get-in own [:headers "Cache-Control"])) uri))))))
+
+(deftest out-of-process-rotation-kills-sessions
+  (testing "a password record rewritten by another process revokes this
+             process's live sessions at the next check (issue #38)"
+    (let [record (java.io.File. (str (auth/password-file)))]
+      (is (true? (auth/session-live? @token)) "precondition: token live")
+      (try
+        ;; the other process: writes a fresh record and never touches
+        ;; this process's session atom. Cheap iterations are fine —
+        ;; login honors the record's own iteration count.
+        (spit record (pr-str (auth/hash-password "rotated-x9" 1000)))
+        (.setLastModified record (+ (.lastModified record) 5000))
+        (is (false? (auth/session-live? @token))
+            "the live token must die on the next session check")
+        (is (= 401 (:status (web/app {:request-method :get :uri "/api/status"
+                                      :headers {"authorization"
+                                                (str "Bearer " @token)}}))))
+        (let [fresh (auth/login! "rotated-x9")]
+          (is (map? fresh) "login with the new secret works")
+          (is (= 200 (:status (web/app {:request-method :get :uri "/api/status"
+                                        :headers {"authorization"
+                                                  (str "Bearer " (:token fresh))}}))))
+          ;; the durable table must not resurrect the dead token
+          (auth/load-sessions!)
+          (is (false? (auth/session-live? @token)) "restart must not revive it")
+          (is (true? (auth/session-live? (:token fresh)))
+              "restart keeps the token minted under the live secret"))
+        (finally
+          ;; restore the shared fixture state for the rest of the suite
+          (auth/reset-login-failures!)
+          (auth/set-password! "deck-pass")
+          (reset! token (:token (auth/login! "deck-pass"))))))))

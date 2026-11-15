@@ -166,6 +166,68 @@
        distinct
        sort))
 
+(defn- sha256-file
+  "sha256 of a file's bytes, as 64 hex chars, or nil when it cannot be read.
+   Content identity, because two paths holding the same bytes are one file for
+   the purposes of a verdict — measured 2026-11-09: a release build under
+   $THESEUS_HOME/build made 130 of 164 `:ambiguous` rows in `bb coords` carry
+   the value 2, every one a FULLY PINNED cite, so `bb knowledge guards` printed
+   G = 1/29 (3%) where excluding build/ printed G = 2/29. The 2026-11-01 fix
+   deduped path STRINGS (one file walked twice through nested index dirs); two
+   different paths with identical bytes survive that. Shape stolen from
+   Aatzer0/dsh-experience lib/evidence.js — \"the result fingerprint (same
+   artifact, green tests) outranks step similarity\" — identity is the content,
+   not the path or the text that produced it.
+   nil is returned rather than thrown: an unreadable file keeps its own identity
+   (failing open here would merge unreadable files into one bucket)."
+  [f]
+  (try
+    (let [md (java.security.MessageDigest/getInstance "SHA-256")
+          bs (java.nio.file.Files/readAllBytes (fs/path (str f)))]
+      (apply str (map #(format "%02x" %) (.digest md bs))))
+    (catch Exception _ nil)))
+(defn- pick
+  "Resolve a cited RELATIVE path against the index, and report how much choice
+   the answer involved. Returns {:path :candidates :immaterial}:
+     :path        the file resolved to (nil = nothing matched);
+     :candidates  how many DISTINCT files the deciding set held;
+     :immaterial  how many byte-identical copies collapsed into it (nil when 0).
+
+   Preference order is unchanged from the old `resolve-one` body (most-specific
+   suffix match, then a unique basename, then the first basename) — what changed
+   is that the deciding set is grouped by CONTENT before it is counted, so a
+   copy of a file is not a second candidate: a copy cannot change the verdict
+   about the file.
+
+   `digests` is an optional path->sha256 cache; nil means digest on demand, so a
+   caller resolving one cite does not pay for the whole index. An unreadable
+   file keeps its own identity (failing open here would merge unreadable files).
+
+   `:immaterial` is reported, never swallowed: a reader is entitled to know that
+   the citation had several paths to choose from and that the choice could not
+   have mattered. It is NOT a claim the copies are harmless — a release build
+   inside the index still means the audit may have measured a copy rather than
+   the live file, which is why the report's negative scope says so."
+  [cited indexed by-base digests]
+  (let [base (fs/file-name (fs/path cited))
+        tail (str "/" cited)
+        suffix (filterv #(str/ends-with? % tail) indexed)
+        names (get by-base base [])
+        deciding (cond (seq suffix) suffix
+                       (= 1 (count names)) names
+                       :else names)
+        n (count deciding)]
+    (if (<= n 1)
+      {:path (first deciding) :candidates n :immaterial nil}
+      (let [groups (vals (group-by #(or (get digests %) (sha256-file %)
+                                        (str "unreadable:" %))
+                                   deciding))
+            reps (mapv first (sort-by first groups))
+            immat (when (= 1 (count reps)) (reduce max 0 (map count groups)))]
+        {:path (first (sort reps))
+         :candidates (count reps)
+         :immaterial immat}))))
+
 (defn- resolve-one
   "Find the file a cited RELATIVE path names — an absolute cite is checked
    directly by `audit` and never comes here, because basename-matching an
@@ -177,13 +239,7 @@
         negative scope rather than hidden behind an ambiguity flag.
    nil when nothing matches: that is a dangling coordinate."
   [cited indexed by-base]
-  (let [base (fs/file-name (fs/path cited))
-        tail (str "/" cited)
-        suffix (filterv #(str/ends-with? % tail) indexed)
-        names (get by-base base [])]
-    (or (first suffix)
-        (when (= 1 (count names)) (first names))
-        (first names))))
+  (:path (pick cited indexed by-base nil)))
 
 ;; ---------------------------------------------------------------- claim-cite
 ;; The house shape `path.ext:LINE` — `symbol`: a coordinate with the claim it
@@ -302,6 +358,14 @@
                   (if (= :drifted (:kind cl))
                     (str " — the symbol IS in that file at line "
                          (str/join ", " (take 6 (:elsewhere cl)))
+                         ;; A truncated list names what it dropped (2026-11-11):
+                         ;; 10 of 31 live rows carry more than 6 candidate lines
+                         ;; (max 19), so a re-pin looked exhaustive when it was
+                         ;; not. The :sources row 290 lines below already did
+                         ;; this; the rule is CLE's _budget_notice, which prints
+                         ;; total_count beside shown_count.
+                         (when (> (count (:elsewhere cl)) 6)
+                           (str " (+" (- (count (:elsewhere cl)) 6) " more)"))
                          ", so this is a stale number, not a false claim")
                     (str " — and the symbol appears nowhere in that file, so the"
                          " claim is unsupported")))))
@@ -334,6 +398,9 @@
   ([dir index-dirs {:keys [root]}]
    (let [indexed (index-files index-dirs)
          by-base (group-by #(fs/file-name (fs/path %)) indexed)
+         ;; one digest per indexed file, computed once per audit rather than
+         ;; once per citation: the whole point is that identity is content.
+         digests (into {} (map (fn [f] [f (sha256-file f)])) indexed)
          pages (md-pages dir)
          rows (for [page pages
                     :let [rel (if root (str/replace page (str root "/") "") page)]
@@ -356,7 +423,8 @@
                                   direct (when (str/starts-with? cited "/")
                                            (let [q (fs/path cited)]
                                              (when (fs/regular-file? q) (str q))))
-                                  f (or direct (resolve-one cited indexed by-base))
+                                  picked (pick cited indexed by-base digests)
+                                  f (or direct (:path picked))
                                   n (when f (count (str/split-lines (slurp f))))
                                   ext (fs/extension (fs/path cited))
                                   ;; A resolution is a GUESS when nothing
@@ -375,14 +443,15 @@
                                   ;; suffix rule and the basename rule, so
                                   ;; "the suffix rule fired" is not the same
                                   ;; as "one file was pinned".
-                                  suff (filterv #(str/ends-with? % (str "/" cited)) indexed)
-                                  cands (cond (= 1 (count suff)) 1
-                                              (> (count suff) 1) (count suff)
-                                              :else (count (get by-base (fs/file-name (fs/path cited)) [])))
+                                  cands (:candidates picked)
+                                  immat (:immaterial picked)
                                   guess? (and (nil? direct) (> cands 1))]
+
                               (cond-> (assoc r :resolved f :lines n)
                                 guess?
                                 (assoc :ambiguous cands)
+                                immat
+                                (assoc :immaterial immat)
                                 (and f n (> (or (:end r) (:line r)) n))
                                 (assoc :out-of-range true)
                                 (and (nil? f) (not (contains? corpus-extensions ext)))
@@ -396,7 +465,13 @@
                                 (assoc :undecidable true))))
                           rows)]
      {:total (count classified)
+      ;; 2026-11-09: how many citations chose between byte-identical copies.
+      ;; Data, not prose, so a future index change that resurrects the guesses
+      ;; shows up as a number moving rather than as a line nobody reads.
+      :immaterial-rows (count (filterv :immaterial classified))
+      :immaterial-copies (reduce max 0 (map :immaterial (filterv :immaterial classified)))
       :resolved (filterv #(and (:resolved %) (not (:out-of-range %))) classified)
+
       :dangling (filterv #(and (nil? (:resolved %)) (not (:external %))
                                (not (:undecidable %)))
                          classified)
@@ -621,7 +696,15 @@
     (println (str "  [UNVERIFIED] 0 coordinates asserted — either this corpus "
                   "cites nothing, or coord-re / the .md walk has rotted. A zero "
                   "here is not evidence of a clean corpus.")))
+  (when (pos? (or (:immaterial-rows r) 0))
+    ;; The collapse is announced, never hidden: N citations had more than one
+    ;; path to choose from and the choice could not have changed the answer.
+    (println (str "  immaterial: " (:immaterial-rows r)
+                  " citation(s) collapsed up to " (:immaterial-copies r)
+                  " byte-identical copies — same bytes, so which one was read"
+                  " could not change the verdict")))
   (doseq [d (:dangling r)]
+
     (println (str "  DANGLING    " (:source d) " -> " (:path d) ":" (:line d)
                   "  (no file on disk with that name)"
                   (when (:ambiguous d)
@@ -647,6 +730,12 @@
                 "supports (only that the file and line exist); URLs and commit shas; "
                 ".bak-* snapshots; ambiguous RELATIVE basenames resolved to the "
                 "first match, while an absolute cite is read where it points; "
+                "byte-identical copies are collapsed into one candidate (same "
+                "bytes cannot yield a different verdict) and reported as "
+                "`immaterial:`, which is NOT a claim the copies are harmless — "
+                "a release build inside the index still means the audit may "
+                "have measured a copy rather than the live file; "
+
                 (count (:external r)) " external coordinate(s) and "
                 (count (:undecidable r)) " undecidable one(s) — another repo's"
                 " files, which this audit cannot see at all, so they are neither"
@@ -680,7 +769,10 @@
         ;; split: everything before the first --index is the brain dir(s);
         ;; everything after each --index is an index dir.
         positional (take-while (complement idx-flag?) rest-args)
-        index-dirs (->> rest-args (drop-while (complement idx-flag?)) rest)
+        ;; every token that follows an --index flag, so the flag may repeat.
+        index-dirs (->> (partition 2 1 rest-args)
+                        (filter #(idx-flag? (first %)))
+                        (mapv second))
         dir (or (first positional) (str (fs/path home "brain")))
         indexes (or (seq index-dirs) [home (str (fs/path home "theseus"))])
         missing (first (remove #(fs/exists? (fs/path (str %))) (cons dir indexes)))]

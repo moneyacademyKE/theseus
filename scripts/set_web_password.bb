@@ -4,7 +4,10 @@
 ;; it) or piped: printf 'pw\npw\n' | bb scripts/set_web_password.bb.
 ;; Disk gets only a PBKDF2-SHA256 salt+hash record (owner-only perms);
 ;; the password itself never lands anywhere in the clear. A rotation
-;; drops every live deck session immediately.
+;; kills every session this home knows: the durable table is emptied
+;; here, and every other process (a running deck) drops its live
+;; sessions at its next check, when it notices the record's new mtime
+;; (issue #38).
 ;; Exit 0 = set; 1 = too short / entries differ; nothing is written then.
 
 (require '[bb-agent.web-auth :as auth])

@@ -20,7 +20,7 @@
    2 (fn [d] (.getDayOfMonth d))
    3 (fn [d] (.getMonthValue d))})
 
-(defn- parse-long [s]
+(defn- parse-number [s]
   (try (Long/parseLong s) (catch Exception _ nil)))
 
 (defn- part-matches?
@@ -29,12 +29,12 @@
   [part values]
   (or (= part "*")
       (when-let [[_ a b] (re-find #"^(\d+)-(\d+)$" part)]
-        (let [a (parse-long a) b (parse-long b)]
+        (let [a (parse-number a) b (parse-number b)]
           (and a b (boolean (some #(<= a % b) values)))))
       (if-let [[_ n] (re-find #"^\*/(\d+)$" part)]
-        (when-let [n (parse-long n)]
+        (when-let [n (parse-number n)]
           (boolean (some #(zero? (mod % n)) values)))
-        (when-let [v (parse-long part)]
+        (when-let [v (parse-number part)]
           (contains? values v)))))
 
 (defn- field-matches? [field values]

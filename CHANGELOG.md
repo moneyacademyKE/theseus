@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.0 - 2026-11-15
+
+### Release verification
+
+- Full registered suite passes through `bb test`; lint exits with zero warnings and zero errors.
+- Optional app-wide hot-reload supervisor is included as an explicit launchd development service; production services remain separate.
+- Added a first-class `bb test` alias for the complete registered test graph.
+- Moved hot-reload logs out of the durable `state/` hygiene surface and into operational logs.
+
 ## Unreleased
 
 ### Added — gap-analysis build (2026-11-11)

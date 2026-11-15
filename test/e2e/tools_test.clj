@@ -1,7 +1,9 @@
 (ns e2e.tools-test
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [bb-agent.config :as config]
             [bb-agent.tool :as tool]
+            [bb-agent.tool.common :as common]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]))
@@ -258,5 +260,53 @@
                    :tool/args {:cmd (str "rm " (fs/path home "y.sh"))}} {})]
           (is (str/includes? (str (:error/message rm)) "Denied unsafe")
               "rm stays on the never-auto floor even under :auto-all")))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest document-read-says-when-it-truncated
+  ;; 2026-11-11: `document_read` returned 20000 chars of a 60000-char file with
+  ;; no marker of any kind — a silent truncation that reads as the whole file.
+  ;; Reproduced live before this test existed: a 60000-char /tmp file came back
+  ;; `text chars: 20000`, `keys on doc: (:path :text)`, marker present: false.
+  ;; Source: ruslanudintsev-ai/agent-self-learning-core's Output Budgeting,
+  ;; https://github.com/ruslanudintsev-ai/agent-self-learning-core/blob/main/core/commands/base.py#L261
+  ;; — `data[:max_str_len] + "\n... [TRUNCATED {excess} chars by Output Budget.
+  ;; Use specific query/slice] ..."`. A cut is data the caller must see, not a
+  ;; fact the tool keeps to itself.
+  ;; Contract asserted here (decided before the implementation, so the numbers
+  ;; are the spec and not a description of whatever shipped): the budget is the
+  ;; ceiling on the WHOLE :text including the marker, :shown-chars counts source
+  ;; characters kept, :total-chars counts source characters on disk.
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-trunc-"})
+        budget bb-agent.tool.common/max-doc-chars
+        big (fs/path home "big.txt")
+        small (fs/path home "small.txt")]
+    (try
+      (spit (str big) (apply str (repeat (+ budget 40000) "A")))
+      (spit (str small) "tiny")
+      (with-redefs [bb-agent.config/home (fn [] (str home))]
+        (let [trunc (tool/handle-tool-request {:tool/name "document_read"
+                                               :approval/policy :auto-safe
+                                               :tool/args {:path (str big)}})
+              whole (tool/handle-tool-request {:tool/name "document_read"
+                                               :approval/policy :auto-safe
+                                               :tool/args {:path (str small)}})
+              text (get-in trunc [:document :text])]
+          (is (= :ok (:status trunc)))
+          ;; the cut is named as data, with the denominator beside it
+          (is (true? (get-in trunc [:document :truncated])))
+          (is (= (+ budget 40000) (get-in trunc [:document :total-chars])))
+          (is (pos? (get-in trunc [:document :shown-chars])))
+          (is (<= (get-in trunc [:document :shown-chars]) budget))
+          ;; the budget is a ceiling on the whole payload, marker included
+          (is (= budget (count text)))
+          (is (str/starts-with? text "AAAA"))
+          ;; ...and the marker is inside the text the model actually reads
+          (is (str/includes? text "TRUNCATED"))
+          ;; no-regression: a file under the budget claims nothing was cut
+          (is (false? (get-in whole [:document :truncated])))
+          (is (= 4 (get-in whole [:document :total-chars])))
+          (is (= "tiny" (get-in whole [:document :text])))
+          (is (not (str/includes? (get-in whole [:document :text]) "TRUNCATED")))))
       (finally
         (fs/delete-tree home)))))

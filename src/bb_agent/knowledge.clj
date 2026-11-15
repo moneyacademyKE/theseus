@@ -93,14 +93,37 @@
    actor org). Matched as path prefixes; first hit wins, so order matters
    only in that :forbidden entries must not be shadowed by :strict."
   {:forbidden ["brain/rules.clj" "config.edn"]
+   ;; The files that PRODUCE this lane's verdicts. Named as data so a grader edit
+   ;; is classified, snapshotted and reported instead of moving bytes invisibly.
+   ;; Source: nmarchand73/ai-factory, docs/EVOLUTION.md#L33-L35 — "A system must
+   ;; not tune its own grader." Matched after :forbidden, so the law wins.
+   ;; Home-relative, because `guard-write!` relativizes against the home and the
+  ;; repo is its `theseus/` subdir. Repo-relative entries read as :unclassified at
+  ;; the real seam and every instrument row printed INSTRUMENT MISSING — measured
+  ;; 2026-11-12 on the first live run, not assumed. `tier-of` matches either
+  ;; spelling, so a caller holding a repo-relative path is not silently wrong.
+   :instrument ["theseus/src/bb_agent/coordinates.clj"
+                "theseus/src/bb_agent/knowledge.clj"
+                "theseus/src/bb_agent/preflight.clj"
+                "theseus/src/bb_agent/test_roster.clj"
+                "theseus/src/bb_agent/goal_liveness.clj"]
    :strict ["brain/"]
    :soft ["state/"]})
 
 (defn tier-of
   "Classify a repo-relative path: :forbidden, :strict, :soft or :unclassified."
   [path]
-  (let [p (str path)]
+  (let [p (str path)
+        ;; An :instrument entry is home-relative (`theseus/src/...`) while callers
+        ;; often hold the repo-relative form; match either, so neither spelling
+        ;; reads as :unclassified by accident.
+        with-prefix (str "theseus/" (str/replace-first p "theseus/" ""))]
     (or (some #(when (str/starts-with? p %) :forbidden) (:forbidden protection-tiers))
+        ;; :forbidden is matched first and wins, so the law can never be
+        ;; downgraded to an instrument by an overlapping prefix.
+        (some #(when (or (str/starts-with? p %) (str/starts-with? with-prefix %))
+                   :instrument)
+              (:instrument protection-tiers))
         (some #(when (str/starts-with? p %) :strict) (:strict protection-tiers))
         (some #(when (str/starts-with? p %) :soft) (:soft protection-tiers))
         :unclassified)))
@@ -122,16 +145,87 @@
 
 ;; ------------------------------------------------- forbidden-tier content digests
 
+(defn probe-path
+  "What ONE stat established about a path: {:kind :file|:dir|:other|:absent|:unknown
+   :detail string?}. Absence and unknown are distinct, and the distinction is the
+   whole point — they call for OPPOSITE responses: create it, versus fix the
+   permission.
+
+   Source: wilbur-labs/Agora `backend/agora/fsprobe.py` — \"Only FileNotFoundError
+   is absence. Every other OSError is unknown.\" Agora hit the conflation three
+   times in one night in three modules and put the rule in one file instead of
+   rediscovering it a fourth time. We hit it in `bb knowledge tiers`, the report
+   that names our own graders, measured live 2026-11-14: one mode-000 instrument
+   made the CLI throw `AccessDeniedException` and print NO census at all, not even
+   the four readable rows. The predicates we chain do not even agree with each
+   other — `fs/exists?` is FALSE for a file under an unreadable directory while
+   `fs/regular-file?` is TRUE for a mode-000 file — so a fallback chain of them
+   cannot recover a distinction each link has already lost.
+
+   Never raises: a probe is an observation, and \"the observation failed\" is one
+   of its outcomes rather than an exception every caller must remember to catch.
+   NOFOLLOW_LINKS, so a dangling symlink reads as :other — recorded at the path,
+   which is not nothing. NOT taken from Agora: its Environment protocol (run +
+   probe as the only two capabilities), the Windows launcher, and the
+   symlink-following second stat — one read is enough here."
+  [path]
+  (try
+    (let [a (java.nio.file.Files/readAttributes
+             (fs/path (str path)) java.nio.file.attribute.BasicFileAttributes
+             (into-array java.nio.file.LinkOption
+                         [java.nio.file.LinkOption/NOFOLLOW_LINKS]))]
+      {:kind (cond (.isRegularFile a) :file
+                   (.isDirectory a) :dir
+                   :else :other)})
+    (catch java.nio.file.NoSuchFileException _
+      {:kind :absent})
+    (catch Exception e
+      {:kind :unknown
+       :detail (str (.getSimpleName (class e))
+                    (when-let [m (.getMessage e)] (str ": " m)))})))
+
 (defn sha256-file
   "sha256 of a file's bytes, as 64 hex chars. Nil when the file is not a regular
-   file — not-found is not an empty digest (the 2026-10-14 rule)."
+   file — not-found is not an empty digest (the 2026-10-14 rule) — and ALSO nil
+   when it cannot be read: a mode-000 file satisfies both `.exists` and `.isFile`
+   and then throws on the read, which propagated out of `bb knowledge tiers` as a
+   stack trace printing no census at all (measured 2026-11-14). Nil here keeps
+   this function's own promise; `sha256-verbatim` is the form that can say WHY.
+   Source of the split: wilbur-labs/Agora `backend/agora/fsprobe.py`."
   [path]
   (let [f (java.io.File. (str path))]
     (when (and (.exists f) (.isFile f))
-      (let [md (java.security.MessageDigest/getInstance "SHA-256")
-            bs (java.nio.file.Files/readAllBytes (.toPath f))]
-        (.update md bs)
-        (apply str (map #(format "%02x" %) (.digest md)))))))
+      (try
+        (let [md (java.security.MessageDigest/getInstance "SHA-256")
+              bs (java.nio.file.Files/readAllBytes (.toPath f))]
+          (.update md bs)
+          (apply str (map #(format "%02x" %) (.digest md))))
+        (catch Exception _ nil)))))
+
+(defn sha256-verbatim
+  "sha256 of a file's bytes as 64 hex chars, or {:kind :absent|:unknown|:dir|:other
+   :detail} when there are no bytes to read. `sha256-file` returns nil for BOTH
+   absence and unreadability (and used to THROW on a file that stats fine but
+   cannot be read), so a caller needing the split cannot get it from nil. This is
+   the three-state form, and it is what `instrument-rows` now reports on."
+  [path]
+  (let [p (probe-path path)]
+    (cond
+      (= :file (:kind p))
+      (try
+        (if-let [d (sha256-file (str path))]
+          {:kind :file :digest d}
+          {:kind :unknown :detail "exists but unreadable: no bytes could be hashed"})
+        (catch Exception e
+          {:kind :unknown
+           :detail (str "exists but unreadable: " (.getSimpleName (class e))
+                        (when-let [m (.getMessage e)] (str ": " m)))}))
+
+      :else
+      (assoc p :detail (or (:detail p)
+                           (str "probe said " (name (:kind p))
+                                ", so there are no bytes to hash"))))))
+
 
 (def ^:dynamic *tiers-baseline*
   "Where the recorded digests live. A var rather than a derived path so a test can
@@ -190,6 +284,48 @@
                            :else :tampered)}))
            (:forbidden protection-tiers)))))
 
+(defn instrument-rows
+  "Every :instrument path — the files that PRODUCE this lane's verdicts — as data:
+   rel path, digest, and :present|:missing. A missing instrument is not-found, never
+   a zero digest that reads as clean (the 2026-10-14 rule).
+
+   Why these are named at all, measured 2026-11-12 rather than argued: every one of
+   them classified :unclassified, so `guard-write!` returned `:snapshot nil` for a
+   write to a grader — the bytes a verdict was measured under were gone with no copy
+   and no trace. The cost was already paid twice: on 2026-11-09 an edit to
+   coordinates.clj moved `bb knowledge guards` from G = 8/29 to G = 7/29 inside the
+   same turn that reported both numbers, and on 2026-11-11 the first test-roster
+   probe reported five real suites as NEVER-RUN because the instrument itself was
+   wrong. Source: nmarchand73/ai-factory,
+   https://github.com/nmarchand73/ai-factory/blob/main/docs/EVOLUTION.md#L33-L35 —
+   \"Protected (the plan is rejected if it targets them): eval-judge, retrospective,
+   factory/bin/*, evals/criteria.json, factory/config.json. A system must not tune
+   its own grader.\"
+
+   Scope, deliberately narrower than the source: we NAME and SNAPSHOT instruments, we
+   do not block writes to them. ai-factory refuses its own loop from touching a grader
+   and then records \"we fixed those by hand\" — a human turn legitimately fixes a
+   misjudging grader, so a gate that refused would strand the fix (same call as
+   2026-10-12: a guard that rejects truthful provenance is worse than a report that
+   names it)."
+  [home]
+  (mapv (fn [rel]
+          (let [abs (str (fs/path home rel))
+                ;; Three states, not two: a grader we cannot READ is not a grader
+                ;; that is ABSENT, and reporting it as :missing sends the operator
+                ;; to create a file that is already sitting there behind a
+                ;; permission. Source of the split: wilbur-labs/Agora fsprobe.py.
+                r (sha256-verbatim abs)]
+            {:rel rel
+             :path abs
+             :digest (:digest r)
+             :detail (:detail r)
+             :verdict (case (:kind r)
+                        :file :present
+                        :absent :missing
+                        :unreadable)}))
+        (:instrument protection-tiers)))
+
 (defn tiers-baseline-audit
   "The reference audits itself: path, tier, digest, row count, orphans. A
    baseline row whose path is no longer :forbidden is an ORPHAN — reported,
@@ -237,7 +373,8 @@
    the digest does not prove. The 2-arity adds the reference block — the
    baseline file auditing itself — without changing the 1-arity output."
   ([rows] (tiers-report rows nil))
-  ([rows baseline]
+  ([rows baseline] (tiers-report rows baseline nil))
+  ([rows baseline instruments]
   (str/join
    "\n"
    (concat
@@ -254,6 +391,23 @@
                                "be a guess; record it to start checking")))
          rows)
     (tiers-reference-lines baseline)
+    (when instruments
+      (concat
+       [(str "instruments: " (count instruments) " file(s) that produce the verdicts "
+             "this lane reports — a system must not tune its own grader, so these are "
+             "named and snapshotted, never blocked (a human turn fixes a misjudging "
+             "grader by hand; source nmarchand73/ai-factory docs/EVOLUTION.md#L33-L35)")]
+       (map (fn [{:keys [rel verdict digest detail]}]
+              (case verdict
+                :present (str "  INSTRUMENT  " rel "  sha256:" (subs (str digest) 0 12))
+                :missing (str "  INSTRUMENT MISSING  " rel " — no such regular file, so "
+                              "verdicts attributed to it are unverifiable (not-found, not "
+                              "absent by design)")
+                :unreadable (str "  INSTRUMENT UNREADABLE  " rel " — the file is there but "
+                                 "this process could not read it (" detail "), so fix the "
+                                 "permission; do NOT create or overwrite it, because absent "
+                                 "and unreadable call for opposite responses")))
+            instruments)))
     [(str "not checked: content only. A matching digest does not prove nobody edited "
           "and restored the file, does not cover the :strict or :soft tiers (which "
           "change by design), and says nothing about what the bytes MEAN — a rules.clj "
@@ -324,7 +478,8 @@
    - only paths under `(config/home)` are classified. A path outside the home is
      `:unclassified` and is NOT snapshotted — the filesystem stays open (owner
      directive 2026-09-07 removed confinement); this is a corpus guard, not a jail.
-   - only `:strict` (brain/) is snapshotted, not `:soft` (state/). state/ is
+   - `:strict` (brain/) and `:instrument` (the files that produce this lane's
+     verdicts) are snapshotted, not `:soft` (state/). state/ is
      machine-written every turn (`seen.edn`, `usage.edn`, poller offsets) and a
      `.bak-<ts>` per write would be litter, not reversibility. brain/ is prose a
      human reads, and one bad append destroyed two pages.
@@ -343,8 +498,12 @@
         rel (when inside? (str (fs/relativize home target)))
         tier (if inside? (tier-of rel) :unclassified)
         verdict (if (= tier :forbidden) :refused :allowed)
+        ;; :strict and :instrument are both snapshotted. An instrument is not
+        ;; blocked (a human turn fixes a misjudging grader by hand) but its
+        ;; pre-write bytes are kept, so a verdict measured under the old bytes
+        ;; stays attributable to them.
         snapshot (when (and (= verdict :allowed)
-                            (= tier :strict)
+                            (contains? #{:strict :instrument} tier)
                             (fs/regular-file? target))
                    (snapshot-unless-same-second! (str target)))]
     {:path (str target)
@@ -552,6 +711,324 @@
                     :else "   [UNVERIFIED]")))
         counts))
 
+;; ------------------------------------------------------ append integrity
+;; Stolen from lucamartins/ouroboros, `scripts/textdiff.mjs:16-95`
+;; (`isInsertion` + `joinsExisting`), read 2026-11-13:
+;;
+;;   "Whether changing `before` into `after` only adds whole lines: every line
+;;    of `before` is still there, in order and unchanged (trailing whitespace
+;;    aside). Text added inside an existing line rewrites that line even when
+;;    its old words survive in it ('run the tests' to 'do not run the tests',
+;;    or a clause appended to a rule), so it is not an insertion."
+;;
+;; They use it to decide whether an edit needs human approval. We use it for a
+;; narrower question about our own append-only ledgers: did anything they
+;; already said disappear? `brain/improvements.md` and `brain/wins.md` are
+;; append-only by contract (mechanical-confidence-supersede: a correction is
+;; appended and the old line is marked superseded, never rewritten), and the
+;; snapshots that `snapshot!` writes beside them are the only record of what
+;; each turn started from. Nothing in the repo ever read those snapshots:
+;; `grep -rn "\.bak" src/ scripts/ bb.edn` returns only preflight's exclusion
+;; regex and a state-hygiene comment — writers, no readers. The 2026-11-04
+;; lesson, exactly: a receipt needs a reader, or it is a note to nobody.
+;;
+;; Measured 2026-11-13 before writing any code, over the live corpus: 60
+;; ledger snapshots, and `wins.md` lost two entries — `## 2026-09-27 — six
+;; scout recommendations implemented as bb-agent.knowledge` and
+;; `## 2026-10-10 — propose! fails closed on raw digests` are present in
+;; `wins.md.bak-20261012` (6 lines) and `wins.md.bak-20261013` (9 lines) and
+;; ABSENT from every snapshot from `wins.md.bak-20261017` (20 lines) onward and
+;; from the live file (`grep -c "six scout recommendations" brain/wins.md` → 0).
+;; So the loss happened between 2026-10-13 and 2026-10-17 and went unnoticed
+;; for 26 days, through ~20 turns that each reported "pre-write snapshots
+;; taken" as a receipt. The snapshots were taken; nothing read them.
+
+(def reword-prefix-chars
+  "How many leading characters (after trimming) a live line must share with a
+   lost line for the loss to read as an in-place REWORDING rather than a
+   deletion. Ours, and derived from the corpus rather than imported: markdown
+   heading prefixes collide at 8-10 chars (`## 2026-1` is shared by every dated
+   entry of a month) and `- evidence: ` is 12 chars shared by nearly every
+   bullet in both ledgers, so 24 sits above both collisions and below the 162
+   and 212 shared prefixes measured on the two real rewordings of 2026-10-19
+   (the bare-basename -> pinned-coordinate rewrite)."
+  24)
+
+(defn append-only-ledgers
+  "The ledger files that are append-only by contract, as absolute paths.
+   Deliberately NOT the knowledge pages: a page is edited in place, so a
+   rewritten line there is ordinary authorship and reporting it would be
+   noise — measured the same day, a probe over all 144 brain snapshots called
+   132 'non-insertion', almost all of them legitimate stamp moves and
+   restructured headings. The two ledgers are the files where a lost line is a
+   finding."
+  [home]
+  (mapv #(str (fs/path home "brain" %)) ["improvements.md" "wins.md"]))
+
+(defn ledger-snapshots
+  "The `.bak-*` siblings of one file, oldest first. Sorted by mtime, then by
+   name, because a name carries a date but not a time and two snapshots share
+   a day (`wins.md.bak-20261104` and `-20261104b` are byte-identical, measured)."
+  [path]
+  (let [p (fs/path (str path))
+        parent (fs/parent p)
+        base (fs/file-name p)]
+    (when (and parent (fs/directory? parent))
+      (->> (fs/glob (str parent) (str base ".bak-*"))
+           (filter fs/regular-file?)
+           (sort-by (juxt #(.lastModified (fs/file %)) #(fs/file-name %)))))))
+
+(defn insertion?
+  "Is every line of `a` still present in `b`, in order? An in-order subsequence
+   test over raw `split-lines` — no trimming, no blank-collapsing, no case
+   folding. Ouroboros trims trailing whitespace before comparing; we do not,
+   because a trailing-space change in a ledger is still a change to a line a
+   human reads, and normalizing is how a real edit hides inside a 'no-op'.
+   Returns the first line of `a` that `b` cannot place, or nil when `a` is an
+   insertion."
+  [a b]
+  (let [n (count b)]
+    (loop [i 0 j 0]
+      (cond
+        (= i (count a)) nil
+        (>= j n) (nth a i)
+        (= (nth a i) (nth b j)) (recur (inc i) (inc j))
+        :else (recur i (inc j))))))
+
+(defn lost-lines
+  "Lines of `a` that `b` does not contain anywhere, in order and deduped.
+   Set difference, not the subsequence test: `insertion?` answers 'was this an
+   append?' and this answers 'what text is gone?'. They disagree legitimately —
+   a line moved to the top of a file is present but out of order, so
+   `insertion?` names it while `lost-lines` does not. Reported separately
+   rather than reconciled, because which one matters depends on the question."
+  [a b]
+  (let [bset (set b)]
+    (->> a (remove bset) (distinct) (vec))))
+
+(defn reworded?
+  "Does `live` hold a line that shares at least `reword-prefix-chars` leading
+   characters with this lost line? A yes means the line was rewritten in place
+   (our own append-and-supersede corrections do exactly that — 2026-10-19
+   pinned bare basenames, 2026-11-01 turned cross-repo cites into URLs); a no
+   means the text is simply gone. Prefix comparison rather than similarity
+   scoring: a Jaccard or edit-distance threshold would be a number tuned to
+   nobody's corpus, and a leading run is what a rewording preserves by
+   construction."
+  [lost live-lines]
+  (let [l (str/trim lost)
+        n (min reword-prefix-chars (count l))]
+    (and (>= (count l) n)
+         (let [pre (subs l 0 n)]
+           (some #(and (>= (count (str/trim %)) n)
+                       (= pre (subs (str/trim %) 0 n)))
+                 live-lines)))))
+
+(defn append-row
+  "One snapshot's verdict against the live file. `:verdict` is
+   :insertion-only (nothing lost), :reworded (every lost line has a live
+   analogue — an in-place correction) or :lost (at least one lost line has no
+   analogue anywhere in the live file). A missing live file is :live-absent
+   and carries no verdict about its contents, because not-found is not zero
+   (aden-hive/hive, 2026-10-14): an absent ledger is not a clean one."
+  [ledger snap]
+  (let [live (fs/path (str ledger))
+        a (str/split-lines (slurp (str snap)))]
+    (if-not (fs/regular-file? live)
+      {:ledger (str ledger)
+       :snapshot (str snap)
+       :snap-lines (count a)
+       :live-lines nil
+       :verdict :live-absent}
+      (let [b (str/split-lines (slurp (str live)))
+            first-lost (insertion? a b)
+            lost (lost-lines a b)
+            verdict (cond
+                      (nil? first-lost) :insertion-only
+                      (every? #(reworded? % b) lost) :reworded
+                      :else :lost)]
+        {:ledger (str ledger)
+         :snapshot (str snap)
+         :snap-lines (count a)
+         :live-lines (count b)
+         :verdict verdict
+         :lost-count (count lost)
+         :first-lost (first (filter #(not (reworded? % b)) lost))}))))
+
+(defn append-rows
+  "Every (ledger, snapshot) pair under `home`, ledgers in contract order and
+   snapshots oldest first. Data in / data out: no printing, no mutation."
+  [home]
+  (vec (mapcat (fn [ledger]
+                 (map (partial append-row ledger) (ledger-snapshots ledger)))
+               (append-only-ledgers home))))
+
+(defn append-report
+  "The human receipt. Lost rows first, because a report that buries its finding
+   under 53 clean rows is a report nobody reads — the same reason `fire-counts`
+   sorts never-fired to the top (no class prior, 2026-10-17). Counts print
+   beside the verdicts so the reader can check the partition sums instead of
+   trusting the headline."
+  [rows]
+  (let [rank {:lost 0 :live-absent 1 :reworded 2 :insertion-only 3}
+        ordered (sort-by (juxt #(get rank (:verdict %) 9) :snapshot) rows)
+        counts (frequencies (map :verdict rows))
+        head (str "append integrity: " (count rows) " ledger snapshot(s) compared "
+                  "against their live file | lost " (get counts :lost 0)
+                  " | reworded " (get counts :reworded 0)
+                  " | insertion-only " (get counts :insertion-only 0)
+                  " | live-absent " (get counts :live-absent 0))
+        finding (map (fn [r]
+                       (let [gone (when (seq (:first-lost r))
+                                    (str " | gone: "
+                                         (pr-str (subs (:first-lost r) 0
+                                                       (min 110 (count (:first-lost r)))))))]
+                         (str "  " (str/upper-case (name (:verdict r))) " "
+                              (fs/file-name (fs/path (:snapshot r)))
+                              " (" (:snap-lines r) " snapshot line(s) -> "
+                              (or (:live-lines r) "?") " live)" gone)))
+                     (filter #(not= :insertion-only (:verdict %)) ordered))
+        unverified (when (zero? (count rows))
+                     [(str "[UNVERIFIED] 0 snapshots compared — either no `.bak-*` "
+                           "sibling sits beside an append-only ledger, or the walk "
+                           "has rotted. A zero here is not evidence of a clean "
+                           "corpus (bug-ops/zeph: a scan that finds nothing is "
+                           "broken until proven otherwise).")])
+        legend [(str "verdicts: INSERTION-ONLY = every snapshot line is still in "
+                     "the live file, in order. REWORDED = lines changed but each "
+                     "has a live line sharing its first " reword-prefix-chars
+                     " trimmed chars, which is what append-and-supersede "
+                     "corrections look like. LOST = a line with no analogue "
+                     "anywhere in the live file. LIVE-ABSENT = the ledger itself "
+                     "is gone, so nothing about its contents was measured.")
+                (str "negative scope: this compares each snapshot to the LIVE "
+                     "file, not to the next snapshot, so it reports what is "
+                     "missing today and cannot say which turn removed it — the "
+                     "snapshots bound the window, they do not name the writer. A "
+                     "LOST row is a question, not a verdict of blame: the "
+                     "2026-10-09 ledger cleanup deleted 276 lines of raw-digest "
+                     "pollution on purpose and reads as LOST here. Nothing was "
+                     "edited, restored or archived.")]]
+    (concat [head] finding unverified legend)))
+
+
+;; --------------------------------------------- append waivers (2026-11-13)
+;; A LOST row is a question, and two of ours have answers a human already gave:
+;; `improvements.md.bak-20261009-scout-cleanup` (276 of 676 lines removed on
+;; purpose, the raw-digest cleanup recorded in the ledger's own 2026-10-09
+;; entry) and `improvements.md.bak-20260927-012056` (4 lines to a heading
+;; merge whose content is live and verified). Leaving them as LOST means every
+;; future run of `bb knowledge appends` re-raises a settled question, and a
+;; report whose findings are all known-answers is a report nobody reads.
+;;
+;; A waiver is DATA, not code: `brain/append-waivers.edn` maps a snapshot
+;; basename to a reason, and the row becomes `:waived` with that reason beside
+;; it. Not a filter inside `append-rows` — the comparison still runs and still
+;; measures, so a waiver can never hide a NEW loss in the same snapshot.
+;; Nothing is waived by default: an absent or unreadable file is an empty map
+;; (not-found is not zero, aden-hive/hive 2026-10-14), and an unreadable file
+;; is reported rather than swallowed.
+
+(def waiver-rel-path
+  "The waiver file's home-relative path. Kept as data so the reader, the report
+   and the tests cannot drift about where waivers live."
+  "brain/append-waivers.edn")
+
+(defn read-waivers
+  "`{snapshot-basename reason}` from `<home>/brain/append-waivers.edn`.
+   Returns `{:waivers {} :status :read|:missing|:unreadable}` — a missing file
+   is an empty waiver set, and an unreadable or malformed one is named rather
+   than silently read as empty, because \"no waivers\" and \"could not read the
+   waivers\" are different facts (the 2026-10-14 rule). Never throws."
+  [home]
+  (let [p (fs/path (str home) (first (str/split waiver-rel-path #"/"))
+                   (second (str/split waiver-rel-path #"/")))]
+    (cond
+      (not (fs/exists? p)) {:waivers {} :status :missing}
+      (not (fs/regular-file? p)) {:waivers {} :status :unreadable
+                                  :detail "not a regular file"}
+      :else
+      (try
+        (let [v (edn/read-string (slurp (str p)))]
+          (if (map? v)
+            {:waivers (into {} (map (fn [[k val]] [(str k) (str val)]) v))
+             :status :read}
+            {:waivers {} :status :unreadable
+             :detail (str "expected a map of basename -> reason, got " (type v))}))
+        (catch Exception e
+          {:waivers {} :status :unreadable :detail (str (.getMessage e))})))))
+
+(defn apply-waivers
+  "Mark rows whose snapshot basename carries a waiver. `:waived` keeps the
+   measurement (`:lost-count`, `:first-lost` stay on the row) and adds
+   `:waiver` — so the reader sees what was lost AND that a human settled it.
+   Only `:lost` rows can be waived: an insertion-only row has nothing to
+   waive, and waiving a `:live-absent` row would claim knowledge about a file
+   that could not be read."
+  [rows waivers]
+  (mapv (fn [r]
+          (if-let [w (and (= :lost (:verdict r))
+                          (get waivers (fs/file-name (fs/path (:snapshot r)))))]
+            (assoc r :verdict :waived :waiver w)
+            r))
+        rows))
+
+(defn append-report-waived
+  "Same report as `append-report`, with waived rows separated out and their
+   reason printed. Waived rows are counted in their own bucket so the
+   partition still sums and a waiver cannot quietly shrink the finding count."
+  [rows waiver-info]
+  (let [rank {:lost 0 :live-absent 1 :reworded 2 :waived 3 :insertion-only 4}
+        ordered (sort-by (juxt #(get rank (:verdict %) 9) :snapshot) rows)
+        counts (frequencies (map :verdict rows))
+        head (str "append integrity: " (count rows) " ledger snapshot(s) compared "
+                  "against their live file | lost " (get counts :lost 0)
+                  " | waived " (get counts :waived 0)
+                  " | reworded " (get counts :reworded 0)
+                  " | insertion-only " (get counts :insertion-only 0)
+                  " | live-absent " (get counts :live-absent 0))
+        finding (map (fn [r]
+                       (let [gone (when (seq (:first-lost r))
+                                    (str " | gone: "
+                                         (pr-str (subs (:first-lost r) 0
+                                                       (min 110 (count (:first-lost r)))))))
+                             why (when (:waiver r) (str " | WAIVED: " (:waiver r)))]
+                         (str "  " (str/upper-case (name (:verdict r))) " "
+                              (fs/file-name (fs/path (:snapshot r)))
+                              " (" (:snap-lines r) " snapshot line(s) -> "
+                              (or (:live-lines r) "?") " live)" gone why)))
+                     (filter #(not= :insertion-only (:verdict %)) ordered))
+        unverified (when (zero? (count rows))
+                     [(str "[UNVERIFIED] 0 snapshots compared — either no `.bak-*` "
+                           "sibling sits beside an append-only ledger, or the walk "
+                           "has rotted. A zero here is not evidence of a clean "
+                           "corpus (bug-ops/zeph: a scan that finds nothing is "
+                           "broken until proven otherwise).")])
+        waiver-scope (str "waivers: " waiver-rel-path " "
+                          (case (:status waiver-info)
+                            :read (str "read, " (count (:waivers waiver-info)) " entry(ies)")
+                            :missing "not present, so nothing is waived — an absent file is an empty waiver set, not a clean corpus"
+                            :unreadable (str "UNREADABLE (" (:detail waiver-info) "), so nothing is waived rather than waived-blindly")
+                            (str "status " (:status waiver-info)))
+                          ". A waiver keeps the measurement and adds a human's reason; it cannot hide a NEW loss in the same snapshot, and only :lost rows can be waived.")
+        legend [(str "verdicts: INSERTION-ONLY = every snapshot line is still in "
+                     "the live file, in order. REWORDED = lines changed but each "
+                     "has a live line sharing its first " reword-prefix-chars
+                     " trimmed chars, which is what append-and-supersede "
+                     "corrections look like. LOST = a line with no analogue "
+                     "anywhere in the live file. WAIVED = LOST with a human's "
+                     "recorded reason. LIVE-ABSENT = the ledger itself is gone, "
+                     "so nothing about its contents was measured.")
+                (str "negative scope: this compares each snapshot to the LIVE "
+                     "file, not to the next snapshot, so it reports what is "
+                     "missing today and cannot say which turn removed it — the "
+                     "snapshots bound the window, they do not name the writer. A "
+                     "LOST row is a question, not a verdict of blame: the "
+                     "2026-10-09 ledger cleanup deleted 276 lines of raw-digest "
+                     "pollution on purpose and reads as LOST here until waived. "
+                     "Nothing was edited, restored or archived.")]]
+    (concat [head] finding unverified [waiver-scope] legend)))
+
 ;; --------------------------------------------------------------------- cli
 ;; The seam. A measurement no boundary calls measures nothing — that is
 ;; exactly how preflight.clj landed unwired on 2026-10-12. This is report-only
@@ -572,6 +1049,7 @@
   "Usage: bb knowledge prune [dir] [ledger...] | bb knowledge curator [dir]
           | bb knowledge guards [dir] [--index dir]... | bb knowledge routing
           | bb knowledge tiers [home]
+          | bb knowledge appends [home]
    Exit 0 = report printed, 2 = usage or a missing path, 1 = a :forbidden file is
    TAMPERED or MISSING. Never mutates (the baseline is written by hand)."
   [args]
@@ -625,13 +1103,23 @@
         (doseq [line (routing-report rows)] (println line))
         0)
 
+      "appends"
+      (let [h (or (first rest-args) home)]
+        (if-not (fs/directory? (fs/path h))
+          (do (println "knowledge appends: no such home dir —" h) 2)
+          (let [wi (read-waivers h)
+                rows (apply-waivers (append-rows h) (:waivers wi))]
+            (doseq [line (append-report-waived rows wi)] (println line))
+            0)))
+
       "tiers"
       (let [h (or (first rest-args) home)]
         (if-not (fs/directory? (fs/path h))
           (do (println "knowledge tiers: no such home dir —" h) 2)
           (let [rows (tier-digests h)
-                baseline (tiers-baseline-audit h)]
-            (println (tiers-report rows baseline))
+                baseline (tiers-baseline-audit h)
+                instruments (instrument-rows h)]
+            (println (tiers-report rows baseline instruments))
             (if (some #{:tampered :missing} (map :verdict rows)) 1 0))))
 
       "guards"
@@ -666,7 +1154,8 @@
 
       (do (println (str "usage: bb knowledge prune [dir] [ledger...] | bb knowledge curator [dir]"
                         " | bb knowledge guards [dir] [--index dir]..."
-                        " | bb knowledge routing | bb knowledge tiers [home]"))
+                        " | bb knowledge routing | bb knowledge tiers [home]"
+                        " | bb knowledge appends [home]"))
           2))))
 
 ;; ------------------------------------------------------- guard coverage

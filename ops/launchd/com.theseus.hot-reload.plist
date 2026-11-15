@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.theseus.hot-reload</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/moe/.local/bin/bb</string>
+    <string>src/bb_agent/hot_reload.clj</string>
+    <string>1000</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/moe/theseus/theseus</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>THESEUS_HOME</key>
+    <string>/Users/moe/theseus</string>
+    <key>THESEUS_HOT_RELOAD</key>
+    <string>1</string>
+    <key>PATH</key>
+    <string>/Users/moe/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/moe/theseus/logs/hot-reload.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/moe/theseus/logs/hot-reload.log</string>
+</dict>
+</plist>

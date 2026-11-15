@@ -62,23 +62,66 @@
            (catch Exception _ nil)))
     (catch Exception _ nil)))
 
+(defn reset-sessions! []
+  (reset! sessions {}))
+
+;; ---------- cross-process rotation watch (issue #38) ----------
+
+(declare password-file)
+
+(def ^:private password-record-mtime
+  "The password record's mtime as this process last saw it. A rotation
+  from another process (scripts/set_web_password.bb, the standalone
+  deck, a test) rewrites the record; the next session check here sees
+  the moved mtime and kills every session minted by the dead secret.
+  The record file is the single source of truth — no second state file,
+  no signaling channel: the rotation itself is the signal."
+  (atom nil))
+
+(defn- record-mtime
+  "Current mtime of the password record, nil when no record exists."
+  []
+  (try
+    (when (fs/exists? (password-file))
+      (fs/last-modified-time (password-file)))
+    (catch Exception _ nil)))
+
+(defn- sync-password-record!
+  "Notice an out-of-process rotation: when the record's mtime moved
+  since this process last looked, drop every live session and persist
+  the empty table — the secret that minted them is gone. Best-effort
+  like every durability write here: a stat failure must never fail a
+  session check."
+  []
+  (try
+    (let [mtime (record-mtime)]
+      (when (and mtime (not= @password-record-mtime mtime))
+        (reset! password-record-mtime mtime)
+        (reset-sessions!)
+        (persist-sessions!)))
+    (catch Exception _ nil)))
+
 (defn load-sessions!
   "Reload the durable session table (boot after a restart). Entries
   whose TTL passed while the deck was down die here — honest expiry,
-  not resurrection."
+  not resurrection. A rotation that happened while we were down emptied
+  the durable table itself (set-password! persists it), and the record
+  watch starts at the CURRENT mtime so boot does not kill what it just
+  loaded."
   []
   (reset! sessions
           (into {} (remove (fn [[_ v]] (<= (:expires v) (now))))
                 (try (edn/read-string (slurp (str (sessions-file))))
                      (catch Exception _ {}))))
+  (reset! password-record-mtime (record-mtime))
   @sessions)
 
-(defn reset-sessions! []
-  (reset! sessions {}))
-
 (defn session-live?
-  "True when this session token exists and has not expired."
+  "True when this session token exists and has not expired. Every check
+  first notices an out-of-process password rotation: if the record moved,
+  the old secret's sessions die before this token is even consulted."
   [token]
+  (sync-password-record!)
   (boolean (when (string? token)
              (when-let [{:keys [expires]} (get @sessions token)]
                (and expires (> expires (now)))))))
@@ -143,14 +186,18 @@
 
 (defn set-password!
   "Hash and persist the master password (owner-only perms), and clear
-  every live session: a new secret invalidates the old ones."
+  every live session: a new secret invalidates the old ones — here in
+  memory, in the durable table on disk, and (via the record-mtime watch)
+  in every other process checking sessions against this home."
   [password]
   (let [rec  (hash-password password)
         path (str (password-file))]
     (spit path (pr-str rec))
     (try (fs/set-posix-file-permissions path "rw-------")
          (catch Exception _ nil))
+    (reset! password-record-mtime (record-mtime))
     (reset-sessions!)
+    (persist-sessions!)
     rec))
 
 ;; ---------- login ----------
@@ -212,6 +259,10 @@
   rate-limited, or nil on a bad password. Expired entries are pruned on
   every attempt; a success resets the counter."
   [password]
+  ;; sync first: a login arriving right after an out-of-process rotation
+  ;; must mint under the NEW watch, or a later session check would kill
+  ;; the fresh token it just handed out
+  (sync-password-record!)
   (let [{:keys [locked-until]} @login-failures]
     (if (> locked-until (now))
       {:locked true :retry-ms (- locked-until (now))}

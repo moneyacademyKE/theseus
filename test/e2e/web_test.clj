@@ -1023,6 +1023,40 @@
           (auth/set-password! deck-pass)))))))
 ))
 
+(deftest cross-process-rotation-revokes-live-sessions
+  (testing "scripts/set_web_password.bb in a REAL second process revokes
+             this process's live sessions (issue #38)"
+    (let [home (fixture-home!)]
+      (with-redefs [config/home (fn [] (str home))]
+        (auth/reset-sessions!)
+        (auth/reset-login-failures!)
+        (let [tok (:token (body-json (do-login deck-pass)))]
+          (is (= 200 (:status (web/app (req "/api/status"
+                                            {:headers {"authorization"
+                                                       (str "Bearer " tok)}})))))
+          ;; the other process: the shipped rotation script, same home,
+          ;; fed its confirmation pair on stdin like the docs say
+          (let [res (sh {:extra-env {"THESEUS_HOME" (str home)}
+                         :in (str "new-pass-e2e" \newline "new-pass-e2e" \newline)
+                         :out :string :err :string :continue true}
+                        "bb" "scripts/set_web_password.bb")]
+            (is (zero? (:exit res))
+                (str "rotation script failed: " (:err res))))
+          (is (= 401
+                 (:status (web/app (req "/api/status"
+                                        {:headers {"authorization"
+                                                   (str "Bearer " tok)}}))))
+              "the in-process deck must notice the out-of-process rotation")
+          (is (map? (body-json (do-login "new-pass-e2e")))
+              "the new secret logs in")
+          ;; restart must not resurrect the token the old secret minted
+          (auth/load-sessions!)
+          (is (= 401
+                 (:status (web/app (req "/api/status"
+                                        {:headers {"authorization"
+                                                   (str "Bearer " tok)}}))))
+              "restart must not resurrect the token minted by the dead secret"))))))
+
 (def ^:private repo-root
   ;; bound at load time, when *file* is reliable; "." is the fallback
   ;; for runners that don't bind it (bb.edn tasks always run at root)
