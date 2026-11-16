@@ -17,6 +17,10 @@
                (reload/changed-paths before (reload/snapshot [root])))))
       (finally (fs/delete-tree root)))))
 
+(deftest impact-splits-service-owned-source
+  (is (= #{:web} (:restart (reload/impact ["/x/src/bb_agent/web_data.clj"]))))
+  (is (= #{:telegram} (:restart (reload/impact ["/x/src/bb_agent/telegram_state.clj"]))))
+  (is (= #{:web :telegram} (:restart (reload/impact ["/x/src/bb_agent/core.clj"])))))
 (deftest impact-keeps-reload-surface-narrow
   (let [effect (reload/impact ["/home/theseus/theseus/src/bb_agent/web.clj"
                                "/home/theseus/config.edn"

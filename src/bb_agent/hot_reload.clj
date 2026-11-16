@@ -43,6 +43,14 @@
        sort
        vec))
 
+(defn- source-impact [path]
+  (cond
+    (or (str/includes? path "/web.clj")
+        (str/includes? path "/web_")) #{:web}
+    (or (str/includes? path "/telegram")
+        (str/includes? path "/telegram_")) #{:telegram}
+    :else #{:web :telegram}))
+
 (defn impact
   "Classify changed paths into service restarts and manual plist work."
   [paths]
@@ -54,10 +62,14 @@
                      (str/includes? % "/skills/"))
         plist? #(str/includes? % "/ops/launchd/")]
     {:paths (vec paths)
-     :restart (cond-> #{}
-                (or (some source? paths) (some config? paths))
-                (conj :web :telegram)
-                (some web? paths) (conj :web))
+     :restart (reduce (fn [services path]
+                        (cond
+                          (web? path) (conj services :web)
+                          (config? path) (into services #{:web :telegram})
+                          (source? path) (into services (source-impact path))
+                          :else services))
+                      #{}
+                      paths)
      :manual-plists (vec (filter plist? paths))}))
 
 (def ^:private cached-uid

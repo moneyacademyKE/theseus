@@ -170,8 +170,17 @@
                       :at     (:at r)
                       :final  (trunc (:assistant/final r) 160)}))))
 
+(defn- checkout-identity []
+  (let [root (or (System/getenv "THESEUS_HOME")
+                 (str (fs/path (System/getProperty "user.home") "theseus")))
+        result (try (p/shell {:out :string :err :string :continue true :dir root}
+                             "git" "rev-parse" "--show-toplevel" "--short" "HEAD")
+                    (catch Exception _ nil))]
+    {:root root
+     :git (when (and result (zero? (:exit result)))
+            (str/trim (:out result)))}))
 (defn status
-  "System snapshot: poller liveness, ledger freshness, digest age."
+  "System snapshot: poller liveness, ledger freshness, digest age, and runtime checkout identity."
   []
   (let [evts    (events)
         pids    (map #(str/trim (or (slurp-quiet (fs/path (home) "state" %)) ""))
@@ -180,6 +189,7 @@
         alive   (boolean (some pid-alive pids))
         last-ts (->> evts (keep :created/at) (last))]
     {:now          (str (java.time.Instant/now))
+     :checkout     (checkout-identity)
      :poller       {:alive alive :pid pid}
      :events       (count evts)
      :tool-events  (count (filter #(= :tool (:usage/event %)) evts))
