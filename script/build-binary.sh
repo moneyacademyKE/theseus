@@ -76,7 +76,7 @@ rm -f "$APP"
 # shipping a nested jar that Babashka cannot discover.
 BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep 'bb-excel-.*\.jar$' | head -1)"
 [ -n "$BB_EXCEL_JAR" ] || { echo "FATAL: bb-excel dependency not resolved" >&2; exit 1; }
-( cd "$STAGE" && unzip -qo "$BB_EXCEL_JAR" -d app-deps && cd app-deps && zip -qr "$APP" . )
+( cd "$STAGE" && unzip -qo "$BB_EXCEL_JAR" -d app-deps && rm -rf app-deps/META-INF && cd app-deps && zip -qr "$APP" . )
 unzip -l "$APP" | grep "META-INF/MANIFEST.MF" >/dev/null || \
   { echo "FATAL: manifest missing from archive" >&2; exit 1; }
 
