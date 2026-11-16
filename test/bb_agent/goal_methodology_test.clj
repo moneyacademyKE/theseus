@@ -7,10 +7,10 @@
             [clojure.test :refer [deftest is testing]]))
 
 (deftest methodology-canon-test
-  ;; The canon's home is the production brain by owner directive — pin the
-  ;; real file (the 423bd0f policy-contract precedent), not the ambient
-  ;; (config/home), which resolves to ~/theseus in bare agent shells.
-  (let [f "/Users/moe/theseus/brain/knowledge/goal-methodology.md"]
+  ;; The canon follows the configured Theseus home so isolated suites do not
+  ;; read the operator's live brain. Run this suite against the real home when
+  ;; explicitly checking host state.
+  (let [f (str (config/home) "/brain/knowledge/goal-methodology.md")]
     (when (.exists (java.io.File. f))
       (let [body (slurp f)]
         (testing "canon is owner-stamped and carries the hard rules"

@@ -87,6 +87,7 @@
                                [bb-agent.browser-tool-test]
                                [bb-agent.a2a-client-test]
                                [bb-agent.hot-reload-test]
+                               [bb-agent.test-gate-test]
                                [bb-agent.atomic-io-test]
                                [bb-agent.security-test]
                                [bb-agent.economics-test]
@@ -134,6 +135,7 @@
                                              'bb-agent.browser-tool-test
                                              'bb-agent.a2a-client-test
                                              'bb-agent.hot-reload-test
+                                             'bb-agent.test-gate-test
                                              'bb-agent.atomic-io-test
                                              'bb-agent.security-test
                                              'bb-agent.economics-test
@@ -725,5 +727,9 @@
                                (System/exit 1)))}
    test:web:js {:doc "Run web deck JavaScript unit tests."
                 :task (shell "node" "--test" "test/web/paging.test.mjs" "test/web/shell.test.mjs" "test/web/fsm.test.mjs")}
-   test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
+   test:e2e:all {:doc "Run the complete suite with a disposable THESEUS_HOME."
+                 :requires ([bb-agent.test-gate :as gate])
+                 :task (let [{:keys [exit]} (gate/run-isolated! ["bb" "test:e2e:all:internal"])]
+                         (when (pos? exit) (System/exit exit)))}
+   test:e2e:all:internal {:doc "Internal aggregate; use test:e2e:all for an isolated run."
                   :depends [test:e2e:cli-agent test:e2e:tools test:e2e:web test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:subagent test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:rtk test:e2e:rsi test:e2e:rsi-learn test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:telegram-reactions test:e2e:skill test:e2e:loop-guard test:e2e:telegram-commands test:e2e:skill-research test:e2e:provider-wire test:e2e:provider-timeout test:e2e:vision test:e2e:history test:e2e:session-redaction test:e2e:session-persistence test:e2e:goal-bridge-recovery test:e2e:goal-deliverables test:e2e:state-hygiene test:e2e:telegram-state test:e2e:ops-stats test:goal test:bb-agent test:e2e:store test:e2e:kondo test:e2e:boot-load test:web:js verify:rewrite-docs]}}}
