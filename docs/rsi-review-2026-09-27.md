@@ -27,7 +27,7 @@ unchecked (though her report matched receipts everywhere I probed).
    tiers, pre-write snapshots, curator dry-run, no-regression promotion gate.
    Live-run receipts on disk: all 8 knowledge pages stamped `last-reviewed:
    2026-09-27`; every touched page has a `.bak` snapshot; `check-write!`
-   refused `brain/rules.clj` + `config.edn` (the forbidden list at
+   refused `the retired executable policy artifact` + `config.edn` (the forbidden list at
    knowledge.clj:85 — the constitution-adjacent floor held on its first live
    contact); `brain/wins.md` created with evidence lines.
    Gate re-run by me this turn: **133 tests / 498 assertions, 0 failures**

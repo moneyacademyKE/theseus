@@ -259,7 +259,7 @@ Collision note: the task-1 plan worker (spawned isolated, reported "ended") actu
 
 ## §16 — Policy Predicates: Prose → Enforcement (2026-08-30)
 
-The promotion path promised in the brain-files design ("if a rule ever needs enforcement rather than guidance, it graduates") is now real: `bb-agent.policy` (62 LOC) + a one-seam wiring in `tool.clj` (50 LOC) evaluate `<home>/brain/rules.clj` — first matching predicate `(fn [tool args])` returns `:allow`/`:deny` and replaces the approval classifier verdict; nil → ordinary flow, untouched. Gated by `:policy {:enabled true}`, default off.
+The promotion path promised in the brain-files design ("if a rule ever needs enforcement rather than guidance, it graduates") is now real: `the retired policy evaluator` (62 LOC) + a one-seam wiring in `tool.clj` (50 LOC) evaluate `<home>/the retired executable policy artifact` — first matching predicate `(fn [tool args])` returns `:allow`/`:deny` and replaces the approval classifier verdict; nil → ordinary flow, untouched. Gated by `:policy {:enabled true}`, default off.
 
 - **Fail-to-baseline as the safety invariant:** disabled, missing, unparseable, throwing, or runaway (>500ms) → no verdict → configured approval flow decides. A broken rules file can make the agent neither more permissive nor more restrictive than baseline. Verified by dedicated tests for each failure mode.
 - **Sandbox provenance:** sci default ctx blocks io/spit/slurp/Java interop/threads; `clojure.string`/`clojure.set` resolve. Contract pinned as a test (`sandbox-contract-pin`) so a bb/sci upgrade that opens the sandbox fails CI instead of leaking silently.
@@ -374,7 +374,7 @@ key in the request body. E2E pins the body shape and the tool_calls parse path
 **Doors used, not bypassed:** file/shell tools are jailed to the agent home by design —
 project work goes through a project-scoped `OPENCRABS_HOME` at the workspace plus
 `bb session set-cwd`. Headless default denies writes — scoped allowances live in
-`brain/rules.clj` (v0.6.0 doing its real job): `docs/` writes allowed, genuinely
+`the retired executable policy artifact` (v0.6.0 doing its real job): `docs/` writes allowed, genuinely
 read-only shell allowed (the first rule name lied — `cat >` is a write — split and
 renamed), everything else denied.
 

@@ -42,7 +42,7 @@
 (defn- run-flow-poll
   "Drive one poll-once! against a fake Bot API recording every call.
    provider-impl receives the round counter fn. rules-content, when
-   given, is written to brain/rules.clj. Returns {:calls [...]}."
+   given, is written to approval-baseline.edn. Returns {:calls [...]}."
   [provider-impl rules-content]
   (let [home (fs/create-temp-dir {:prefix "theseus-flow-"})
         port (free-port)
@@ -73,13 +73,10 @@
                        {:ok true :result {:message_id 90}})})))
          {:port port})]
     (try
-      (when rules-content
-        (fs/create-dirs (fs/path home "brain"))
-        (spit (str (fs/path home "brain" "rules.clj")) rules-content))
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
                      :model "fake-deterministic"
-                     :policy {:enabled (boolean rules-content)}
+                     :approval/mode (if rules-content :auto-all :ask)
                      :telegram {:token "TESTTOKEN"
                                 :base-url (str "http://127.0.0.1:" port)
                                 :allowed-user-ids [owner-id]}}))

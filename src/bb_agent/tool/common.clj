@@ -174,14 +174,6 @@
       :denial/source source
       :error/message
       (case source
-        :policy (str "Tool " name " denied by the tool constitution (brain/rules.clj)."
-                     detail
-                     " This denies the CALL, not the task — recover instead of stopping: "
-                     "use write_file/edit_file for file edits (never perl/sed/awk -i), "
-                     "mv instead of rm, absolute paths inside the home root. "
-                     "Only ask the owner when no alternative exists.")
-        :policy-integrity (str "Tool " name " denied because the enabled tool constitution "
-                               "could not be trusted (" (or (some-> reason clojure.core/name) "unknown") ")." detail)
         :dormant (str "Tool " name " is not enabled in this deployment — it is an optional "
                       "capability, off by default. Recourse: answer without it, or ask the "
                       "owner to add " name " to :tools/enable-optional in config.edn. "

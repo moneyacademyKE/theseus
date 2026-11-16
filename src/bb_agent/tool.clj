@@ -1,7 +1,6 @@
 (ns bb-agent.tool
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.policy :as policy]
             [bb-agent.rtk :as rtk]
             [bb-agent.a2a-tool :as a2a-tool]
             [bb-agent.net-search :as net-search]
@@ -95,29 +94,18 @@
                                    (:approval/mode cfg))
                             (assoc request :approval/policy (:approval/mode cfg))
                             request)
-         policy-decision (policy/evaluate decision-request cfg)
          approval-decision* (approval-decision decision-request)
          result (if (tools/dormant? cfg (:tool/name request))
                   ;; Optional capability the owner never opted into: refuse
-                  ;; BEFORE policy and execution. A tool absent from the
-                  ;; prompt must not run just because a model hallucinated
-                  ;; its name (owner directive 2026-11-12).
+                  ;; BEFORE execution. A tool absent from the prompt must not
+                  ;; run just because a model hallucinated its name.
                   (deny-result request :dormant)
-                  (if (= :deny (:decision policy-decision))
-                    (deny-result request
-                                 (if (= :policy-integrity (:category policy-decision))
-                                   :policy-integrity
-                                   :policy)
-                                 policy-decision)
-                    (case approval-decision*
-                      :approved (execute-tool-request request)
-                      :ask (if (or (and (= :allow (:decision policy-decision))
-                                        (nil? requested-policy)
-                                        (nil? (:approval/mode cfg)))
-                                   (and approver (= :approved (approver request))))
-                             (execute-tool-request request)
-                             (deny-result request))
-                      :denied (deny-result request))))]
+                  (case approval-decision*
+                    :approved (execute-tool-request request)
+                    :ask (if (and approver (= :approved (approver request)))
+                           (execute-tool-request request)
+                           (deny-result request))
+                    :denied (deny-result request)))]
      ;; THE funnel: one recording site for every tool outcome — ok, error,
      ;; or denied with its denial source (approval vs constitution). The
      ;; RSI digest builds its tool-failure table from these events; a

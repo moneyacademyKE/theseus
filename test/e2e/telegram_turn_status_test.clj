@@ -39,7 +39,7 @@
   "Drive one poll-once! against a fake Bot API that records every call in
    order. provider-impl replaces provider/complete for deterministic
    rounds. telegram-overrides merge into the :telegram config map.
-   rules-content, when given, is written to brain/rules.clj.
+   rules-content, when given, is written to approval-baseline.edn.
    Returns {:result poll-result :calls [ordered calls]}."
   [provider-impl telegram-overrides rules-content]
   (let [home (fs/create-temp-dir {:prefix "theseus-turn-status-"})
@@ -71,13 +71,10 @@
                        {:ok true :result {:message_id 90}})})))
          {:port port})]
     (try
-      (when rules-content
-        (fs/create-dirs (fs/path home "brain"))
-        (spit (str (fs/path home "brain" "rules.clj")) rules-content))
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
                      :model "fake-deterministic"
-                     :policy {:enabled (boolean rules-content)}
+                     :approval/mode (if rules-content :auto-all :ask)
                      :telegram (merge {:token "TESTTOKEN"
                                        :base-url (str "http://127.0.0.1:" port)
                                        :allowed-user-ids [owner-id]}

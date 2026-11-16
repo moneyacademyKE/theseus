@@ -6,10 +6,8 @@
             [cheshire.core :as json]
             [clojure.string :as str]))
 
-;; The never-auto-run floor: these stay denied even under :auto-all with no
-;; constitution present. Policy (brain/rules.clj) is the owner's law and
-;; speaks first; this list only guards the policy-silent case. Everything
-;; else the constitution grants (v5: chmod, mv, mutations on demand) runs.
+;; The never-auto-run floor: these stay denied even under :auto-all.
+;; Everything else runs according to the configured approval mode.
 (def ^:private never-auto-shell-prefixes
   ["rm " "rm\t" "rm\n" "dd " "sudo " "chown "])
 

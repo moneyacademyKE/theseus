@@ -3,10 +3,7 @@
             [bb-agent.tool.common :as common]
             [clojure.string :as str]))
 
-;; Path tools are NOT jailed to the agent home (owner directive 2026-09-07:
-;; "remove sandbox" — the home-root confinement prevented working outside the
-;; agent's own folder). Structural validation lives here; policy lives in the
-;; constitution (brain/rules.clj — secrets, rm, sudo, python stay floored).
+;; Path tools validate structure; approval mode decides whether a call runs.
 
 (defn checked-read-path [tool-name path]
   (cond

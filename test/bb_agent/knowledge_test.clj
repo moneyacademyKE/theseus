@@ -58,7 +58,7 @@
 
 (deftest tier-of-test
   (testing "tier lookup is data, not judgment"
-    (is (= :forbidden (k/tier-of "brain/rules.clj")))
+    (is (= :forbidden (k/tier-of "brain/approval-baseline.edn")))
     (is (= :forbidden (k/tier-of "config.edn")))
     (is (= :strict (k/tier-of "brain/improvements.md")))
     (is (= :soft (k/tier-of "state/usage.edn")))
@@ -72,7 +72,7 @@
 
 (deftest check-write-test
   (testing "forbidden always throws"
-    (is (thrown? Exception (k/check-write! "brain/rules.clj" {:justification "please"}))))
+    (is (thrown? Exception (k/check-write! "brain/approval-baseline.edn" {:justification "please"}))))
   (testing "strict requires a written justification"
     (is (thrown? Exception (k/check-write! "brain/x.md" {})))
     (is (:allowed (k/check-write! "brain/x.md" {:justification "moe approved 2026-09-27"}))))
@@ -280,13 +280,13 @@
   (let [home (str (fs/create-temp-dir {:prefix "k-seam"}))]
     (fs/create-dirs (str home "/brain"))
     (spit (str home "/brain/page.md") "# Original\nbody\n")
-    (spit (str home "/brain/rules.clj") ";; the law\n")
+    (spit (str home "/brain/approval-baseline.edn") ";; the law\n")
     (with-redefs [config/home (constantly home)]
       (testing "a :forbidden path is refused before anything is written"
-        (let [v (k/guard-write! (str home "/brain/rules.clj"))]
+        (let [v (k/guard-write! (str home "/brain/approval-baseline.edn"))]
           (is (= :refused (:verdict v)))
           (is (= :forbidden (:tier v)))
-          (is (= ";; the law\n" (slurp (str home "/brain/rules.clj")))
+          (is (= ";; the law\n" (slurp (str home "/brain/approval-baseline.edn")))
               "refusing early means the bytes never moved")))
       (testing "a :strict path is allowed and snapshotted first"
         (let [v (k/guard-write! (str home "/brain/page.md"))]
@@ -303,9 +303,9 @@
           (is (nil? (:snapshot v)))
           (fs/delete-tree outside)))
       (testing "`..` is normalized, so traversal cannot dodge the tier data"
-        (let [v (k/guard-write! (str home "/brain/../brain/rules.clj"))]
+        (let [v (k/guard-write! (str home "/brain/../brain/approval-baseline.edn"))]
           (is (= :refused (:verdict v))
-              "a lexically hidden rules.clj is still rules.clj")
+              "a lexically hidden approval-baseline.edn is still approval-baseline.edn")
           (is (= :forbidden (:tier v)))))
       (testing "the verdict names the path it judged — a measurement names its subject"
         (let [v (k/guard-write! (str home "/brain/page.md"))]
@@ -318,13 +318,13 @@
         write! (get tool-file/handlers "write_file")]
     (fs/create-dirs (str home "/brain"))
     (spit (str home "/brain/page.md") "# Original\n")
-    (spit (str home "/brain/rules.clj") ";; the law\n")
+    (spit (str home "/brain/approval-baseline.edn") ";; the law\n")
     (with-redefs [config/home (constantly home)]
       (testing "a :forbidden write is an error result, and the file is untouched"
-        (let [r (write! {:path (str home "/brain/rules.clj") :content "rewritten"})]
+        (let [r (write! {:path (str home "/brain/approval-baseline.edn") :content "rewritten"})]
           (is (= :error (:status r)))
           (is (re-find #"forbidden" (str (:error/message r))))
-          (is (= ";; the law\n" (slurp (str home "/brain/rules.clj"))))))
+          (is (= ";; the law\n" (slurp (str home "/brain/approval-baseline.edn"))))))
       (testing "a :strict write lands and leaves the pre-write bytes behind"
         (let [r (write! {:path (str home "/brain/page.md") :content "# New\n"})]
           (is (= :ok (:status r)))
@@ -619,36 +619,36 @@
   (testing "a :forbidden file reports PRISTINE against its recorded sha256"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-test"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           _ (spit (str rules) "(ns rules)\n;; the law\n")
           sha (k/sha256-file (str rules))
-          d (k/tier-digests home {sha "brain/rules.clj"})
+          d (k/tier-digests home {sha "brain/approval-baseline.edn"})
           ;; SUPERSEDED 2026-11-03: the first version of this assertion expected ONE
-          ;; row. protection-tiers names TWO :forbidden paths (brain/rules.clj and
+          ;; row. protection-tiers names TWO :forbidden paths (brain/approval-baseline.edn and
           ;; config.edn), and tier-digests covers every one by design — a missing law
-          ;; must be reportable, so a fixture that creates only rules.clj legitimately
+          ;; must be reportable, so a fixture that creates only approval-baseline.edn legitimately
           ;; yields a second row with verdict :missing. Selecting the row under test
           ;; instead of counting rows.
-          row (first (filter #(= "brain/rules.clj" (:rel %)) d))]
+          row (first (filter #(= "brain/approval-baseline.edn" (:rel %)) d))]
       (is (= 2 (count d)) "both :forbidden paths are digested, not just the fixture's")
       (is (= :missing (:verdict (first (filter #(= "config.edn" (:rel %)) d))))
           "the fixture has no config.edn, and that is its own verdict")
       (is (= :pristine (:verdict row)))
-      (is (= "brain/rules.clj" (:rel row)))
+      (is (= "brain/approval-baseline.edn" (:rel row)))
       (is (= sha (:expected row)))
       (is (= sha (:current row)))
       (fs/delete-tree (fs/path home))))
   (testing "changed bytes are TAMPERED even when the mtime is preserved"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-test"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           _ (spit (str rules) "(ns rules)\n;; the law\n")
           sha (k/sha256-file (str rules))
           before (fs/last-modified-time rules)
           _ (spit (str rules) "(ns rules)\n;; quietly rewritten\n")
           _ (fs/set-last-modified-time rules before)
-          d (k/tier-digests home {sha "brain/rules.clj"})
-          row (first (filter #(= "brain/rules.clj" (:rel %)) d))]
+          d (k/tier-digests home {sha "brain/approval-baseline.edn"})
+          row (first (filter #(= "brain/approval-baseline.edn" (:rel %)) d))]
       (is (= :tampered (:verdict row))
           "the mtime says untouched; the bytes say otherwise")
       (is (= sha (:expected row)))
@@ -658,7 +658,7 @@
     (let [home (str (fs/create-temp-dir {:prefix "tiers-test"}))
           _ (fs/create-dirs (fs/path home "brain"))
           d (k/tier-digests home {"0000000000000000000000000000000000000000000000000000000000000000"
-                                  "brain/rules.clj"})]
+                                  "brain/approval-baseline.edn"})]
       (is (= :missing (:verdict (first d)))
           "a missing law is not an intact law")
       (is (nil? (:current (first d))))
@@ -668,9 +668,9 @@
   (testing "exit 0 with a report; the report names every tier path and its verdict"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-cli"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           _ (spit (str rules) "(ns rules)\n")
-          ;; SUPERSEDED 2026-11-03: the first fixture wrote only brain/rules.clj, and
+          ;; SUPERSEDED 2026-11-03: the first fixture wrote only brain/approval-baseline.edn, and
           ;; the CLI then exited 1 on config.edn being :missing — which is the design,
           ;; not a bug. Both :forbidden paths get baseline entries.
           cfg (fs/path home "config.edn")
@@ -679,11 +679,11 @@
           sha (k/sha256-file (str rules))
           sha2 (k/sha256-file (str cfg))
           baseline (str home "/tier-baseline.edn")
-          _ (spit baseline (pr-str {sha "brain/rules.clj" sha2 "config.edn"}))
+          _ (spit baseline (pr-str {sha "brain/approval-baseline.edn" sha2 "config.edn"}))
           out (binding [k/*tiers-baseline* baseline]
                 (with-out-str (is (= 0 (k/-main ["tiers" home])))))]
       (is (str/includes? out "PRISTINE"))
-      (is (str/includes? out "brain/rules.clj"))
+      (is (str/includes? out "brain/approval-baseline.edn"))
       (is (str/includes? out (subs sha 0 12)))
       (is (str/includes? out "not checked")
           "states what the digest does not prove, per negative-scope-receipts")
@@ -691,14 +691,14 @@
   (testing "a tampered tier makes the CLI exit 1 — the one non-zero exit this report has"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-cli2"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           _ (spit (str rules) "(ns rules)\n")
           cfg (fs/path home "config.edn")
           _ (spit (str cfg) "{}\n")
           sha (k/sha256-file (str rules))
           sha2 (k/sha256-file (str cfg))
           baseline (str home "/tier-baseline.edn")
-          _ (spit baseline (pr-str {sha "brain/rules.clj" sha2 "config.edn"}))
+          _ (spit baseline (pr-str {sha "brain/approval-baseline.edn" sha2 "config.edn"}))
           _ (spit (str rules) "(ns rules) ;; changed\n")
           out (binding [k/*tiers-baseline* baseline]
                 (with-out-str (is (= 1 (k/-main ["tiers" home])))))]
@@ -921,11 +921,11 @@
   (testing "the reference file is reported with its path, tier and digest"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-ref"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           _ (spit (str rules) "(ns rules)\n")
           sha (k/sha256-file (str rules))
           baseline (str (fs/path home "brain" "tier-baseline.edn"))
-          _ (spit baseline (pr-str {sha "brain/rules.clj"}))
+          _ (spit baseline (pr-str {sha "brain/approval-baseline.edn"}))
           a (binding [k/*tiers-baseline* baseline]
               (k/tiers-baseline-audit home))]
       (is (= baseline (:path a)))
@@ -950,11 +950,11 @@
   (testing "a baseline row whose path is no longer :forbidden is an ORPHAN, not a silent drop"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-orphan"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           _ (spit (str rules) "(ns rules)\n")
           sha (k/sha256-file (str rules))
           baseline (str (fs/path home "brain" "tier-baseline.edn"))
-          _ (spit baseline (pr-str {sha "brain/rules.clj"
+          _ (spit baseline (pr-str {sha "brain/approval-baseline.edn"
                                     (str (apply str (repeat 64 "a"))) "brain/old-law.clj"}))
           a (binding [k/*tiers-baseline* baseline]
               (k/tiers-baseline-audit home))]
@@ -969,14 +969,14 @@
   (testing "the report names the reference file, its tier and that it is self-stored"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-rep"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           cfg (fs/path home "config.edn")
           _ (spit (str rules) "(ns rules)\n")
           _ (spit (str cfg) "{}\n")
           sha (k/sha256-file (str rules))
           sha2 (k/sha256-file (str cfg))
           baseline (str (fs/path home "brain" "tier-baseline.edn"))
-          _ (spit baseline (pr-str {sha "brain/rules.clj" sha2 "config.edn"}))
+          _ (spit baseline (pr-str {sha "brain/approval-baseline.edn" sha2 "config.edn"}))
           out (binding [k/*tiers-baseline* baseline]
                 (with-out-str (is (= 0 (k/-main ["tiers" home])))))]
       (is (str/includes? out "PRISTINE"))
@@ -1002,14 +1002,14 @@
   (testing "an orphan row is printed beside the verdicts"
     (let [home (str (fs/create-temp-dir {:prefix "tiers-rep3"}))
           _ (fs/create-dirs (fs/path home "brain"))
-          rules (fs/path home "brain/rules.clj")
+          rules (fs/path home "brain/approval-baseline.edn")
           cfg (fs/path home "config.edn")
           _ (spit (str rules) "(ns rules)\n")
           _ (spit (str cfg) "{}\n")
           sha (k/sha256-file (str rules))
           sha2 (k/sha256-file (str cfg))
           baseline (str (fs/path home "brain" "tier-baseline.edn"))
-          _ (spit baseline (pr-str {sha "brain/rules.clj" sha2 "config.edn"
+          _ (spit baseline (pr-str {sha "brain/approval-baseline.edn" sha2 "config.edn"
                                     (str (apply str (repeat 64 "b"))) "brain/old-law.clj"}))
           out (binding [k/*tiers-baseline* baseline]
                 (with-out-str (k/-main ["tiers" home])))]
@@ -1020,7 +1020,7 @@
 
 (deftest tiers-report-one-arity-is-unchanged-test
   (testing "tiers-report with rows only still renders every verdict — no regression"
-    (let [rows [{:rel "brain/rules.clj" :verdict :pristine
+    (let [rows [{:rel "brain/approval-baseline.edn" :verdict :pristine
                  :expected "aaaa" :current "aaaaaaaaaaaa1234"}
                 {:rel "config.edn" :verdict :tampered
                  :expected "bbbbbbbbbbbb" :current "cccccccccccc"}
@@ -1073,15 +1073,15 @@
     (is (= :instrument (k/tier-of "src/bb_agent/test_roster.clj")))
     (is (= :instrument (k/tier-of "src/bb_agent/goal_liveness.clj"))))
   (testing "the tiers that already existed did not move (no-regression)"
-    (is (= :forbidden (k/tier-of "brain/rules.clj")))
+    (is (= :forbidden (k/tier-of "brain/approval-baseline.edn")))
     (is (= :forbidden (k/tier-of "config.edn")))
     (is (= :strict (k/tier-of "brain/improvements.md")))
     (is (= :soft (k/tier-of "state/usage.edn")))
     (is (= :unclassified (k/tier-of "src/bb_agent/brief.clj"))
         "an ordinary source file is not an instrument"))
   (testing ":forbidden still wins over :instrument — the law is not downgraded"
-    (is (= :forbidden (k/tier-of "brain/rules.clj")))
-    (is (thrown? Exception (k/check-write! "brain/rules.clj" {:justification "please"})))))
+    (is (= :forbidden (k/tier-of "brain/approval-baseline.edn")))
+    (is (thrown? Exception (k/check-write! "brain/approval-baseline.edn" {:justification "please"})))))
 
 (deftest guard-write-snapshots-an-instrument-test
   (let [home (str (fs/create-temp-dir {:prefix "k-instrument"}))]
