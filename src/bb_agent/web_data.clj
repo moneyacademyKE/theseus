@@ -170,15 +170,24 @@
                       :at     (:at r)
                       :final  (trunc (:assistant/final r) 160)}))))
 
-(defn- checkout-identity []
-  (let [root (or (System/getenv "THESEUS_HOME")
-                 (str (fs/path (System/getProperty "user.home") "theseus")))
-        result (try (p/shell {:out :string :err :string :continue true :dir root}
-                             "git" "rev-parse" "--show-toplevel" "--short" "HEAD")
-                    (catch Exception _ nil))]
-    {:root root
-     :git (when (and result (zero? (:exit result)))
-            (str/trim (:out result)))}))
+(defn checkout-identity
+  "Return the repository actually serving the deck, not the data home.
+   `root` is injectable for tests; production uses THESEUS_REPO or the process
+   working directory supplied by launchd."
+  ([] (checkout-identity (or (System/getenv "THESEUS_REPO")
+                             (System/getProperty "user.dir"))))
+  ([root]
+   (let [run (fn [& args]
+               (try
+                 (apply p/shell {:out :string :err :string :continue true :dir root}
+                        (into ["git" "rev-parse"] (remove nil? args)))
+                 (catch Exception _ nil)))
+         top (run "--show-toplevel")
+         head (run "--short" "HEAD")]
+     {:root (when (and top (zero? (:exit top)))
+              (str/trim (:out top)))
+      :git (when (and head (zero? (:exit head)))
+             (str/trim (:out head)))})))
 (defn status
   "System snapshot: poller liveness, ledger freshness, digest age, and runtime checkout identity."
   []
