@@ -92,7 +92,7 @@
   "Edit-rights as data, not prose (stolen from ozumpe/omnibase, minus the
    actor org). Matched as path prefixes; first hit wins, so order matters
    only in that :forbidden entries must not be shadowed by :strict."
-  {:forbidden ["brain/rules.clj" "config.edn"]
+  {:forbidden ["brain/approval-baseline.edn" "config.edn"]
    ;; The files that PRODUCE this lane's verdicts. Named as data so a grader edit
    ;; is classified, snapshotted and reported instead of moving bytes invisibly.
    ;; Source: nmarchand73/ai-factory, docs/EVOLUTION.md#L33-L35 — "A system must
@@ -248,7 +248,7 @@
                 would be a guess; the row carries the digest it just measured
 
    WHY (measured 2026-11-03, not assumed): nearly every entry in brain/improvements.md
-   since 2026-10-15 closes with \"brain/rules.clj untouched (mtime Sep 27 00:13)\".
+   since 2026-10-15 closes with \"protected artifact untouched (mtime Sep 27 00:13)\".
    An mtime is certainty level 1 — it says the file was not written since a date, and
    it is defeated by a restore that preserves mtime, by `touch`, and by reading the
    wrong file. A sha256 over the bytes is level 4. Source for the mechanism:
@@ -410,7 +410,7 @@
             instruments)))
     [(str "not checked: content only. A matching digest does not prove nobody edited "
           "and restored the file, does not cover the :strict or :soft tiers (which "
-          "change by design), and says nothing about what the bytes MEAN — a rules.clj "
+          "change by design), and says nothing about what the bytes MEAN — a protected artifact "
           "whose digest is intact can still be wrong. Report only unless a verdict is "
           ":tampered or :missing, which exits 1.")]))))
 
@@ -487,7 +487,7 @@
      requiring a justification string from `write_file` would need a new tool
      parameter and would break every owner-granted brain edit until a human
      decides that trade. Named, not smuggled in.
-   - `..` is normalized before the tier lookup, so `/home/brain/../brain/rules.clj`
+   - `..` is normalized before the tier lookup, so traversal remains covered by the protected-artifact rule.
      cannot dodge the data. A lexical normalize, not `fs/canonicalize`: canonicalize
      resolves symlinks against the real disk and returns `/private/...` on macOS,
      which would make every prefix comparison against `$THESEUS_HOME` fail open."

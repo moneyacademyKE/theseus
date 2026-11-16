@@ -193,14 +193,11 @@
     (try
       (fs/create-dirs home)
       (spit (str (fs/path home "note.txt")) "hello from mixed tool response")
-      (fs/create-dirs (fs/path home "brain"))
-      (spit (str (fs/path home "brain" "rules.clj"))
-            "{:rules [{:name \"allow-read\" :pred (fn [tool _] (= tool \"read_file\")) :decision :allow}]}\n")
       (spit (str config-file)
             (pr-str {:provider :openai-compatible
                      :model "test-model"
                      :session/id "http-mixed-tools"
-                     :policy {:enabled true}
+                     :approval/mode :auto-all
                      :providers {:openai-compatible
                                  {:base-url (str "http://127.0.0.1:" port "/v1")
                                   :api-key "test-key"}}}))

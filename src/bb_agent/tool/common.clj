@@ -156,32 +156,35 @@
    nothing) — the model relays this, so the human learns which rule fired
    and what would grant it, instead of a bare 🚫."
   ([request] (deny-result request :approval))
-  ([{:tool/keys [name] :as request} source]
-   {:tool/name name
-    :status :denied
-    :executed? false
-    :approval/required? (:approval/required? request)
-    ;; :status :denied alone cannot carry the difference that matters to the
-    ;; caller: an approval denial has a human pending, a policy denial has a
-    ;; law and nobody to ask. The turn loop branches on this (see
-    ;; core/awaiting-human?) — without it, both looked like "wait for a
-    ;; reply" and a constitution veto ended turns that could have recovered.
-    :denial/source source
-    :error/message
-    (case source
-      :policy (str "Tool " name " denied by the tool constitution (brain/rules.clj). "
-                   "This denies the CALL, not the task — recover instead of stopping: "
-                   "use write_file/edit_file for file edits (never perl/sed/awk -i), "
-                   "mv instead of rm, absolute paths inside the home root. "
-                   "Only ask the owner when no alternative exists, and name the rule.")
-      :dormant (str "Tool " name " is not enabled in this deployment — it is an optional "
-                    "capability, off by default. Recourse: answer without it, or ask the "
-                    "owner to add " name " to :tools/enable-optional in config.edn. "
-                    "Do not retry this call in this turn.")
-      :approval (str "Tool " name " requires explicit approval and no approver is "
-                     "present in this turn. Recourse: ask the user to approve, or "
-                     "report this step as skipped — do not silently retry.")
-      (str "Tool " name " requires explicit approval"))}))
+  ([request source] (deny-result request source nil))
+  ([{:tool/keys [name] :as request} source policy-decision]
+   (let [rule (:rule policy-decision)
+         category (:category policy-decision)
+         reason (:reason policy-decision)
+         detail (when rule (str " Rule: " rule " (" category ")."))]
+     (cond-> {:tool/name name
+      :status :denied
+      :executed? false
+      :approval/required? (:approval/required? request)
+      ;; :status :denied alone cannot carry the difference that matters to the
+      ;; caller: an approval denial has a human pending, a policy denial has a
+      ;; law and nobody to ask. The turn loop branches on this (see
+      ;; core/awaiting-human?) — without it, both looked like "wait for a
+      ;; reply" and a constitution veto ended turns that could have recovered.
+      :denial/source source
+      :error/message
+      (case source
+        :dormant (str "Tool " name " is not enabled in this deployment — it is an optional "
+                      "capability, off by default. Recourse: answer without it, or ask the "
+                      "owner to add " name " to :tools/enable-optional in config.edn. "
+                      "Do not retry this call in this turn.")
+        :approval (str "Tool " name " requires explicit approval and no approver is "
+                       "present in this turn. Recourse: ask the user to approve, or "
+                       "report this step as skipped — do not silently retry.")
+        (str "Tool " name " requires explicit approval" detail))}
+       (some? rule) (assoc :denial/rule rule)
+       (some? category) (assoc :denial/category category)
+       (some? reason) (assoc :denial/reason reason)))))
 
 (defn ok-result [name body]
   (merge {:tool/name name

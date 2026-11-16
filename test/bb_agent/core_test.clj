@@ -301,31 +301,8 @@
                            {:approval/mode :auto-safe})))
           "read_file is in the safe set"))))
 
-(deftest constitution-deny-survives-auto-all
-  (testing "brain/rules.clj :deny beats :approval/mode :auto-all — the floor holds"
-    (with-temp-home
-     (fn []
-       (let [brain (str (fs/path (config/home) "brain"))]
-         (fs/create-dirs brain)
-         (spit (str (fs/path brain "rules.clj"))
-               "{:rules [{:name \"no-shell\" :pred (fn [tool _args] (= tool \"shell\")) :decision :deny}]}")
-         (with-redefs [tool/execute-tool-request (fn [_] {:status :ok :executed? true})]
-           (let [result (tool/handle-tool-request
-                         {:tool/name "shell" :tool/args {:cmd "true"}}
-                         {:approval/mode :auto-all :policy {:enabled true}})]
-             (is (= :denied (:status result)) "constitution denies before the mode applies")
-             (is (str/includes? (:error/message result) "constitution")
-                 "the denial names its source"))))))))
-
-
-(deftest policy-denied-round-returns-to-the-model
-  (testing "a constitution denial is recoverable — it feeds back as a tool
-            result instead of ending the turn. 2026-09-11: goal authoring
-            burned 56 rounds / 24 min and wrote no project.edn because one
-            floor-denied `cat config.edn` ended the turn with 'needs your
-            approval'. Detached lanes have no human to reply, so the dead
-            end was silent — and the denial's own text says 'recover
-            instead of stopping', which the short-circuit made impossible."
+(deftest denied-round-returns-to-the-model
+  (testing "a denied tool call is recoverable — it feeds back as a tool result"
     (with-temp-home
      (fn []
        (let [rounds (atom 0)]
@@ -337,14 +314,12 @@
                                              :tool/args {:cmd "cat config.edn"}}]}
                            {:content "recovered without the denied call"}))
                        tool/handle-tool-request
-                       (fn [req _cfg] (tool/deny-result req :policy))]
+                       (fn [req _cfg] (tool/deny-result req :dormant))]
            (let [turn (core/run-turn! {:provider :fake :model "m" :react-ack false}
                                       "read the config")]
-             (is (= "recovered without the denied call" (:assistant/final turn))
-                 "the model saw the denial and answered — no dead end")
-             (is (= 2 @rounds) "the loop continued past the denied round")
-             (is (not (str/includes? (:assistant/final turn) "needs your approval"))
-                 "nothing was ever awaiting a human, so nothing says so"))))))))
+             (is (= "recovered without the denied call" (:assistant/final turn)))
+             (is (= 2 @rounds))
+             (is (not (str/includes? (:assistant/final turn) "needs your approval"))))))))))
 
 (deftest approval-denied-round-still-ends-the-turn
   (testing "the human-facing short-circuit survives: when every call is

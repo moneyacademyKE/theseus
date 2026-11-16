@@ -1,7 +1,6 @@
 (ns bb-agent.tool
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.policy :as policy]
             [bb-agent.rtk :as rtk]
             [bb-agent.a2a-tool :as a2a-tool]
             [bb-agent.net-search :as net-search]
@@ -51,13 +50,13 @@
       (common/error-result name (str "Unknown tool: " name) {}))))
 
 (defn handle-tool-request
-  "Policy predicates (brain/rules.clj, when :policy {:enabled true}) decide
-  first: :allow executes and :deny refuses, replacing the classifier verdict.
-  nil (disabled, no rules, no match, broken rules) falls back to the ordinary
-  approval flow unchanged."
+  "Route one request through optional capability, constitution, and approval
+  gates. Constitution denies always win. A constitution allow may replace only
+  an implicit :ask; explicit or configured approval modes remain authoritative."
   ([request] (handle-tool-request request {}))
   ([request cfg]
    (let [started-at (System/nanoTime)
+         requested-policy (:approval/policy request)
          request (normalize-request request)
          request (cond-> request
                    (and (:cwd cfg)
@@ -90,31 +89,23 @@
                                                   [:chat-id :thread-id])
                                (:status/emit cfg) (assoc :goal/emit (:status/emit cfg)))))
          approver (:approval/ask cfg)
-         ;; :approval/mode in config replaces the DEFAULT :ask policy only —
-         ;; explicit per-request policies (:auto-safe/:never) and the
-         ;; constitution (policy/verdict, checked above) still win.
-         ;; :auto-all removes the human checkpoint entirely (owner directive
-         ;; 2026-09-12); the constitution floor is the surviving guardrail.
-         decision-request (if (and (= :ask (:approval/policy request))
+         ;; Only an omitted request policy may inherit a configured mode.
+         decision-request (if (and (nil? requested-policy)
                                    (:approval/mode cfg))
                             (assoc request :approval/policy (:approval/mode cfg))
                             request)
+         approval-decision* (approval-decision decision-request)
          result (if (tools/dormant? cfg (:tool/name request))
                   ;; Optional capability the owner never opted into: refuse
-                  ;; BEFORE policy and execution. A tool absent from the
-                  ;; prompt must not run just because a model hallucinated
-                  ;; its name (owner directive 2026-11-12).
+                  ;; BEFORE execution. A tool absent from the prompt must not
+                  ;; run just because a model hallucinated its name.
                   (deny-result request :dormant)
-                  (if-let [verdict (policy/verdict request cfg)]
-                    (case verdict
-                      :allow (execute-tool-request request)
-                      :deny (deny-result request :policy))
-                    (case (approval-decision decision-request)
-                      :approved (execute-tool-request request)
-                      :ask (if (and approver (= :approved (approver request)))
-                             (execute-tool-request request)
-                             (deny-result request))
-                      :denied (deny-result request))))]
+                  (case approval-decision*
+                    :approved (execute-tool-request request)
+                    :ask (if (and approver (= :approved (approver request)))
+                           (execute-tool-request request)
+                           (deny-result request))
+                    :denied (deny-result request)))]
      ;; THE funnel: one recording site for every tool outcome — ok, error,
      ;; or denied with its denial source (approval vs constitution). The
      ;; RSI digest builds its tool-failure table from these events; a
@@ -129,6 +120,9 @@
                            :ms (quot (- (System/nanoTime) started-at) 1000000)
                            :ok (boolean (and (:executed? result)
                                              (= :ok (:status result))))
-                           :denial-source (:denial/source result)})
+                           :denial-source (:denial/source result)
+                           :denial-rule (:denial/rule result)
+                           :denial-category (:denial/category result)
+                           :denial-reason (:denial/reason result)})
        (catch Exception _ nil))
      (rtk/apply request result cfg))))

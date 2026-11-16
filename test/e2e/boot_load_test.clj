@@ -46,7 +46,8 @@
   (testing "default home is ~/theseus when no env override is set"
     (let [{:keys [exit out]}
           (sh {:dir "." :continue true}
-              "bb" "-e" "(require '[bb-agent.config :as c]) (print (c/home))")]
+              "env" "-u" "THESEUS_HOME" "bb" "-e"
+              "(require '[bb-agent.config :as c]) (print (c/home))")]
       (is (zero? exit))
       (is (str/includes? out (str (System/getProperty "user.home") "/theseus"))
           (str "unexpected default home: " out))))

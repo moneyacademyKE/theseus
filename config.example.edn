@@ -51,6 +51,5 @@
  ;; :goal/max-authoring-rounds 200
 
  ;;; ── Approvals: :ask (default) gates tools on a human; :auto-all auto-approves.
- ;;; The constitution (brain/rules.clj) vetoes dangerous ops regardless of mode.
  ;; :approval/mode :auto-all
  }
