@@ -49,6 +49,16 @@
                     :task (System/exit (gl/-main *command-line-args*))}
      test {:doc "Run all registered tests."
          :depends [test:e2e:all]}
+   test:fast {:doc "Run lint, goal unit tests, web module graph, and Node tests in an isolated home."
+              :requires ([bb-agent.test-gate :as gate])
+              :task (let [{:keys [exit]} (gate/run-isolated! ["bb" "test:fast:internal"])]
+                      (when (pos? exit) (System/exit exit)))}
+   test:fast:internal {:doc "Internal fast suite; use test:fast for an isolated run."
+                       :requires ([babashka.fs :as fs])
+                       :task (do (shell "bb" "lint")
+                                 (shell "bb" "test:goal")
+                                 (shell "bb" "scripts/check_web_graph.bb")
+                                 (apply shell "node" "--test" "--test-reporter=tap" (map str (sort (fs/glob "test/web" "*.test.mjs")))))}
    test:goal {:doc "Run goal-runner unit tests."
                  :task (shell "bb" "-m" "bb-agent.goal.run-tests")}
      test:bb-agent {:doc "Run bb_agent unit tests (notify listener, brain, autonomy)."
@@ -87,6 +97,7 @@
                                [bb-agent.browser-tool-test]
                                [bb-agent.a2a-client-test]
                                [bb-agent.hot-reload-test]
+                               [bb-agent.test-fast-test]
                                [bb-agent.test-gate-test]
                                [bb-agent.atomic-io-test]
                                [bb-agent.security-test]
@@ -135,6 +146,7 @@
                                              'bb-agent.browser-tool-test
                                              'bb-agent.a2a-client-test
                                              'bb-agent.hot-reload-test
+                                             'bb-agent.test-fast-test
                                              'bb-agent.test-gate-test
                                              'bb-agent.atomic-io-test
                                              'bb-agent.security-test
