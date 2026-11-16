@@ -74,7 +74,7 @@ rm -f "$APP"
 # bb-excel is a regular Maven dependency, not a pod.  An app archive has one
 # classpath root, so unpack its classes/resources into the archive rather than
 # shipping a nested jar that Babashka cannot discover.
-BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep '/bb-excel-[^/]\\+\\.jar$' | head -1)"
+BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep 'bb-excel-.*\.jar$' | head -1)"
 [ -n "$BB_EXCEL_JAR" ] || { echo "FATAL: bb-excel dependency not resolved" >&2; exit 1; }
 ( cd "$STAGE" && unzip -qo "$BB_EXCEL_JAR" -d app-deps && cd app-deps && zip -qr "$APP" . )
 unzip -l "$APP" | grep -q "META-INF/MANIFEST.MF" || \
