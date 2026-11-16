@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.knowledge :as k]
+            [bb-agent.knowledge-routing :as routing]
             [bb-agent.tool.file :as tool-file]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]))
@@ -811,15 +812,15 @@
 
 (deftest routing-terms-drops-words-that-cannot-route-test
   (is (= #{"guard" "writes" "snapshot" "file"}
-         (k/routing-terms "A guard that writes a snapshot of the file"))
+         (routing/routing-terms "A guard that writes a snapshot of the file"))
       "stopwords and <=2-char tokens carry no routing information; 'file' is a
        real content term (4 chars), so the expectation names it rather than
        assuming a length filter the fn does not have")
-  (is (= #{} (k/routing-terms "the of and to"))
+  (is (= #{} (routing/routing-terms "the of and to"))
       "a scope of pure stopwords has zero content terms — the abstain case"))
 
 (deftest routing-rows-flags-a-line-that-cannot-select-its-page-test
-  (let [rows (k/routing-rows ["alpha.md — a page"
+  (let [rows (routing/routing-rows ["alpha.md — a page"
                               "beta.md — protection tiers make edit rights data not prose"
                               "gamma.md — snapshots before an automated write"])]
     (is (= 3 (count rows)))
@@ -832,29 +833,29 @@
         "the flag is a boolean, never nil")))
 
 (deftest routing-rows-flags-two-scopes-a-reader-cannot-choose-between-test
-  (let [rows (k/routing-rows ["staleness.md — knowledge page staleness marks review date"
+  (let [rows (routing/routing-rows ["staleness.md — knowledge page staleness marks review date"
                               "curator.md — knowledge page curator marks review date"])]
     (is (every? :collision? rows)
         "both sides are flagged, because neither can be selected over the other")
     (is (= "curator.md" (:nearest (first rows))))
-    (is (<= k/routing-collision-jaccard (:max-jaccard (first rows))))))
+    (is (<= routing/routing-collision-jaccard (:max-jaccard (first rows))))))
 
 (deftest routing-report-names-its-own-denominator-and-misses-test
-  (let [clean (k/routing-report (k/routing-rows ["a.md — alpha beta gamma delta"
+  (let [clean (routing/routing-report (routing/routing-rows ["a.md — alpha beta gamma delta"
                                                  "b.md — epsilon zeta eta theta"]))]
     (is (str/includes? (first clean) "routing: 2 index line(s)"))
     (is (str/includes? (first clean) "THIN 0 | COLLISION 0"))
     (is (some #(str/includes? % "known misses: none") clean)
         "a clean run says so explicitly instead of printing nothing")
     (is (some #(str/includes? % "negative scope") clean)))
-  (let [flagged (k/routing-report (k/routing-rows ["a.md — a page"
+  (let [flagged (routing/routing-report (routing/routing-rows ["a.md — a page"
                                                    "b.md — one two three four"]))]
     (is (some #(str/includes? % "THIN a.md") flagged))
     (is (some #(str/includes? % "they are the useful part") flagged)
         "culi keeps its failing cases; so does this report")))
 
 (deftest routing-report-refuses-to-call-an-empty-index-clean-test
-  (let [out (k/routing-report (k/routing-rows []))]
+  (let [out (routing/routing-report (routing/routing-rows []))]
     (is (some #(str/includes? % "[UNVERIFIED] 0 index lines") out)
         "an empty index is a rotted walk or an empty corpus, not a routable one")
     (is (str/includes? (first out) "routing: 0 index line(s)"))))

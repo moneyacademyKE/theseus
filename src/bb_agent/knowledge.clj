@@ -9,6 +9,7 @@
             [bb-agent.config :as config]
             [bb-agent.coordinates :as coordinates]
             [bb-agent.brain :as brain]
+            [bb-agent.knowledge-routing :as routing]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
@@ -16,8 +17,7 @@
   (:import [java.time LocalDate]
            [java.time.temporal ChronoUnit]))
 
-(declare snapshot! never-fired unverified-zero guard-coverage-summary guards-report
-         routing-rows routing-report)
+(declare snapshot! never-fired unverified-zero guard-coverage-summary guards-report)
 
 ;; ---------------------------------------------------------------- staleness
 
@@ -1099,8 +1099,8 @@
             0)))
 
       "routing"
-      (let [rows (routing-rows (brain/knowledge-index))]
-        (doseq [line (routing-report rows)] (println line))
+      (let [rows (routing/routing-rows (brain/knowledge-index))]
+        (doseq [line (routing/routing-report rows)] (println line))
         0)
 
       "appends"
@@ -1368,154 +1368,3 @@
                  "is counted as neither machine nor ghost. "
                  "Wiring is a separate question (bb preflight sites, bb knowledge prune). "
                  "Report only — nothing was edited.")]))))
-
-
-;; ---------------------------------------------------------------------
-;; 2026-11-03 — does the brain index ROUTE? Red first (the four deftests below
-;; failed at analysis with `Unable to resolve symbol: k/routing-terms`), then
-;; implemented directly after `bb-knowledge-routing-rep-434091` errored on a
-;; provider timeout — the third `HttpTimeoutException` of the day on
-;; `ali/qwen3.8-max-0902` (rounds 17/25/37, 466s/1035s/1134s). The spec is
-;; unchanged; the supervision boundary could not reach a model, which is a
-;; receipt about the lane, not about the work.
-;;
-;; Source, level 2: hung12ct/culi `docs/evaluation.md` — a retrieval layer is
-;; scored on five metrics where "Abstain accuracy: Share of abstain cases
-;; (empty `expect`) where nothing was injected" sits beside hit rate, MRR,
-;; recall and precision, and the suite "keeps its failing cases; they are the
-;; useful part" under `### Known misses`. The reason: a layer that always
-;; answers has no measured failure mode.
-;;
-;; Our index cannot abstain — `bb-agent.brain/knowledge-index` rides whole in
-;; the system message by design, one `name — scope` line per page — so the
-;; honest analogue of an abstain case is a line that routes to NOTHING: a scope
-;; with too few content terms to select the page, or one indistinguishable from
-;; another. Both were measured once with a throwaway script in /tmp on
-;; 2026-11-03 (29 lines, terms 3-11, max Jaccard 0.200, zero content-free
-;; lines) and then left there, which is `bb coords` on 2026-10-14 exactly: a
-;; real finding produced by a script no boundary calls.
-
-(def routing-stopwords
-  "Words that carry no routing information. Kept tiny and explicit rather than
-   imported: a big stopword list is a second corpus to maintain, and this
-   measurement has 29 subjects."
-  #{"the" "a" "an" "of" "for" "and" "to" "in" "on" "is" "are" "it" "its"
-    "with" "that" "this" "be" "not" "as" "at" "by" "from" "or" "one" "two"
-    "each" "every" "when" "what" "how" "why" "which" "who"})
-
-(def routing-thin-min
-  "Below this many content terms a scope line cannot select its page. 3, and it
-   is ours: the live corpus's minimum is exactly 3 (measured 2026-11-03), so the
-   flag fires on the tail we already have and nothing above it. culi's
-   `noveltyJaccard = 0.6` and `carddedup`'s `JacNear = 0.40` are tuned to their
-   corpora; importing either would be laundering a threshold
-   (mechanical-confidence-supersede)."
-  3)
-
-(def routing-collision-jaccard
-  "Two scope lines sharing at least this Jaccard of content terms cannot be
-   selected between. Also ours, from the measured distribution: the corpus's
-   observed maximum is 0.200, so this fires on nothing today and names the shape
-   a future page would have to reach."
-  0.40)
-
-(defn routing-terms
-  "Content terms of one scope line: lowercase alnum tokens longer than 2 chars,
-   minus stopwords. Data in, data out — no file access."
-  [scope]
-  (->> (str/lower-case (str scope))
-       (re-seq #"[a-z0-9][a-z0-9_-]*")
-       (remove routing-stopwords)
-       (filter #(> (count %) 2))
-       set))
-
-(defn- jaccard-sim [a b]
-  (let [u (count (set/union a b))]
-    (if (zero? u) 0.0 (double (/ (count (set/intersection a b)) u)))))
-
-(defn routing-rows
-  "`index-lines` are `slug.md — scope` strings — exactly what
-   `bb-agent.brain/knowledge-index` emits — so this is a pure function over the
-   index, not a second walk of the corpus.
-
-   One row per line:
-   {:slug :scope :terms n :max-jaccard d :nearest slug :thin? bool :collision? bool}
-
-   Two flags, and they are the abstain cases of an index that cannot abstain:
-   * :thin? — fewer than `routing-thin-min` content terms. The line cannot select
-     its page, so the page is unreachable by scope however good it is. This is
-     the failure a hit-rate-only measurement never sees.
-   * :collision? — another line shares >= `routing-collision-jaccard` of its
-     content terms. Neither can be chosen over the other, so one of them is dead
-     weight and the index is lying about the split.
-
-   Deliberately NOT a score and NOT a gate: report-only, exit 0. A thin line may
-   still be load-bearing because a human reads the whole index anyway, and
-   refusing to load the brain over a Jaccard number would be a guard rejecting
-   truthful prose (the 2026-10-12 preflight lesson)."
-  [index-lines]
-  (let [parsed (mapv (fn [line]
-                       (let [[slug scope] (str/split (str line) #" — " 2)]
-                         {:slug (or slug (str line))
-                          :scope (or scope "")
-                          :terms (routing-terms (or scope ""))}))
-                     index-lines)]
-    (mapv (fn [{:keys [slug terms] :as p}]
-            (let [others (remove #(= (:slug %) slug) parsed)
-                  scored (map (fn [o] [(jaccard-sim terms (:terms o)) (:slug o)]) others)
-                  [best nearest] (if (seq scored)
-                                   (first (reverse (sort-by first scored)))
-                                   [0.0 nil])]
-              (-> p
-                  (dissoc :terms)
-                  (assoc :terms (count terms)
-                         :max-jaccard (double best)
-                         :nearest nearest
-                         :thin? (< (count terms) routing-thin-min)
-                         :collision? (>= (double best) routing-collision-jaccard)))))
-          parsed)))
-
-(defn routing-report
-  "Lines for the CLI. Prints the denominator beside the verdict (the
-   2026-11-03 guards lesson: a rate with no denominator is a claim the reader
-   cannot check), both flags as lists, and the known misses — culi keeps its
-   failing cases because 'they are the useful part', so a clean run says so
-   explicitly instead of printing nothing."
-  [rows]
-  (let [n (count rows)
-        thin (filterv :thin? rows)
-        coll (filterv :collision? rows)
-        terms (map :terms rows)]
-    (mapv str
-          (concat
-           [(format "routing: %d index line(s) | content terms %s..%s | max Jaccard %.3f | THIN %d | COLLISION %d"
-                    n
-                    (if (seq terms) (str (apply min terms)) "-")
-                    (if (seq terms) (str (apply max terms)) "-")
-                    (double (if (seq rows) (apply max (map :max-jaccard rows)) 0.0))
-                    (count thin) (count coll))]
-           (when (zero? n)
-             [(str "  [UNVERIFIED] 0 index lines measured — either the corpus is "
-                   "empty or the index walk has rotted. A zero here is not evidence "
-                   "of a routable corpus.")])
-           (map #(format "  THIN %s — %d content term(s), cannot select its page: %s"
-                         (:slug %) (:terms %) (:scope %))
-                thin)
-           (map #(format "  COLLISION %s <-> %s — Jaccard %.2f, a reader cannot choose between them"
-                         (:slug %) (:nearest %) (:max-jaccard %))
-                coll)
-           [(if (and (seq rows) (empty? thin) (empty? coll))
-              (str "  known misses: none at these thresholds. That is a measurement "
-                   "of THIS corpus at THIS size, not a proof the index routes — the "
-                   "measure is term overlap, and a scope line can be distinctive in "
-                   "words and still ambiguous to a reader.")
-              (str "  known misses: the flagged rows above are kept rather than "
-                   "fixed by the tool — culi's suite keeps its failing cases because "
-                   "they are the useful part."))
-            (str "negative scope: content terms are alnum tokens >2 chars minus a "
-                 "31-word stoplist, and similarity is Jaccard over those sets. That "
-                 "measures WORD overlap, not meaning — two scopes can share no words "
-                 "and still state the same rule, which an embedding would catch and "
-                 "this report cannot. Thresholds are ours, chosen from the measured "
-                 "distribution, not imported. Report only: no page was edited and no "
-                 "index line was rewritten.")]))))
