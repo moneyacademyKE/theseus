@@ -48,10 +48,19 @@ cat > "$STAGE/src/bb_agent/launcher.clj" <<'LAUNCHER'
   Packaging code only — deliberately NOT in the repo: the release tag stays
   frozen. Handles --version/--help locally, delegates everything else to
   bb-agent.cli exactly like: bb -m bb-agent.cli <args>."
-  (:require [bb-agent.cli :as cli]
+  (:require [babashka.fs :as fs]
+            [babashka.pods :as pods]
             [bb-agent.version :as version]))
 
+(defn- load-runtime-pods!
+  []
+  (when-let [dir (System/getenv "BABASHKA_PODS_DIR")]
+    (let [pod (fs/path dir "pod-babashka-go-sqlite3")]
+      (when (fs/executable? pod)
+        (pods/load-pod (str pod))))))
+
 (defn -main [& args]
+  (load-runtime-pods!)
   (case (first args)
     "--version" (println (str "theseus " version/v))
     "--help" (do (println "theseus — standalone executable (bb app archive)")
@@ -61,7 +70,9 @@ cat > "$STAGE/src/bb_agent/launcher.clj" <<'LAUNCHER'
     "web" (do
             (require '[bb-agent.web :as web])
             (apply (resolve 'bb-agent.web/-main) (rest args)))
-    (apply cli/-main args)))
+    (do
+      (require '[bb-agent.cli :as cli])
+      (apply (resolve 'bb-agent.cli/-main) args))))
 LAUNCHER
 
 mkdir -p "$STAGE/META-INF"
@@ -74,6 +85,11 @@ rm -f "$APP"
 ( cd "$STAGE/src" && zip -qr "$APP" . )   # classpath root: the namespaces
 ( cd "$STAGE" && zip -qr "$APP" web skills configs ops script scripts bench \
     bb.edn config.example.edn AGENTS.md CHANGELOG.md README.md META-INF )
+# bb-excel is a source dependency: app archives do not resolve bb.edn Maven
+# coordinates at runtime, so unpack its source into the archive classpath.
+BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep 'bb-excel-.*\.jar$' | head -1)"
+[ -n "$BB_EXCEL_JAR" ] || { echo "FATAL: bb-excel dependency not resolved" >&2; exit 1; }
+( cd "$STAGE" && unzip -qo "$BB_EXCEL_JAR" -d app-deps && rm -rf app-deps/META-INF && cd app-deps && zip -qr "$APP" . )
 # bb-excel is a source dependency: app archives do not resolve bb.edn Maven
 # coordinates at runtime, so unpack its source into the archive classpath.
 BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep 'bb-excel-.*\.jar$' | head -1)"
