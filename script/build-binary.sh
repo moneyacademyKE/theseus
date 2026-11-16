@@ -56,8 +56,11 @@ cat > "$STAGE/src/bb_agent/launcher.clj" <<'LAUNCHER'
     "--version" (println (str "theseus " version/v))
     "--help" (do (println "theseus — standalone executable (bb app archive)")
                  (println "Usage: theseus <command> [args...]")
-                 (println "Dispatches exactly like: bb -m bb-agent.cli <command> [args...]")
+                 (println "Commands: web, or any bb-agent CLI command")
                  (println (str "Version: " version/v)))
+    "web" (do
+            (require '[bb-agent.web :as web])
+            (apply (resolve 'bb-agent.web/-main) (rest args)))
     (apply cli/-main args)))
 LAUNCHER
 
