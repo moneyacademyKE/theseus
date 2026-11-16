@@ -9,7 +9,7 @@
 - Added a first-class `bb test` alias for the complete registered test graph.
 - Moved hot-reload logs out of the durable `state/` hygiene surface and into operational logs.
 
-## Unreleased
+## v1.3.1 - 2026-11-17
 
 ### Added — gap-analysis build (2026-11-11)
 
