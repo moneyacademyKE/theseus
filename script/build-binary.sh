@@ -74,12 +74,12 @@ rm -f "$APP"
 ( cd "$STAGE/src" && zip -qr "$APP" . )   # classpath root: the namespaces
 ( cd "$STAGE" && zip -qr "$APP" web skills configs ops script scripts bench \
     bb.edn config.example.edn AGENTS.md CHANGELOG.md README.md META-INF )
-# bb-excel is a regular Maven dependency, not a pod.  An app archive has one
-# classpath root, so unpack its classes/resources into the archive rather than
-# shipping a nested jar that Babashka cannot discover.
-BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep 'bb-excel-.*\.jar$' | head -1)"
-[ -n "$BB_EXCEL_JAR" ] || { echo "FATAL: bb-excel dependency not resolved" >&2; exit 1; }
-( cd "$STAGE" && unzip -qo "$BB_EXCEL_JAR" -d app-deps && rm -rf app-deps/META-INF && cd app-deps && zip -qr "$APP" . )
+# The local sqlite pod is a native sidecar; ship it beside the archive and
+# point BABASHKA_PODS_DIR at that directory at runtime.
+POD_BIN="$ROOT/../.pods/pod-babashka-go-sqlite3"
+[ -x "$POD_BIN" ] || { echo "FATAL: sqlite pod missing: $POD_BIN" >&2; exit 1; }
+cp "$POD_BIN" "$OUT/pod-babashka-go-sqlite3"
+chmod +x "$OUT/pod-babashka-go-sqlite3"
 unzip -l "$APP" > "$APP.list"
 if ! grep "META-INF/MANIFEST.MF" "$APP.list" >/dev/null; then
   echo "FATAL: manifest missing from archive" >&2
@@ -100,10 +100,13 @@ fi
 
 # Smoke: empty env, throwaway THESEUS_HOME, no bb on PATH; assert the APP answered.
 T="$(mktemp -d)"
-V="$(env -i THESEUS_HOME="$T" PATH=/usr/bin:/bin "$EXE" --version)"
+PODS="$(mktemp -d)"
+cp "$OUT/pod-babashka-go-sqlite3" "$PODS/pod-babashka-go-sqlite3"
+V="$(env -i THESEUS_HOME="$T" BABASHKA_PODS_DIR="$PODS" PATH=/usr/bin:/bin "$EXE" --version)"
 [ "$V" = "theseus $VERSION" ] || { echo "FATAL: smoke failed: got '$V'" >&2; exit 1; }
-env -i THESEUS_HOME="$T" PATH=/usr/bin:/bin "$EXE" --help >/dev/null
-env -i THESEUS_HOME="$T" PATH=/usr/bin:/bin "$EXE" session list >/dev/null
+env -i THESEUS_HOME="$T" BABASHKA_PODS_DIR="$PODS" PATH=/usr/bin:/bin "$EXE" --help >/dev/null
+env -i THESEUS_HOME="$T" BABASHKA_PODS_DIR="$PODS" PATH=/usr/bin:/bin "$EXE" session list >/dev/null
+rm -rf "$T" "$PODS"
 
 shasum -a 256 "$EXE" | tee "$EXE.sha256"
 echo "OK: $EXE ($(file -b "$EXE" | cut -c1-50), $(du -h "$EXE" | cut -f1))"
