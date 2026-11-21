@@ -16,6 +16,7 @@
             [bb-agent.tool :as tool]
             [bb-agent.tools :as tools]
             [bb-agent.turn-integrity :as ti]
+            [bb-agent.turn-signals :as turn-signals]
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
 
@@ -284,16 +285,23 @@
     ;; real usage.edn and bent every rate the RSI digest computed — the
     ;; goal runner's own act gates wrote them, 12 per attempt.
     (when (not= :fake (or (:provider turn) (:provider cfg)))
-      (usage/append-event! (usage/event {:session-id id
-                                         :provider (or (:provider turn) (:provider cfg))
-                                         :model (:model cfg)
-                                         :prompt prompt
-                                         :final final-content
-                                         :usage usage
-                                         :fallback-tried (not-empty (:fallback/tried turn))
-                                         :fallback-served (:fallback/served-by turn)
-                                         :fallback-model (:fallback/model turn)
-                                         :ok (:turn/ok completed true)})))
+      (let [prev-prompts (when id
+                           (mapv :user/input (take-last 4 (butlast (session/load-turns id)))))
+            signals (turn-signals/extract-turn-signals
+                     {:prompt prompt
+                      :prev-prompts prev-prompts
+                      :tool-results (:tool/results completed)})]
+        (usage/append-event! (usage/event {:session-id id
+                                           :provider (or (:provider turn) (:provider cfg))
+                                           :model (:model cfg)
+                                           :prompt prompt
+                                           :final final-content
+                                           :usage usage
+                                           :fallback-tried (not-empty (:fallback/tried turn))
+                                           :fallback-served (:fallback/served-by turn)
+                                           :fallback-model (:fallback/model turn)
+                                           :ok (:turn/ok completed true)
+                                           :signals signals}))))
     completed))
 
 (defn- vision-chain-cfg

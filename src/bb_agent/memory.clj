@@ -1,5 +1,7 @@
 (ns bb-agent.memory
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
+            [bb-agent.beliefs :as beliefs]
             [bb-agent.config :as config]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -28,24 +30,28 @@
 
 (defn- ensure-sqlite! [conn]
   (sqlite/execute! conn ["CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, text TEXT NOT NULL)"])
-  ;; Idempotent migration for the curated tier: the ALTER fails once
-  ;; the column exists, and that failure IS the migration being
-  ;; already applied.
-  (try (sqlite/execute! conn ["ALTER TABLE memories ADD COLUMN kind TEXT"])
-       (catch Exception _ nil))
+  (doseq [sql ["ALTER TABLE memories ADD COLUMN kind TEXT"
+               "ALTER TABLE memories ADD COLUMN status TEXT"
+               "ALTER TABLE memories ADD COLUMN evidence_count INTEGER"]]
+    (try (sqlite/execute! conn [sql])
+         (catch Exception _ nil)))
   nil)
 
 (defn- normalize-row [row]
-  (let [m (into {} (map (fn [[k v]] [(keyword k) v]) row))]
-    {:memory/id (:id m)
-     :memory/text (or (:text m) "")
-     :memory/kind (or (some-> (:kind m) edn/read-string) :raw)}))
+  (let [m (into {} (map (fn [[k v]] [(keyword k) v]) row))
+        status (some-> (:status m) edn/read-string)
+        ev (:evidence_count m)]
+    (cond-> {:memory/id (:id m)
+             :memory/text (or (:text m) "")
+             :memory/kind (or (some-> (:kind m) edn/read-string) :raw)}
+      status (assoc :memory/status status)
+      (some? ev) (assoc :memory/evidence-count (long ev)))))
 
 (defn- sqlite-load-memories []
   (with-sqlite
     (fn [conn]
       (ensure-sqlite! conn)
-      (->> (sqlite/query conn ["SELECT id, text, kind FROM memories ORDER BY rowid"])
+      (->> (sqlite/query conn ["SELECT id, text, kind, status, evidence_count FROM memories ORDER BY rowid"])
            (mapv normalize-row)))))
 
 (defn- sqlite-save-memories! [entries]
@@ -55,11 +61,13 @@
       (sqlite/execute! conn ["BEGIN IMMEDIATE"])
       (try
         (sqlite/execute! conn ["DELETE FROM memories"])
-        (doseq [{:memory/keys [id text kind]} entries]
-          (sqlite/execute! conn ["INSERT INTO memories (id, text, kind) VALUES (?, ?, ?)"
+        (doseq [{:memory/keys [id text kind status evidence-count]} entries]
+          (sqlite/execute! conn ["INSERT INTO memories (id, text, kind, status, evidence_count) VALUES (?, ?, ?, ?, ?)"
                                  (str id)
                                  (or text "")
-                                 (when kind (pr-str kind))]))
+                                 (when kind (pr-str kind))
+                                 (when status (pr-str status))
+                                 (when (some? evidence-count) (long evidence-count))]))
         (sqlite/execute! conn ["COMMIT"])
         (catch Exception e
           (try (sqlite/execute! conn ["ROLLBACK"])
@@ -70,30 +78,27 @@
 (defn load-memories []
   (case (backend)
     :sqlite (sqlite-load-memories)
-    (let [path (memory-file)]
-      (if (fs/regular-file? path)
-        (edn/read-string (slurp (str path)))
-        []))))
+    (aio/read-edn-safe (memory-file) [])))
 
 (defn save-memories! [entries]
   (case (backend)
     :sqlite (sqlite-save-memories! entries)
-    (let [path (memory-file)]
-      (fs/create-dirs (fs/parent path))
-      (spit (str path) (pr-str (vec entries)))
+    (do
+      (aio/write-private-file! (memory-file) (pr-str (vec entries)))
       (vec entries))))
 
 (defn add-memory!
-  "Append an entry. Kind defaults to :raw; :curated entries rank
-  before raw ones in search regardless of score."
+  "Upsert a belief entry with local negation-aware deduplication and
+   non-destructive contradiction handling. Kind defaults to :raw;
+   :curated entries rank before raw ones in search regardless of score."
   ([text] (add-memory! text :raw))
   ([text kind]
    (let [entry {:memory/id (str (random-uuid))
                 :memory/text text
                 :memory/kind kind}
-         entries (conj (load-memories) entry)]
+         [entries saved] (beliefs/upsert-belief (load-memories) entry)]
      (save-memories! entries)
-     entry)))
+     saved)))
 
 (defn curate-memory!
   "Promote the entry with `id` to :curated. Throws when no entry
@@ -135,12 +140,13 @@
   ([query] (search-memories query 5))
   ([query limit]
    (->> (load-memories)
+        (filter beliefs/active-entry?)
         (map (fn [entry]
                (assoc entry :memory/score (score-entry query entry))))
         (filter #(pos? (:memory/score % 0)))
-        (sort-by (juxt kind-rank (comp - :memory/score) :memory/text))
+        (sort-by (fn [entry] [(kind-rank entry) (- (:memory/score entry)) (:memory/id entry)]))
         (take limit)
         vec)))
 
 (defn attach-memories [prompt]
-  (search-memories prompt 5))
+  (search-memories prompt 3))

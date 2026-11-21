@@ -26,11 +26,13 @@
   ([] (today-tokens (usage/load-events) (today-prefix)))
   ([events day-prefix]
    (reduce (fn [acc e]
-             (if (and (not= :tool (:event/kind e))
-                      (str/starts-with? (str (or (:timestamp e) "")) day-prefix))
-               (+ acc (long (or (:total/tokens e)
-                                (+ (long (or (:input/tokens e) 0))
-                                   (long (or (:output/tokens e) 0))))))
+             (if (and (not= :tool (:usage/event e))
+                      (not= :tool (:event/kind e))
+                      (str/starts-with? (str (or (:created/at e) (:timestamp e) "")) day-prefix))
+               (+ acc (long (or (:tokens/total e)
+                                (:total/tokens e)
+                                (+ (long (or (:tokens/input e) (:input/tokens e) 0))
+                                   (long (or (:tokens/output e) (:output/tokens e) 0))))))
                acc))
            0
            events)))
