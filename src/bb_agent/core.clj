@@ -15,6 +15,7 @@
             [bb-agent.skill :as skill]
             [bb-agent.tool :as tool]
             [bb-agent.tools :as tools]
+            [bb-agent.turn-integrity :as ti]
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
 
@@ -394,191 +395,246 @@
                                         (history-messages cfg id overhead-chars))
         init-messages (if (:saver/active? cfg)
                         (into [{:role :system :content saver/system-hint}] base-messages)
-                        base-messages)]
-    (loop [messages init-messages
-           turn {:tool/requests []
-                 :tool/results []}
-           rounds-left max-rounds
-           seen-calls {}
-           read-cache {}
-           exposure (sec/note-input-urls (or (:security/exposure cfg) sec/empty-exposure) prompt)
-           discovered-tools (set (:tools/discovered cfg))
-           final-nudge-used? false
-           reasoning-streak 0
-           phantom-streak 0]
-      (when (neg? rounds-left)
-        (throw (ex-info "Exceeded tool rounds" {:rounds max-rounds
-                                                :final-nudge-used? final-nudge-used?})))
-      (let [consumed (max 0 (- max-rounds rounds-left))
-            nudge-msg (when (and nudge-interval
-                                 (pos? consumed)
-                                 (zero? (mod consumed nudge-interval))
-                                 (not final-nudge-used?))
-                        (checkpoint-nudge-message consumed max-rounds))
-            messages (cond-> messages nudge-msg (conj {:role :user :content nudge-msg}))
-            messages (if (> (compression/count-chars messages) live-budget)
-                       (compression/prune-old-tool-results messages live-tool-keep-recent)
-                       messages)
-            round-cfg (cond-> cfg
-                        (seq discovered-tools) (assoc :tools/discovered discovered-tools))
-            round-tools (if (seq discovered-tools)
-                          (tools/active-definitions round-cfg)
-                          active-tools)
-            request {:provider provider
-                     :model model
-                     :messages messages
-                     :memory/matches memory-matches
-                     :provider/config (get-in cfg [:providers provider])
-                     :provider/tools round-tools}
-            request (cond-> request (seq user-images) (assoc :images user-images))
-            response (complete-chain cfg request)
-            tool-requests (:tool/requests response)
-            threshold (or (:loop-guard-threshold cfg) default-loop-guard-threshold)
-            ;; The nudge can never sit at/above the kill line — a misconfig
-            ;; degrades to nudge-one-before-kill instead of silently
-            ;; disabling the warning stage.
-            nudge-threshold (min (or (:loop-guard-nudge-threshold cfg)
-                                     default-loop-guard-nudge-threshold)
-                                 (dec threshold))
-            repeated (some (fn [req]
-                             (let [k [(:tool/name req) (canonical-args (:tool/args req))]]
-                               (when (>= (get seen-calls k 0) (dec threshold)) k)))
-                           tool-requests)]
-        (if repeated
-          ;; Identical call Nth time: stop gracefully, execute nothing.
-          (finish-turn id cfg prompt memory-matches semantic-ctx
-                       (assoc turn :turn/ok false)
-                       (loop-guard-message repeated)
-                       (:usage response))
-          (let [;; One event before each call and one after its outcome — the
-                ;; channel flips ⚙️→✅/❌ live inside a single flow message.
-                ;; Read-only tool results are cached within the turn and
-                ;; invalidated whenever any mutating tool runs.
-                {:keys [results cache exp]}
-                (if (seq tool-requests)
-                  (reduce
-                   (fn [{:keys [results cache exp]} req]
-                     (let [tname (:tool/name req)
-                           k [tname (canonical-args (:tool/args req))]
-                           cacheable? (contains? cacheable-read-tools tname)]
-                       (cond
-                         (and (pos? (get seen-calls k 0))
-                              (>= (get seen-calls k 0) (dec nudge-threshold)))
-                         (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
-                             (safe-emit cfg {:status :tool/done :tool tname :args {:ok? false :loop-guard :nudged}})
-                             {:results (conj results
-                                             {:tool/name tname
-                                              :status :error
-                                              :executed? false
-                                              :loop-guard :nudged
-                                              :error/message (loop-guard-nudge-message
-                                                              tname
-                                                              (inc (get seen-calls k 0))
-                                                              threshold)})
-                              :cache cache
-                              :exp exp})
+                        base-messages)
+        heartbeat (atom (System/currentTimeMillis))]
+    (ti/with-stall-watchdog
+     cfg heartbeat
+     (fn []
+       (loop [messages init-messages
+              turn {:tool/requests []
+                    :tool/results []}
+              rounds-left max-rounds
+              seen-calls {}
+              read-cache {}
+              exposure (sec/note-input-urls (or (:security/exposure cfg) sec/empty-exposure) prompt)
+              discovered-tools (set (:tools/discovered cfg))
+              final-nudge-used? false
+              reasoning-streak 0
+              phantom-streak 0
+              truncation-nudges 0
+              execute-nudges 0]
+         (reset! heartbeat (System/currentTimeMillis))
+         (when (neg? rounds-left)
+           (throw (ex-info "Exceeded tool rounds" {:rounds max-rounds
+                                                   :final-nudge-used? final-nudge-used?})))
+         (let [consumed (max 0 (- max-rounds rounds-left))
+               nudge-msg (when (and nudge-interval
+                                    (pos? consumed)
+                                    (zero? (mod consumed nudge-interval))
+                                    (not final-nudge-used?))
+                           (checkpoint-nudge-message consumed max-rounds))
+               messages (cond-> messages nudge-msg (conj {:role :user :content nudge-msg}))
+               messages (if (> (compression/count-chars messages) live-budget)
+                          (compression/prune-old-tool-results messages live-tool-keep-recent)
+                          messages)
+               round-cfg (cond-> cfg
+                           (seq discovered-tools) (assoc :tools/discovered discovered-tools))
+               round-tools (if (seq discovered-tools)
+                             (tools/active-definitions round-cfg)
+                             active-tools)
+               request {:provider provider
+                        :model model
+                        :messages messages
+                        :memory/matches memory-matches
+                        :provider/config (get-in cfg [:providers provider])
+                        :provider/tools round-tools}
+               request (cond-> request (seq user-images) (assoc :images user-images))
+               response (complete-chain cfg request)
+               _ (reset! heartbeat (System/currentTimeMillis))
+               tool-requests (:tool/requests response)
+               truncated? (= :truncated (ti/classify-finish-reason (:finish/reason response)))
+               threshold (or (:loop-guard-threshold cfg) default-loop-guard-threshold)
+               ;; The nudge can never sit at/above the kill line — a misconfig
+               ;; degrades to nudge-one-before-kill instead of silently
+               ;; disabling the warning stage.
+               nudge-threshold (min (or (:loop-guard-nudge-threshold cfg)
+                                        default-loop-guard-nudge-threshold)
+                                    (dec threshold))
+               repeated (some (fn [req]
+                                (let [k [(:tool/name req) (canonical-args (:tool/args req))]]
+                                  (when (>= (get seen-calls k 0) (dec threshold)) k)))
+                              tool-requests)]
+           (if repeated
+             ;; Identical call Nth time: stop gracefully, execute nothing.
+             (finish-turn id cfg prompt memory-matches semantic-ctx
+                          (assoc turn :turn/ok false)
+                          (loop-guard-message repeated)
+                          (:usage response))
+             (let [{:keys [results cache exp]}
+                   (if (seq tool-requests)
+                     (reduce
+                      (fn [{:keys [results cache exp]} req]
+                        (let [tname (:tool/name req)
+                              k [tname (canonical-args (:tool/args req))]
+                              cacheable? (contains? cacheable-read-tools tname)]
+                          (cond
+                            (and (pos? (get seen-calls k 0))
+                                 (>= (get seen-calls k 0) (dec nudge-threshold)))
+                            (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
+                                (safe-emit cfg {:status :tool/done :tool tname :args {:ok? false :loop-guard :nudged}})
+                                {:results (conj results
+                                                {:tool/name tname
+                                                 :status :error
+                                                 :executed? false
+                                                 :loop-guard :nudged
+                                                 :error/message (loop-guard-nudge-message
+                                                                 tname
+                                                                 (inc (get seen-calls k 0))
+                                                                 threshold)})
+                                 :cache cache
+                                 :exp exp})
 
-                         (and cacheable? (contains? cache k))
-                         (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
-                             (safe-emit cfg {:status :tool/done :tool tname :args {:ok? true :cached? true}})
-                             {:results (conj results (assoc (get cache k) :cached? true))
-                              :cache cache
-                              :exp exp})
+                            (and cacheable? (contains? cache k))
+                            (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
+                                (safe-emit cfg {:status :tool/done :tool tname :args {:ok? true :cached? true}})
+                                {:results (conj results (assoc (get cache k) :cached? true))
+                                 :cache cache
+                                 :exp exp})
 
-                         :else
-                         (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
-                             (let [result (tool/handle-tool-request req (assoc round-cfg :security/exposure exp))
-                                   [exp* _scan] (sec/note-exposure exp tname result)]
-                               (safe-emit cfg {:status :tool/done
-                                               :tool tname
-                                               :args {:ok? (= :ok (:status result))}})
-                               {:results (conj results result)
-                                :cache (cond
-                                         (and cacheable? (= :ok (:status result)))
-                                         (assoc cache k result)
-                                         (not cacheable?) {}
-                                         :else cache)
-                                :exp exp*})))))
-                   {:results [] :cache read-cache :exp exposure}
-                   tool-requests)
-                  {:results nil :cache read-cache :exp exposure})
-                tool-results results
-                read-cache* cache
-                exposure* exp
-                discovered-tools* (reduce (fn [acc r]
-                                            (if (seq (:discovered r))
-                                              (into acc (:discovered r))
-                                              acc))
-                                          discovered-tools
-                                          (or tool-results []))
-                turn* (cond-> (append-tool-round turn response (or tool-results []))
-                        (:fallback/tried response)
-                        (assoc :fallback/tried (:fallback/tried response))
-                        (:fallback/served-by response)
-                        (assoc :provider (:fallback/served-by response)
-                               :fallback/served-by (:fallback/served-by response)
-                               :fallback/model (:fallback/model response)))
-                seen-calls* (reduce (fn [m req]
-                                      (update m [(:tool/name req) (canonical-args (:tool/args req))]
-                                              (fnil inc 0)))
-                                    seen-calls (or tool-requests []))]
-            (if (seq tool-requests)
-              (if (awaiting-human? tool-results)
-                (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
-                (let [rounds-next (dec rounds-left)
-                      extend? (and (neg? rounds-next)
-                                   (pos? nudge-final-rounds)
-                                   (not final-nudge-used?))]
-                  (recur (cond-> (continue-messages messages response tool-results)
-                           extend? (conj {:role :user
-                                          :content (final-nudge-message nudge-final-rounds)}))
-                         turn*
-                         (if extend? nudge-final-rounds rounds-next)
-                         seen-calls*
-                         read-cache*
-                         exposure*
-                         discovered-tools*
-                         (or extend? final-nudge-used?)
-                         0
-                         0)))
-              (if-let [content (:content response)]
-                (let [phantom (phantom-tool-text content)
-                      pthreshold (or (:phantom-nudge-threshold cfg)
-                                     default-phantom-nudge-threshold)
-                      pstreak (inc phantom-streak)]
-                  (if (and phantom (< pstreak pthreshold))
-                    ;; A tool call emitted as text: nudge, don't finish — the
-                    ;; model re-emits through the tool channel. Bounded: after
-                    ;; the threshold the text is accepted as the final answer.
-                    (recur (conj messages {:role :user
-                                           :content (phantom-nudge-message phantom pstreak pthreshold)})
-                           turn*
-                           (dec rounds-left)
-                           seen-calls*
-                           read-cache*
-                           exposure*
-                           discovered-tools*
-                           final-nudge-used?
-                           0
-                           pstreak)
-                    (finish-turn id cfg prompt memory-matches semantic-ctx
-                                 (cond-> turn*
-                                   (pos? phantom-streak)
-                                   (assoc :turn/phantom-nudged phantom-streak))
-                                 content (:usage response))))
-                (let [streak (inc reasoning-streak)
-                      rthreshold (or (:reasoning-nudge-threshold cfg)
-                                     default-reasoning-nudge-threshold)]
-                  (if (< streak rthreshold)
-                    (recur (conj messages {:role :user
-                                           :content (reasoning-nudge-message streak rthreshold)})
-                           turn*
-                           (dec rounds-left)
-                           seen-calls*
-                           read-cache*
-                           exposure*
-                           discovered-tools*
-                           final-nudge-used?
-                           streak
-                           phantom-streak)
-                    (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (reasoning-death-message streak) (:usage response))))))))))))
+                            :else
+                            (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
+                                (let [result (tool/handle-tool-request req (assoc round-cfg :security/exposure exp))
+                                      [exp* _scan] (sec/note-exposure exp tname result)]
+                                  (reset! heartbeat (System/currentTimeMillis))
+                                  (safe-emit cfg {:status :tool/done
+                                                  :tool tname
+                                                  :args {:ok? (= :ok (:status result))}})
+                                  {:results (conj results result)
+                                   :cache (cond
+                                            (and cacheable? (= :ok (:status result)))
+                                            (assoc cache k result)
+                                            (not cacheable?) {}
+                                            :else cache)
+                                   :exp exp*})))))
+                      {:results [] :cache read-cache :exp exposure}
+                      tool-requests)
+                     {:results nil :cache read-cache :exp exposure})
+                   tool-results results
+                   read-cache* cache
+                   exposure* exp
+                   discovered-tools* (reduce (fn [acc r]
+                                               (if (seq (:discovered r))
+                                                 (into acc (:discovered r))
+                                                 acc))
+                                             discovered-tools
+                                             (or tool-results []))
+                   turn* (cond-> (append-tool-round turn response (or tool-results []))
+                           (:fallback/tried response)
+                           (assoc :fallback/tried (:fallback/tried response))
+                           (:fallback/served-by response)
+                           (assoc :provider (:fallback/served-by response)
+                                  :fallback/served-by (:fallback/served-by response)
+                                  :fallback/model (:fallback/model response)))
+                   seen-calls* (reduce (fn [m req]
+                                         (update m [(:tool/name req) (canonical-args (:tool/args req))]
+                                                 (fnil inc 0)))
+                                       seen-calls (or tool-requests []))]
+               (if (seq tool-requests)
+                 (if (awaiting-human? tool-results)
+                   (finish-turn id cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
+                   (let [rounds-next (dec rounds-left)
+                         extend? (and (neg? rounds-next)
+                                      (pos? nudge-final-rounds)
+                                      (not final-nudge-used?))]
+                     (recur (cond-> (continue-messages messages response tool-results)
+                              (and truncated? (zero? truncation-nudges))
+                              (conj {:role :user :content (ti/truncation-recovery-prompt tool-requests)})
+                              extend? (conj {:role :user
+                                             :content (final-nudge-message nudge-final-rounds)}))
+                            turn*
+                            (if extend? nudge-final-rounds rounds-next)
+                            seen-calls*
+                            read-cache*
+                            exposure*
+                            discovered-tools*
+                            (or extend? final-nudge-used?)
+                            0
+                            0
+                            (if (and truncated? (zero? truncation-nudges))
+                              (inc truncation-nudges)
+                              truncation-nudges)
+                            execute-nudges)))
+                 (if-let [content (:content response)]
+                   (let [phantom (phantom-tool-text content)
+                         pthreshold (or (:phantom-nudge-threshold cfg)
+                                        default-phantom-nudge-threshold)
+                         pstreak (inc phantom-streak)]
+                     (cond
+                       (and truncated? (zero? truncation-nudges))
+                       (recur (-> messages
+                                  (conj {:role :assistant :content content})
+                                  (conj {:role :user :content (ti/truncation-recovery-prompt nil)}))
+                              turn*
+                              (dec rounds-left)
+                              seen-calls*
+                              read-cache*
+                              exposure*
+                              discovered-tools*
+                              final-nudge-used?
+                              0
+                              phantom-streak
+                              (inc truncation-nudges)
+                              execute-nudges)
+
+                       (and phantom (< pstreak pthreshold))
+                       (recur (conj messages {:role :user
+                                              :content (phantom-nudge-message phantom pstreak pthreshold)})
+                              turn*
+                              (dec rounds-left)
+                              seen-calls*
+                              read-cache*
+                              exposure*
+                              discovered-tools*
+                              final-nudge-used?
+                              0
+                              pstreak
+                              truncation-nudges
+                              execute-nudges)
+
+                       (and (zero? execute-nudges)
+                            (ti/narration-without-mutation? prompt turn* content))
+                       (recur (-> messages
+                                  (conj {:role :assistant :content content})
+                                  (conj {:role :user :content ti/execute-guard-nudge-message}))
+                              turn*
+                              (dec rounds-left)
+                              seen-calls*
+                              read-cache*
+                              exposure*
+                              discovered-tools*
+                              final-nudge-used?
+                              0
+                              phantom-streak
+                              truncation-nudges
+                              (inc execute-nudges))
+
+                       :else
+                       (finish-turn id cfg prompt memory-matches semantic-ctx
+                                    (cond-> turn*
+                                      (pos? phantom-streak)
+                                      (assoc :turn/phantom-nudged phantom-streak))
+                                    content (:usage response))))
+                   (let [streak (inc reasoning-streak)
+                         rthreshold (or (:reasoning-nudge-threshold cfg)
+                                        default-reasoning-nudge-threshold)]
+                     (if (< streak rthreshold)
+                       (recur (conj messages {:role :user
+                                              :content (reasoning-nudge-message streak rthreshold)})
+                              turn*
+                              (dec rounds-left)
+                              seen-calls*
+                              read-cache*
+                              exposure*
+                              discovered-tools*
+                              final-nudge-used?
+                              streak
+                              phantom-streak
+                              truncation-nudges
+                              execute-nudges)
+                       (if-let [receipt (ti/synthesize-silent-receipt turn*)]
+                         (finish-turn id cfg prompt memory-matches semantic-ctx
+                                      (assoc turn* :turn/ok true :turn/synthesized-receipt? true)
+                                      receipt (:usage response))
+                         (finish-turn id cfg prompt memory-matches semantic-ctx
+                                      (assoc turn* :turn/ok false)
+                                      (reasoning-death-message streak) (:usage response)))))))))))))))

@@ -148,7 +148,9 @@
                                                (vision/attach-to-first-user messages imgs :openai))
                                     :tools advertised-tools})}))
         [status body vision-degraded?] (perform-with-vision-fallback post! images)
-        message (get-in body [:choices 0 :message])
+        choice (get-in body [:choices 0])
+        message (:message choice)
+        finish-reason (:finish_reason choice)
         content (:content message)
         tool-calls (:tool_calls message)]
     (when (and (str/blank? content) (empty? tool-calls))
@@ -156,6 +158,7 @@
                       {:status status})))
     (cond-> {:role :assistant}
       (not (str/blank? content)) (assoc :content content)
+      finish-reason (assoc :finish/reason finish-reason)
       (:usage body) (assoc :usage (openai-usage body))
       (seq tool-calls) (assoc :tool/requests (mapv openai-tool-request tool-calls))
       vision-degraded? (assoc :vision/degraded true))))
@@ -312,6 +315,7 @@
       (throw (ex-info "Provider response did not include content"
                       {:status status})))
     (cond-> (anthropic-extract content-blocks)
+      (:stop_reason body) (assoc :finish/reason (:stop_reason body))
       (:usage body) (assoc :usage (anthropic-usage body))
       vision-degraded? (assoc :vision/degraded true))))
 

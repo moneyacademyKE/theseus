@@ -8,6 +8,7 @@
             [bb-agent.atomic-io :as aio]
             [bb-agent.bot-commands :as bot-commands]
             [bb-agent.config :as config]
+            [bb-agent.crash-flag :as crash-flag]
             [bb-agent.digest :as digest]
             [bb-agent.doctor :as doctor]
             [bb-agent.goal-bridge :as goal-bridge]
@@ -211,6 +212,10 @@
         (while (and (:in-cycle? @lifecycle)
                     (< (System/currentTimeMillis) deadline))
           (Thread/sleep 50)))
+      (when (:in-cycle? @lifecycle)
+        (try (crash-flag/write-crash-flag! {:reason "sigterm-in-cycle"
+                                            :task "telegram-poll"})
+             (catch Exception _ nil)))
       (release-instance-lock!)
       (println (str "poller: graceful shutdown (in-flight-cycle="
                     (boolean (:in-cycle? @lifecycle)) ") @ "
@@ -336,6 +341,8 @@
      (get-in boot-cfg [:telegram :log-keep-bytes] log-cap/default-keep-bytes))
     ;; bk-173e: the boot log answers "what version is running" — no ps, no prayer.
     (println (str "theseus " version/v " booting"))
+    (when-let [{:keys [notice]} (try (crash-flag/consume-crash-flag!) (catch Exception _ nil))]
+      (println (str "boot crash recovery: " notice)))
     (bot-commands/register-safely!)
     ;; bk-1825: doctor-lite at boot. Print every check; on errors, shout —
     ;; log line + owner DM via the durable outbox. Never throws: a health
