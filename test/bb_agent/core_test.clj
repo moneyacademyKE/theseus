@@ -6,9 +6,11 @@
    to a constant success and each tool call carries unique args (identical
    repeated calls are the loop guard's job, not this suite's)."
   (:require [babashka.fs :as fs]
+            [bb-agent.circuit-breaker :as cb]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.provider :as provider]
+            [bb-agent.retry :as retry]
             [bb-agent.tool :as tool]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
@@ -340,3 +342,30 @@
              (is (str/includes? (:assistant/final turn) "needs your approval")
                  "the ask is reported to the human")
              (is (= 1 @rounds) "no further rounds burned while a human decides"))))))))
+
+(deftest complete-retrying-preserves-concurrent-other-provider-breaker-state
+  (let [br-var #'core/provider-breaker
+        br-atom @br-var
+        saved @br-atom]
+    (try
+      (reset! br-atom (cb/breaker 5 30))
+      (with-redefs [retry/with-retries
+                    (fn [opts _thunk]
+                      ;; Simulate another provider updating the shared breaker concurrently
+                      (swap! br-atom assoc-in [:statuses :provider-b]
+                             {:state :open :failures 5 :tripped-at 200})
+                      {:outcome :success
+                       :value {:content "ok"}
+                       :attempts 1
+                       :breaker (assoc-in (:breaker opts)
+                                          [:statuses (:breaker-key opts)]
+                                          {:state :closed :failures 0})})]
+        (#'core/complete-retrying {} :provider-a {:messages []})
+        (is (= {:state :open :failures 5 :tripped-at 200}
+               (get-in @br-atom [:statuses :provider-b]))
+            "updating :provider-a must not clobber :provider-b's breaker state")
+        (is (= {:state :closed :failures 0}
+               (get-in @br-atom [:statuses :provider-a]))))
+      (finally
+        (reset! br-atom saved)))))
+

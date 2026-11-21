@@ -39,6 +39,7 @@
   (atom {}))
 (def ^:private job-seq (atom 0))
 (def ^:private max-jobs 60)
+(def ^:private max-uploads 100)
 (def ^:private max-upload-bytes (* 20 1024 1024))
 (def ^:private max-events 200)
 
@@ -229,6 +230,27 @@
                                                       (sort-by :submitted-at (vals m)))))
                     m)))))
 
+(defn- prune-uploads! []
+  (let [referenced (into #{} (mapcat :attachment-ids (vals @jobs)))
+        [old new] (swap-vals!
+                   uploads
+                   (fn [m]
+                     (let [excess (- (count m) max-uploads)]
+                       (if (pos? excess)
+                         (let [evict (->> m
+                                          (remove (fn [[uid _]] (contains? referenced uid)))
+                                          (sort-by (fn [[_ desc]] (:uploaded-at desc 0)))
+                                          (take excess)
+                                          (map first))]
+                           (if (seq evict)
+                             (apply dissoc m evict)
+                             m))
+                         m))))]
+    (doseq [[uid desc] old
+            :when (not (contains? new uid))]
+      (try (fs/delete-if-exists (:path desc))
+           (catch Exception _ nil)))))
+
 ;; ---------- public API (called by bb-agent.web routes) ----------
 
 (defn- safe-upload-name
@@ -266,17 +288,19 @@
     (throw (ex-info (str "upload exceeds " max-upload-bytes " bytes")
                     {:web/upload? true :status 413})))
   (let [id (subs (str (java.util.UUID/randomUUID)) 0 12)
-        name (safe-upload-name file-name)
+        safe-name (safe-upload-name file-name)
         dir (fs/path (config/home) "channel_attachments" "web")
-        path (fs/path dir (str id "-" name))
+        path (fs/path dir (str id "-" safe-name))
         desc {:kind (upload-kind mime-type path)
               :path (str path)
-              :file-name name
+              :file-name safe-name
               :mime-type (some-> mime-type str)
-              :bytes (alength bytes)}]
+              :bytes (alength bytes)
+              :uploaded-at (now-ms)}]
     (fs/create-dirs dir)
     (fs/write-bytes path bytes)
     (swap! uploads assoc id desc)
+    (prune-uploads!)
     (assoc desc :upload/id id)))
 
 (defn submit-turn!
@@ -319,7 +343,7 @@
   [id]
   (when-let [j (get @jobs (str id))]
     (-> (select-keys j [:job/id :session/id :status :events :approval :final
-                        :error :turn-ok :cancel-requested
+                        :error :cancel-requested
                         :submitted-at :started-at :finished-at])
         (assoc :artifacts (artifacts/artifacts-for id)))))
 

@@ -35,29 +35,54 @@
   [row]
   (into {} (map (fn [[k v]] [(keyword k) v]) row)))
 
+(def ^:private mutating-sql-re
+  #"(?i)\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|vacuum|reindex)\b")
+
+(defn- validate-select-sql! [sql]
+  (let [trimmed (-> (str (or sql ""))
+                    str/trim
+                    (str/replace #";\s*$" ""))]
+    (when (or (str/blank? trimmed)
+              (str/includes? trimmed ";")
+              (not (re-find #"(?is)^(select|with)\b" trimmed))
+              (re-find mutating-sql-re trimmed))
+      (throw (ex-info "usage:query is SELECT-only (the EDN ledger remains the write path)"
+                      {:sql sql})))
+    trimmed))
+
 (defn index-usage!
-  "Rebuild the sqlite index from the EDN ledger; returns the row count."
+  "Rebuild the sqlite index transactionally from the EDN ledger; returns the row count."
   []
   (let [db (str (index-file))]
     (fs/create-dirs (fs/parent (index-file)))
-    (doseq [s schema!]
-      (sqlite/execute! db [s]))
-    (sqlite/execute! db ["delete from usage_events"])
-    (doseq [e (usage/load-events)]
-      (sqlite/execute! db (into ["insert into usage_events (created_at, session_id, provider, model, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_total, cost_estimate_usd, ok) values (?,?,?,?,?,?,?,?,?,?,?)"]
-                                (event-row e))))
-    (-> (sqlite/query db ["select count(*) as n from usage_events"])
-        first normalize-row :n)))
+    (let [conn (sqlite/get-connection db)]
+      (try
+        (doseq [s schema!]
+          (sqlite/execute! conn [s]))
+        (sqlite/execute! conn ["BEGIN IMMEDIATE"])
+        (try
+          (sqlite/execute! conn ["delete from usage_events"])
+          (doseq [e (usage/load-events)]
+            (sqlite/execute! conn (into ["insert into usage_events (created_at, session_id, provider, model, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_total, cost_estimate_usd, ok) values (?,?,?,?,?,?,?,?,?,?,?)"]
+                                        (event-row e))))
+          (sqlite/execute! conn ["COMMIT"])
+          (catch Exception e
+            (try (sqlite/execute! conn ["ROLLBACK"])
+                 (catch Exception _ nil))
+            (throw e)))
+        (-> (sqlite/query conn ["select count(*) as n from usage_events"])
+            first normalize-row :n)
+        (finally
+          (sqlite/close-connection conn))))))
 
 (defn query
   "SELECT/WITH-only SQL over the index. The index is rebuilt first, so a
   query is always fresh. Rows come back as maps with keyword keys."
   [sql]
-  (when-not (re-find #"(?is)^\s*(select|with)\b" (str sql))
-    (throw (ex-info "usage:query is SELECT-only (the EDN ledger remains the write path)" {:sql sql})))
-  (let [db (str (index-file))]
+  (let [safe-sql (validate-select-sql! sql)
+        db (str (index-file))]
     (index-usage!)
-    (mapv normalize-row (sqlite/query db [sql]))))
+    (mapv normalize-row (sqlite/query db [safe-sql]))))
 
 (defn -main
   "bb usage:query \"select ...\""

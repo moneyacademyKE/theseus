@@ -26,4 +26,10 @@
       (testing "the write path stays in EDN: SQL is SELECT-only"
         (is (thrown? Exception (store/query "delete from usage_events")))
         (is (thrown? Exception (store/query "insert into usage_events default values")))
+        (is (thrown? Exception (store/query "select count(*) from usage_events; drop table usage_events")))
+        (is (thrown? Exception (store/query "select 1; pragma user_version=1")))
+        (is (thrown? Exception (store/query "with gone as (delete from usage_events returning *) select * from gone")))
+        (is (thrown? Exception (store/query "select 1 from usage_events where attach('x', 'y')")))
+        (is (= [{:n 2}]
+               (store/query "WITH cte AS (SELECT count(*) AS n FROM usage_events) SELECT n FROM cte;")))
         (is (= 2 (store/index-usage!)) "index unchanged after rejected writes")))))

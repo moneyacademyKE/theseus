@@ -102,7 +102,8 @@
                                 :breaker-key provider))
                (:status/emit cfg) (assoc :emit (:status/emit cfg)))
         result (retry/with-retries opts #(provider/complete provider request))]
-    (when (:breaker result) (reset! provider-breaker (:breaker result)))
+    (when-let [status (get-in (:breaker result) [:statuses provider])]
+      (swap! provider-breaker assoc-in [:statuses provider] status))
     (case (:outcome result)
       :success (:value result)
       :breaker-open (throw (ex-info (str "Provider circuit breaker open for " provider)

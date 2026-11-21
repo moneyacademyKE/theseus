@@ -386,3 +386,23 @@
               "a later approve finds no dangling zombie pending approval")))
       (finally
         (fs/delete-tree home)))))
+
+(deftest concurrent-create-pending-preserves-every-request
+  (let [home (fs/create-temp-dir {:prefix "theseus-approvals-concurrent-"})]
+    (try
+      (with-redefs [config/home (fn [] (str home))]
+        (let [futs (doall
+                    (for [i (range 20)]
+                      (future
+                        (approval/create-pending!
+                         (str "sess-" i) :telegram
+                         {:tool/name "shell" :tool/args {:cmd (str "echo " i)}}))))
+              created (mapv deref futs)
+              state (approval/load-state)]
+          (is (= 20 (count created)))
+          (is (= 20 (count (distinct (map :approval/id created)))))
+          (is (= 20 (count (:pending state)))
+              "concurrent read-modify-write must never lose a pending approval")))
+      (finally
+        (fs/delete-tree home)))))
+

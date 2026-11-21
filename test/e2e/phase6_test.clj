@@ -51,6 +51,27 @@
                                       "sqlite3" (str sqlite-path)
                                       "SELECT text FROM memories;"))))))))
 
+(deftest sqlite-memory-preserves-special-chars-and-resists-injection
+  (let [home (config/home)
+        config-path (fs/path home "config.edn")
+        tricky-1 "line1\nline2\tcol2 'single' \"double\""
+        tricky-2 "'); DROP TABLE memories; --"]
+    (spit (str config-path)
+          (pr-str {:provider :fake
+                   :model "fake-deterministic"
+                   :session/id "phase6-session"
+                   :memory/backend :sqlite}))
+    (let [m1 (memory/add-memory! tricky-1)
+          m2 (memory/add-memory! tricky-2)]
+      (memory/curate-memory! (:memory/id m2))
+      (let [loaded (memory/load-memories)]
+        (is (= 2 (count loaded)))
+        (is (= (:memory/id m1) (:memory/id (first loaded))))
+        (is (= tricky-1 (:memory/text (first loaded))))
+        (is (= :raw (:memory/kind (first loaded))))
+        (is (= tricky-2 (:memory/text (second loaded))))
+        (is (= :curated (:memory/kind (second loaded))))))))
+
 (deftest browser-and-document-tools-execute
   (let [doc-path (fs/path (config/home) "sample.txt")]
     (spit (str doc-path) "phase six document text")

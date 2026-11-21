@@ -1,9 +1,9 @@
 (ns bb-agent.memory
   (:require [babashka.fs :as fs]
-            [babashka.process :as p]
             [bb-agent.config :as config]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [pod.babashka.go-sqlite3 :as sqlite]))
 
 (defn memory-file []
   (fs/path (config/home) "state" "memory.edn"))
@@ -17,51 +17,55 @@
       :sqlite
       :edn)))
 
-(defn- sqlite! [& args]
-  (fs/create-dirs (fs/parent (sqlite-memory-file)))
-  (let [result (apply p/shell {:out :string
-                               :err :string
-                               :continue true}
-                      "sqlite3" (str (sqlite-memory-file)) args)]
-    (when-not (zero? (:exit result))
-      (throw (ex-info "sqlite3 command failed"
-                      {:stderr (:err result)})))
-    (:out result)))
+(defn- with-sqlite [f]
+  (let [path (sqlite-memory-file)]
+    (fs/create-dirs (fs/parent path))
+    (let [conn (sqlite/get-connection (str path))]
+      (try
+        (f conn)
+        (finally
+          (sqlite/close-connection conn))))))
 
-(defn- ensure-sqlite! []
-  (sqlite! "CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, text TEXT NOT NULL);")
+(defn- ensure-sqlite! [conn]
+  (sqlite/execute! conn ["CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, text TEXT NOT NULL)"])
   ;; Idempotent migration for the curated tier: the ALTER fails once
   ;; the column exists, and that failure IS the migration being
   ;; already applied.
-  (try (sqlite! "ALTER TABLE memories ADD COLUMN kind TEXT;")
+  (try (sqlite/execute! conn ["ALTER TABLE memories ADD COLUMN kind TEXT"])
        (catch Exception _ nil))
   nil)
 
-(defn- sqlite-load-memories []
-  (ensure-sqlite!)
-  (->> (str/split-lines (sqlite! "-separator" "\t" "SELECT id, text, kind FROM memories ORDER BY rowid;"))
-       (remove str/blank?)
-       (mapv (fn [line]
-               (let [[id text kind] (str/split line #"\t" 3)]
-                 {:memory/id id
-                  :memory/text (or text "")
-                  :memory/kind (or (some-> kind edn/read-string) :raw)})))))
+(defn- normalize-row [row]
+  (let [m (into {} (map (fn [[k v]] [(keyword k) v]) row))]
+    {:memory/id (:id m)
+     :memory/text (or (:text m) "")
+     :memory/kind (or (some-> (:kind m) edn/read-string) :raw)}))
 
-(defn- sql-quote [value]
-  (str "'" (str/replace (or value "") "'" "''") "'"))
+(defn- sqlite-load-memories []
+  (with-sqlite
+    (fn [conn]
+      (ensure-sqlite! conn)
+      (->> (sqlite/query conn ["SELECT id, text, kind FROM memories ORDER BY rowid"])
+           (mapv normalize-row)))))
 
 (defn- sqlite-save-memories! [entries]
-  (ensure-sqlite!)
-  (sqlite! "DELETE FROM memories;")
-  (doseq [{:memory/keys [id text kind]} entries]
-    (sqlite! (str "INSERT INTO memories (id, text, kind) VALUES ("
-                  (sql-quote id)
-                  ", "
-                  (sql-quote text)
-                  ", "
-                  (if kind (sql-quote (pr-str kind)) "NULL")
-                  ");")))
-  (vec entries))
+  (with-sqlite
+    (fn [conn]
+      (ensure-sqlite! conn)
+      (sqlite/execute! conn ["BEGIN IMMEDIATE"])
+      (try
+        (sqlite/execute! conn ["DELETE FROM memories"])
+        (doseq [{:memory/keys [id text kind]} entries]
+          (sqlite/execute! conn ["INSERT INTO memories (id, text, kind) VALUES (?, ?, ?)"
+                                 (str id)
+                                 (or text "")
+                                 (when kind (pr-str kind))]))
+        (sqlite/execute! conn ["COMMIT"])
+        (catch Exception e
+          (try (sqlite/execute! conn ["ROLLBACK"])
+               (catch Exception _ nil))
+          (throw e)))
+      (vec entries))))
 
 (defn load-memories []
   (case (backend)

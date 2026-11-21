@@ -1239,3 +1239,27 @@
                                             {:request-method :post
                                              :headers {"authorization" (str "Bearer " token)}
                                              :body (java.io.StringReader. oversized-json)}))))))))))
+
+(deftest uploads-are-bounded-and-unreferenced-evicted-from-disk
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (let [ref-up (turn/save-upload! "keep.txt" "text/plain" (.getBytes "keep"))
+            _ (swap! turn/jobs assoc "job-keep"
+                     {:job/id "job-keep" :session/id "s1" :status :queued
+                      :attachment-ids [(:upload/id ref-up)]
+                      :submitted-at (System/currentTimeMillis)})
+            others (mapv (fn [i]
+                           (Thread/sleep 1)
+                           (turn/save-upload! (str "f-" i ".txt") "text/plain" (.getBytes (str "body-" i))))
+                         (range 105))
+            surviving-ids (set (keys @turn/uploads))
+            evicted (remove #(contains? surviving-ids (:upload/id %)) others)]
+        (is (<= (count @turn/uploads) 100) "uploads map is bounded")
+        (is (contains? @turn/uploads (:upload/id ref-up)) "job-referenced upload survives pruning")
+        (is (fs/exists? (:path ref-up)) "job-referenced disk file survives")
+        (is (>= (count evicted) 6) "excess unreferenced uploads are evicted")
+        (is (every? #(not (fs/exists? (:path %))) evicted) "evicted files are deleted from disk")
+        (is (not (contains? (turn/job-view "job-keep") :turn-ok)) "dead :turn-ok key absent")))))
