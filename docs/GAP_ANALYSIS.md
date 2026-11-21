@@ -528,3 +528,22 @@ Six zero-dependency context compaction upgrades (plus four follow-up wiring fixe
 - `bb lint`: `0 errors, 0 warnings` (`EXIT=0`).
 
 **Rich Hickey certification:** summaries became immutable values keyed by turn watermark instead of an every-turn tax, structured facts ride alongside prose without fragile JSON ceremonies, and the truth stays verbatim on disk under `[Turns A-B]` coordinates.
+
+---
+
+## 28. Mercury-Agent Safety, Economics, Integrity & Learning Upgrades (2026-11-22)
+
+Fifteen zero-dependency, pure-functional capabilities adapted from `cosmicstack-labs/mercury-agent` landed across four Red/Green TDD commits (`48260af`, `bfefb69`, `699318f`, `e362eb9`) plus ADR `0005` (`docs/babashka-rewrite/adr/0005-mercury-agent-safety-economics-and-learning.md`):
+
+- **Wave A (`48260af` — Security & Taint Boundary):** `bb-agent.redact` (regex + runtime-registered literal secrets from `config.edn` scrubbed at `tool.clj`, `provider.clj` error bodies, and `session.clj`) and `bb-agent.security` (turn provenance/taint tracking + `:subagent/exposure` inheritance, zero-LLM prompt-injection spotlighting preserving byte-exact content, Shannon-entropy + seen-URL + shell-upload exfil detector, and fail-closed model-strength tiering).
+- **Wave B (`bfefb69` — Provider & Token Economics):** Anthropic ephemeral `cache_control` breakpoints on `:system` and the newest 2 messages of multi-turn payloads, auto-safe `discover_tools` deferred optional schema loading (`:tools/defer-optional true`), and `bb-agent.saver-mode` soft daily-budget degradation (`:off`/`:on`/`:auto` at 75% budget).
+- **Wave C (`699318f` — Turn Integrity & Reliability):** `:finish/reason` capture in OpenAI/Anthropic adapters with sectioned-write recovery prompts on `:length`/`max_tokens` truncation, `bb-agent.turn-integrity` (execute-mode narration guard, silent-turn factual receipt synthesizer, two-stage daemon stall watchdog), and `bb-agent.crash-flag` (`state/.crash-flag.edn`).
+- **Wave D (`e362eb9` — Memory & Self-Learning):** `bb-agent.beliefs` (light-stem + synonym + negation-aware claim dedupe, `:candidate` → `:held` → `:confirmed` promotion, non-destructive `:contested` supersession excluded from `search-memories`, idempotent SQLite `status`/`evidence_count` columns) and `bb-agent.turn-signals` (zero-LLM behavioural friction cues recorded on `usage.edn` turn events).
+
+### Verified receipts (2026-11-22)
+
+- `bb test-roster`: `125/125` files named and required, `0 never-run` (`EXIT=0`).
+- `bb test`: `49` Clojure test blocks totaling `964` tests / `4605` assertions (`0 failures, 0 errors`), plus `11/11` Node JS tests (`0 fail, 0 skipped`) and `bb verify:rewrite-docs` (`EXIT=0`).
+- `bb lint`: `0 errors, 0 warnings` (`EXIT=0`).
+
+**Rich Hickey certification:** every guard is a pure value-to-value function (`Exposure`, `Belief`, `TurnSignals`, `SaverMode`) composed at one thin seam (`tool.clj` / `core.clj`) with zero new dependencies and zero hidden framework state.
