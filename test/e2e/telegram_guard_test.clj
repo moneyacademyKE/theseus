@@ -79,3 +79,10 @@
     (is (true? (guard/callback-allowed? cfg-open q)))
     (is (false? (guard/callback-allowed?
                  cfg-open (assoc-in q [:from :is_bot] true))))))
+
+(deftest nil-actor-never-matches-nil-or-blank-allowlist-entries
+  (let [cfg {:telegram {:allowed-chat-ids [nil ""]
+                        :allowed-user-ids [nil ""]}}]
+    (is (false? (guard/allowed? cfg nil)))
+    (is (false? (guard/message-allowed? cfg {:from {:id nil :is_bot false}
+                                             :chat {:id nil :type "private"}})))))

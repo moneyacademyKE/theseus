@@ -1118,3 +1118,130 @@
       (is (some? rule) "session picker style is present")
       (is (re-find #"(?m)(?:^|;)\s*min-width\s*:\s*0\s*;" (or (second rule) ""))
           "flex item must be allowed to shrink below long session labels"))))
+
+(deftest goal-routes-reject-path-traversal
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (spit (str (fs/path home "project.edn")) (pr-str {:name "escaped-parent"}))
+      (spit (str (fs/path home "run.log")) "secret-outside-goals\n")
+      (let [token (:token (body-json (do-login deck-pass)))]
+        (doseq [bad-slug [".." "." "../state" "../../etc" "goal-a/../../state" "a/b"]]
+          (let [d-res (web/app (req "/api/goal-detail"
+                                    {:headers {"authorization" (str "Bearer " token)}
+                                     :query-string (str "id=" (java.net.URLEncoder/encode bad-slug "UTF-8"))}))
+                c-res (web/app (req "/api/goal-control"
+                                    {:request-method :post
+                                     :headers {"authorization" (str "Bearer " token)}
+                                     :body (java.io.StringReader.
+                                            (json/generate-string {:id bad-slug :action "pause"}))}))]
+            (is (contains? #{400 404} (:status d-res)) (str "detail must reject " bad-slug))
+            (is (= 400 (:status c-res)) (str "control must 400 on " bad-slug))))
+        (is (not (fs/exists? (fs/path home "state" ".goal-control" "pause"))))))))
+
+(deftest artifacts-block-secrets-run-preflight-and-harden-headers
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (reset! artifacts/registry {})
+    (with-redefs [config/home (fn [] (str home))]
+      (spit (str (fs/path home "config.edn")) "{:provider :fake}")
+      (let [secret-md (str (fs/path home "leak.md"))
+            svg-path (str (fs/path home "chart.svg"))
+            weird-path (str (fs/path home "odd\"name.txt"))
+            tok (str "sk-" "AbCdEf0123456789wxyz")]
+        (spit secret-md (str "token=" tok "\n"))
+        (spit svg-path "<svg><script>alert(1)</script></svg>")
+        (spit weird-path "hello")
+        (is (thrown-with-msg? Exception #"protected secret"
+                              (artifacts/register! (str (fs/path home "config.edn")) "job-s" nil)))
+        (is (thrown-with-msg? Exception #"protected secret"
+                              (artifacts/register! (str (fs/path home ".web-pass.edn")) "job-s" nil)))
+        (try
+          (artifacts/register! secret-md "job-s" nil)
+          (is false "preflight should refuse credential-bearing artifact")
+          (catch Exception e
+            (is (= 403 (:status (ex-data e))))
+            (is (not (str/includes? (ex-message e) tok)))))
+        (let [svg-art (artifacts/register! svg-path "job-s" nil)
+              weird-art (artifacts/register! weird-path "job-s" nil)
+              token (:token (body-json (do-login deck-pass)))
+              svg-res (web/app (req (str "/api/artifact/" (:artifact/id svg-art))
+                                    {:headers {"authorization" (str "Bearer " token)}}))
+              weird-res (web/app (req (str "/api/artifact/" (:artifact/id weird-art))
+                                      {:headers {"authorization" (str "Bearer " token)}}))]
+          (is (= "text/plain; charset=utf-8" (get-in svg-res [:headers "Content-Type"])))
+          (is (not (str/includes? (get-in weird-res [:headers "Content-Disposition"]) "odd\"name"))))))))
+
+(deftest auth-revocation-hashing-and-fail-closed-roles
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (auth/set-ro-password! "ro-pass-1")
+      (let [owner-tok (:token (body-json (do-login deck-pass)))
+            ro-tok (:token (body-json (do-login "ro-pass-1")))]
+        (is (= :owner (auth/session-role owner-tok)))
+        (is (= :ro (auth/session-role ro-tok)))
+        (testing "session table on disk hashes bearer tokens instead of storing raw secrets"
+          (let [disk-text (slurp (str (fs/path home "state" "web-sessions.edn")))]
+            (is (not (str/includes? disk-text owner-tok)))
+            (is (not (str/includes? disk-text ro-tok))))
+          (auth/load-sessions!)
+          (is (true? (auth/session-live? owner-tok)))
+          (is (true? (auth/session-live? ro-tok))))
+        (testing "corrupted or nil session role fails closed, never promotes to :owner"
+          (swap! auth/sessions assoc "bogus-tok" {:expires (+ (System/currentTimeMillis) 60000) :role :admin})
+          (is (nil? (auth/session-role "bogus-tok")))
+          (swap! auth/sessions dissoc "bogus-tok"))
+        (testing "clearing ro password revokes all :ro sessions while keeping :owner sessions"
+          (auth/set-ro-password! nil)
+          (is (false? (auth/session-live? ro-tok)))
+          (is (= 401 (:status (web/app (req "/api/status"
+                                            {:headers {"authorization" (str "Bearer " ro-tok)}})))))
+          (is (true? (auth/session-live? owner-tok))))))))
+
+(deftest pre-auth-body-bounds-and-request-validation
+  (let [home (fixture-home!)]
+    (auth/reset-sessions!)
+    (auth/reset-login-failures!)
+    (turn/reset-lane!)
+    (with-redefs [config/home (fn [] (str home))]
+      (let [stream-read? (atom false)
+            poison-stream (proxy [java.io.InputStream] []
+                            (read
+                              ([] (reset! stream-read? true) -1)
+                              ([^bytes _b _off _len] (reset! stream-read? true) -1)))]
+        (is (= 401 (:status (web/app (req "/api/attachment"
+                                          {:request-method :put
+                                           :body poison-stream})))))
+        (is (false? @stream-read?) "unauthenticated upload must not drain request body")
+        (is (= 401 (:status (web/app (req "/api/turn"
+                                          {:request-method :post
+                                           :body poison-stream})))))
+        (is (false? @stream-read?) "unauthenticated turn must not drain request body"))
+      (let [token (:token (body-json (do-login deck-pass)))]
+        (is (= 401 (:status (web/app (req "/api/status"
+                                          {:headers {"authorization" (str "Basic " token)}}))))
+            "only Bearer scheme is accepted")
+        (is (= 404 (:status (web/app (req "/api/status"
+                                          {:request-method :post
+                                           :headers {"authorization" (str "Bearer " token)}}))))
+            "read-only api-routes reject non-GET")
+        (is (= 400 (:status (web/app (req "/api/transcript"
+                                          {:headers {"authorization" (str "Bearer " token)}
+                                           :query-string "id=web-1&page=notanumber"}))))
+            "bad pagination returns 400, never 500")
+        (is (= 400 (:status (web/app (req "/api/transcript"
+                                          {:headers {"authorization" (str "Bearer " token)}
+                                           :query-string "id=%ZZ"}))))
+            "malformed percent encoding does not 500")
+        (let [oversized-json (str "{\"session\":\"x\",\"text\":\"" (apply str (repeat (* 1100 1024) "a")) "\"}")]
+          (is (= 413 (:status (web/app (req "/api/turn"
+                                            {:request-method :post
+                                             :headers {"authorization" (str "Bearer " token)}
+                                             :body (java.io.StringReader. oversized-json)}))))))))))

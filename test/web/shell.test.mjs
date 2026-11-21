@@ -70,4 +70,7 @@ test('neuromorphic layout controls stay local and composable', () => {
   assert.ok(layout.includes('setupColumnDrag'), 'column drag-and-drop');
   assert.ok(layout.includes('setupCardDrops'), 'card and telemetry row drag-and-drop');
   assert.ok(layout.includes("add stream"), 'stream deployment control');
+  assert.ok(!layout.includes('.innerHTML'), 'layout.js must construct stream headers with DOM nodes, not innerHTML');
+  assert.ok(layout.includes('STREAM_KEY') && layout.includes('filter('),
+    'removing a custom stream also removes it from persisted STREAM_KEY');
 });

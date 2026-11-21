@@ -31,10 +31,18 @@ function renderPins() { const body = document.querySelector('[data-body="pinned"
 function addPinnedStream() { if (document.getElementById('col-pinned')) return; addCustomStream({ id: 'col-pinned', title: 'pinned watchlist', accent: 'cyan' }); renderPins(); }
 function addCustomStream(stream) {
   const col = document.createElement('section'); col.className = 'col custom-stream'; col.id = stream.id;
-  const header = document.createElement('header'); header.innerHTML = `<h2>${stream.title}</h2><span class="count">0</span><button type="button" class="stream-remove" title="remove stream">×</button>`;
+  const header = document.createElement('header');
+  const title = document.createElement('h2'); title.textContent = stream.title;
+  const count = document.createElement('span'); count.className = 'count'; count.textContent = '0';
+  const removeBtn = document.createElement('button'); removeBtn.type = 'button'; removeBtn.className = 'stream-remove'; removeBtn.title = 'remove stream'; removeBtn.textContent = '×';
+  header.append(title, count, removeBtn);
   const body = document.createElement('div'); body.className = 'body'; body.dataset.body = stream.id.replace('col-', '');
   col.append(header, body); document.getElementById('deck').append(col); setupColumnDrag(col);
-  header.querySelector('.stream-remove').addEventListener('click', () => { col.remove(); save(ORDER_KEY, columns().map((item) => item.id)); });
+  removeBtn.addEventListener('click', () => {
+    col.remove();
+    save(ORDER_KEY, columns().map((item) => item.id));
+    save(STREAM_KEY, readJson(STREAM_KEY, []).filter((item) => item.id !== stream.id));
+  });
 }
 function pinCard(card) { const pins = readJson(PIN_KEY, []); const text = card.textContent.trim(); if (text && !pins.includes(text)) { pins.push(text); save(PIN_KEY, pins); } addPinnedStream(); renderPins(); }
 function setupCardDrops() { const deck = document.getElementById('deck'); if (!deck || deck.dataset.cardsWired) return; deck.dataset.cardsWired = '1';

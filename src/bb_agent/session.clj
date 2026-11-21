@@ -1,8 +1,12 @@
 (ns bb-agent.session
+  (:refer-clojure :exclude [reset!])
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import (java.nio.charset StandardCharsets)
+           (java.nio.file FileAlreadyExistsException Files Paths StandardCopyOption)
+           (java.nio.file.attribute PosixFilePermissions)))
 
 (defn safe-session-id [session-id]
   (-> (or session-id "default")
@@ -19,6 +23,45 @@
 (defn metadata-dir []
   (fs/path (config/home) "state" "session-metadata"))
 
+(defn- ensure-private-file!
+  "Create path with owner-only (0600) permissions if it does not yet exist."
+  [path]
+  (let [p (.toPath (java.io.File. (str path)))]
+    (when-not (Files/exists p (into-array java.nio.file.LinkOption []))
+      (try
+        (let [attr (PosixFilePermissions/asFileAttribute
+                    (PosixFilePermissions/fromString "rw-------"))]
+          (Files/createFile p (into-array java.nio.file.attribute.FileAttribute [attr])))
+        (catch FileAlreadyExistsException _ nil)
+        (catch UnsupportedOperationException _
+          (try (Files/createFile p (into-array java.nio.file.attribute.FileAttribute []))
+               (catch FileAlreadyExistsException _ nil)))))))
+
+(defn- write-private-file!
+  "Atomically write content with owner-only (0600) permissions from birth."
+  [path content]
+  (let [target (.toPath (java.io.File. (str path)))
+        parent (.getParent target)]
+    (when parent (Files/createDirectories parent (into-array java.nio.file.attribute.FileAttribute [])))
+    (let [tmp (Paths/get (str parent) (into-array String [(str "." (.getFileName target) ".tmp." (System/nanoTime))]))
+          bytes (.getBytes (str content) StandardCharsets/UTF_8)]
+      (try
+        (let [attr (PosixFilePermissions/asFileAttribute
+                    (PosixFilePermissions/fromString "rw-------"))]
+          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute [attr])))
+        (catch UnsupportedOperationException _
+          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute []))))
+      (Files/write tmp bytes (into-array java.nio.file.OpenOption []))
+      (try
+        (Files/move tmp target
+                    (into-array java.nio.file.CopyOption
+                                [StandardCopyOption/REPLACE_EXISTING
+                                 StandardCopyOption/ATOMIC_MOVE]))
+        (catch Exception _
+          (Files/move tmp target
+                      (into-array java.nio.file.CopyOption
+                                  [StandardCopyOption/REPLACE_EXISTING])))))))
+
 (defn load-turns [session-id]
   (let [path (session-file session-id)]
     (if (fs/regular-file? path)
@@ -34,11 +77,22 @@
              []))
       [])))
 
+(def ^:private private-key-re
+  (re-pattern (str "-----" "BEGIN [A-Z ]*PRIVATE KEY" "-----")))
+
 (def ^:private secret-patterns
   "Secret shapes that must never persist in session records. Kept as data:
-   extend by appending a pattern, never by special-casing call sites."
-  [#"\d{8,}:AA[A-Za-z0-9_-]{20,}"          ; Telegram bot tokens
-   #"sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}"])    ; API keys (sk-*, case-sensitive)
+   extend by appending a pattern, never by special-casing call sites.
+   Boundary checks tolerate pr-str escapes (\\n, \\t, \\r) ahead of tokens."
+  [#"\d{8,}:AA[A-Za-z0-9_-]{20,}"                         ; Telegram bot tokens
+   #"(?:(?<![A-Za-z0-9_])|(?<=\\[ntr]))sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}" ; API keys (sk-*)
+   #"ghp_[A-Za-z0-9]{20,}"                                ; GitHub classic PAT
+   #"github_pat_[A-Za-z0-9_]{20,}"                        ; GitHub fine-grained PAT
+   #"xox[baprs]-[A-Za-z0-9-]{10,}"                        ; Slack tokens
+   #"AKIA[0-9A-Z]{16}"                                    ; AWS access key IDs
+   #"AIza[0-9A-Za-z_-]{30,}"                              ; Google API keys
+   private-key-re                                         ; PEM private key header
+   #"(?i)(?:(?<![A-Za-z0-9_])|(?<=\\[ntr]))Bearer\s+[A-Za-z0-9._-]{20,}"]) ; Bearer tokens
 
 (defn redact-secrets
   "Replace known secret shapes in s with a redaction marker. Pure. Used at
@@ -81,6 +135,7 @@
   (let [path (session-file session-id)
         parent (fs/parent path)]
     (fs/create-dirs parent)
+    (ensure-private-file! path)
     (let [opts (into-array java.nio.file.StandardOpenOption
                            [java.nio.file.StandardOpenOption/CREATE
                             java.nio.file.StandardOpenOption/READ
@@ -92,16 +147,17 @@
                       []
                       (try (or (edn/read-string raw) [])
                            (catch Exception _
-                             ;; Corrupt file under lock — archive and start clean
+                             ;; Corrupt file under lock — archive with 0600 and start clean
                              (try
                                (let [corrupt (str path ".corrupt-" (System/currentTimeMillis))]
-                                 (spit corrupt raw))
+                                 (write-private-file! corrupt (redact-secrets raw)))
                                (catch Exception _ nil))
                              [])))
               updated (vec (f (vec turns)))
               payload (redact-secrets (pr-str updated))]
           (channel-overwrite-all ch payload)
-          (fs/set-posix-file-permissions path "rw-------")
+          (try (fs/set-posix-file-permissions path "rw-------")
+               (catch Exception _ nil))
           updated)))))
 
 (def ^:private tool-result-field-cap 8192)
@@ -113,7 +169,7 @@
 ;; for the turn that produced it.
 
 (defn- cap-tool-results
-  "Pure: turn → turn with over-long string fields in :tool/results entries
+  "Pure: turn -> turn with over-long string fields in :tool/results entries
    truncated to tool-result-field-cap with a visible marker."
   [turn]
   (update turn :tool/results
@@ -151,8 +207,7 @@
 
 (defn save-metadata! [session-id metadata]
   (let [path (metadata-file session-id)]
-    (fs/create-dirs (fs/parent path))
-    (spit (str path) (pr-str metadata))
+    (write-private-file! path (pr-str metadata))
     metadata))
 
 (defn touch-metadata! [session-id cfg]

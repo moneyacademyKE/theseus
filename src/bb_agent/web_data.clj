@@ -20,6 +20,27 @@
 
 (defn- home [] (config/home))
 
+(defn valid-goal-slug?
+  "True only for a single safe workspace directory name under goals/."
+  [slug]
+  (and (string? slug)
+       (boolean (re-matches #"[A-Za-z0-9._-]+" slug))
+       (not (contains? #{"." ".."} slug))))
+
+(defn- goal-workspace-dir
+  "Canonical workspace path under <home>/goals/<slug>, or nil when invalid
+  or outside goals/."
+  [slug]
+  (when (valid-goal-slug? slug)
+    (let [goals-root (fs/path (home) "goals")
+          ws (fs/path goals-root slug)]
+      (when (and (fs/directory? goals-root) (fs/directory? ws))
+        (let [canon-root (fs/canonicalize goals-root)
+              canon-ws (fs/canonicalize ws)]
+          (when (and (fs/starts-with? canon-ws canon-root)
+                     (not= canon-ws canon-root))
+            canon-ws))))))
+
 (defn- read-edn [path]
   (try
     (when (fs/regular-file? path)
@@ -99,18 +120,18 @@
   (->> (try (fs/list-dir (fs/path (home) "goals")) (catch Exception _ []))
        (filter fs/directory?)
        (mapv (fn [d]
-               (let [name     (fs/file-name d)
+               (let [dir-name (fs/file-name d)
                      proj     (or (read-edn (fs/path d "project.edn")) {})
                      run-path (fs/path d "run.log")
-                     last     (->> (str/split-lines (or (slurp-quiet run-path) ""))
-                                   (remove str/blank?)
-                                   (last))]
-                 {:name    (or (:name proj) name)
-                  :dir     name
+                     last-line (->> (str/split-lines (or (slurp-quiet run-path) ""))
+                                    (remove str/blank?)
+                                    (last))]
+                 {:name    (or (:name proj) dir-name)
+                  :dir     dir-name
                   :active  (boolean (pid-alive (slurp-quiet (fs/path d "watcher.pid"))))
                   :updated (max (or (file-ms run-path) 0)
                                 (or (file-ms (fs/path d "watch.log")) 0))
-                  :last    (trunc last 140)})))
+                  :last    (trunc last-line 140)})))
        (sort-by :updated >)))
 
 (defn goal-detail
@@ -119,25 +140,24 @@
   the same place `bb goal pause` writes), and a run verdict heuristic
   from the log's last line. Read-only."
   [slug]
-  (let [ws (fs/path (home) "goals" (str slug))]
-    (when (fs/directory? ws)
-      (let [cfg      (or (read-edn (fs/path ws "config.edn")) {})
-            workdir  (or (:workdir cfg) (str ws))
-            lines    (->> (str/split-lines (or (slurp-quiet (fs/path ws "run.log")) ""))
-                          (remove str/blank?))
-            last     (or (last lines) "")
-            verdict  (cond
-                       (str/includes? (str/upper-case last) "FULFILLED") :fulfilled
-                       (str/includes? (str/upper-case last) "HALT") :halted
-                       :else (if (seq lines) :running :authored))]
-        {:dir           (str slug)
-         :title         (or (:name (read-edn (fs/path ws "project.edn"))) (str slug))
-         :config-exists (map? cfg)
-         :workdir       workdir
-         :verdict       (name verdict)
-         :control       (control/state {:workdir workdir})
-         :log           (mapv #(trunc % 400) (vec (take-last 80 lines)))
-         :log-lines     (count lines)}))))
+  (when-let [ws (goal-workspace-dir slug)]
+    (let [cfg      (or (read-edn (fs/path ws "config.edn")) {})
+          workdir  (or (:workdir cfg) (str ws))
+          lines    (->> (str/split-lines (or (slurp-quiet (fs/path ws "run.log")) ""))
+                        (remove str/blank?))
+          last-line (or (last lines) "")
+          verdict  (cond
+                     (str/includes? (str/upper-case last-line) "FULFILLED") :fulfilled
+                     (str/includes? (str/upper-case last-line) "HALT") :halted
+                     :else (if (seq lines) :running :authored))]
+      {:dir           (str slug)
+       :title         (or (:name (read-edn (fs/path ws "project.edn"))) (str slug))
+       :config-exists (map? cfg)
+       :workdir       workdir
+       :verdict       (name verdict)
+       :control       (control/state {:workdir workdir})
+       :log           (mapv #(trunc % 400) (vec (take-last 80 lines)))
+       :log-lines     (count lines)})))
 
 (defn schedule-rows
   "Recent schedule runs, newest first."

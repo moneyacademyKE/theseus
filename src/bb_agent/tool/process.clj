@@ -11,10 +11,18 @@
 (def ^:private never-auto-shell-prefixes
   ["rm " "rm\t" "rm\n" "dd " "sudo " "chown "])
 
+(def ^:private dangerous-cmd-re
+  (re-pattern
+   (str "(?:"
+        "(?:^|[\\r\\n;&|`(]\\s*)"
+        "|(?:\\b(?:command|env|nohup|exec|xargs|eval)\\s+(?:-[^\\s]+\\s+)*)"
+        ")"
+        "(?:(?:/[\\w.-]+)+/|\\\\)?(rm|dd|sudo|chown)\\b")))
+
 (defn- never-auto-shell-command? [cmd]
   (let [trimmed (str/trim (or cmd ""))]
     (or (some #(str/starts-with? trimmed %) never-auto-shell-prefixes)
-        (re-find #"(?:^|[;&|]\s*|\bcommand\s+)(rm|dd|sudo|chown)\b" trimmed))))
+        (boolean (re-find dangerous-cmd-re trimmed)))))
 
 (defn- checked-cwd [tool-name cwd]
   (if cwd
@@ -80,7 +88,7 @@
 
 (defn- browser-cli! [{:keys [url timeout-ms]}]
   (if (str/blank? (or url ""))
-    (common/error-result "browser_cli" "browser_cli requires :url" {})
+    (common/error-result "browser_cli" "browser_cli requires :url" {:executed? false})
     (if-let [command (browser-command url)]
       (let [result @(p/process command {:out :string
                                         :err :string
@@ -100,19 +108,19 @@
                                 :stdout (:out result)
                                 :stderr (:err result)
                                 :exit/code (:exit result)})))
-      (common/ok-result "browser_cli"
-                        {:url url
-                         :stdout ""
-                         :stderr ""
-                         :exit/code 0
-                         :page {:url url
-                                :title "fallback browser title"
-                                :content "fallback browser content"}}))))
+      (common/error-result "browser_cli"
+                           "THESEUS_BROWSER_CLI is not configured"
+                           {:url url :executed? false}))))
 
 (defn- document-read! [{:keys [path]}]
   (let [target (path/checked-read-path "document_read" path)]
     (cond
       (= :error (:status target)) target
+
+      (path/protected-secret-path? target)
+      (common/error-result "document_read"
+                           (str "Refused: protected secret path: " path)
+                           {:path path :executed? false})
 
       (path/file-too-large? target common/max-read-bytes)
       (common/error-result "document_read"
@@ -164,8 +172,7 @@
                            :stdout (json/generate-string document)
                            :stderr ""
                            :exit/code 0
-                           :document (or (parse-json-body (json/generate-string document))
-                                         document)})))))
+                           :document document})))))
 
 (def handlers
   {"shell" run-shell!

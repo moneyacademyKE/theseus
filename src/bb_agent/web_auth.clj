@@ -3,17 +3,20 @@
 
   One secret the human chose. The password itself crosses the wire only
   on POST /api/login; on disk there is a PBKDF2-SHA256 salt+hash record
-  (never the password), and in memory a session table of random tokens
-  with a 7-day TTL. A restart or a password change clears every session,
-  so no session ever outlives the secret that minted it."
+  (never the password), and in state/web-sessions.edn only SHA-256
+  token hashes are persisted. A restart or a password change clears
+  matching sessions, so no session ever outlives the secret that minted it."
   (:require [babashka.fs :as fs]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [bb-agent.config :as config])
-  (:import (javax.crypto SecretKeyFactory)
-           (javax.crypto.spec PBEKeySpec)
-           (java.security SecureRandom MessageDigest)
-           (java.util Base64)))
+  (:import (java.nio.charset StandardCharsets)
+           (java.nio.file Files Paths StandardCopyOption)
+           (java.nio.file.attribute PosixFilePermissions)
+           (java.security MessageDigest SecureRandom)
+           (java.util Base64)
+           (javax.crypto SecretKeyFactory)
+           (javax.crypto.spec PBEKeySpec)))
 
 (def default-iterations 600000)
 (def session-ttl-ms (* 7 24 60 60 1000))
@@ -25,22 +28,74 @@
 (defn- b64 [^bytes bs]
   (.encodeToString (Base64/getEncoder) bs))
 
+(defn- hex-bytes [^bytes bs]
+  (apply str (map #(format "%02x" (bit-and 0xFF (long %))) bs)))
+
 (defn- new-token
   "32 random bytes as hex — guessing is hopeless, timing is useless."
   []
   (let [bs (byte-array 32)]
     (.nextBytes (SecureRandom.) bs)
-    (apply str (map #(format "%02x" (bit-and 0xFF (long %))) bs))))
+    (hex-bytes bs)))
+
+(defn- token-hash
+  "SHA-256 digest of a raw bearer token so persisted session tables
+  never hold raw credentials on disk."
+  [token]
+  (let [md (MessageDigest/getInstance "SHA-256")]
+    (str "sha256:" (hex-bytes (.digest md (.getBytes (str token) StandardCharsets/UTF_8))))))
+
+(defn- write-private-file!
+  "Write content atomically with owner-only (0600) permissions from birth."
+  [path content]
+  (let [target (.toPath (java.io.File. (str path)))
+        parent (.getParent target)]
+    (when parent (Files/createDirectories parent (into-array java.nio.file.attribute.FileAttribute [])))
+    (let [tmp-path (Paths/get (str parent) (into-array String [(str "." (.getFileName target) ".tmp." (System/nanoTime))]))
+          bytes (.getBytes (str content) StandardCharsets/UTF_8)]
+      (try
+        (let [attr (PosixFilePermissions/asFileAttribute
+                    (PosixFilePermissions/fromString "rw-------"))]
+          (Files/createFile tmp-path (into-array java.nio.file.attribute.FileAttribute [attr])))
+        (catch UnsupportedOperationException _
+          (Files/createFile tmp-path (into-array java.nio.file.attribute.FileAttribute []))))
+      (Files/write tmp-path bytes (into-array java.nio.file.OpenOption []))
+      (try
+        (Files/move tmp-path target
+                    (into-array java.nio.file.CopyOption
+                                [StandardCopyOption/REPLACE_EXISTING
+                                 StandardCopyOption/ATOMIC_MOVE]))
+        (catch Exception _
+          (Files/move tmp-path target
+                      (into-array java.nio.file.CopyOption
+                                  [StandardCopyOption/REPLACE_EXISTING])))))))
+
+;; ---------- password files ----------
+
+(defn password-file
+  "Path of the master-password record: salt + PBKDF2 hash, owner-only."
+  []
+  (fs/path (config/home) ".web-pass.edn"))
+
+(defn- ro-password-file
+  "The optional read-only password record: same shape, second secret.
+  Absent file = no read-only access, which is the default."
+  []
+  (fs/path (config/home) ".web-pass-ro.edn"))
+
+(defn password-set? []
+  (fs/exists? (password-file)))
+
+(defn ro-password-set? []
+  (fs/exists? (ro-password-file)))
 
 ;; ---------- sessions (durable, role-carrying) ----------
 
 (def sessions
   "Live session tokens -> {:expires epoch-ms, :role :owner|:ro}.
-  Durable: mints and revocations persist to state/web-sessions.edn so a
-  restart keeps the deck logged in (parity row 18). A restart or a
-  password change still clears what the record says should be cleared —
-  durability never outlives the secret that minted the token. Public for
-  tests (aging a token) and for reset-sessions!."
+  In memory tokens issued in this process live under their token key (so
+  tests aging an active token by key work seamlessly); on disk every key
+  is stored as sha256:<hex>, and lookup-session accepts both shapes."
   (atom {}))
 
 (defn- sessions-file
@@ -49,109 +104,117 @@
   (fs/path (config/home) "state" "web-sessions.edn"))
 
 (defn- persist-sessions!
-  "Write the live session table to disk, owner-only perms, expired
-  entries pruned. Best-effort: a durability write must never fail a
-  login."
+  "Write the live session table to disk (hashed token keys, owner-only
+  perms from birth, expired entries pruned). Best-effort: a durability
+  write must never fail a login."
   []
   (try
-    (let [live (into {} (remove (fn [[_ v]] (<= (:expires v) (now))) @sessions))
-          path (str (sessions-file))]
-      (fs/create-dirs (fs/parent (sessions-file)))
-      (spit path (pr-str live))
-      (try (fs/set-posix-file-permissions path "rw-------")
-           (catch Exception _ nil)))
+    (let [t (now)
+          live (into {}
+                     (keep (fn [[k v]]
+                             (when (and (:expires v) (> (:expires v) t))
+                               [(if (str/starts-with? (str k) "sha256:")
+                                  k
+                                  (token-hash k))
+                                v])))
+                     @sessions)]
+      (write-private-file! (sessions-file) (pr-str live)))
     (catch Exception _ nil)))
 
 (defn reset-sessions! []
   (reset! sessions {}))
 
+(defn- lookup-session [token]
+  (when (string? token)
+    (let [m @sessions]
+      (or (get m token)
+          (get m (token-hash token))))))
+
 ;; ---------- cross-process rotation watch (issue #38) ----------
 
-(declare password-file)
-
 (def ^:private password-record-mtime
-  "The password record's mtime as this process last saw it. A rotation
-  from another process (scripts/set_web_password.bb, the standalone
-  deck, a test) rewrites the record; the next session check here sees
-  the moved mtime and kills every session minted by the dead secret.
-  The record file is the single source of truth — no second state file,
-  no signaling channel: the rotation itself is the signal."
+  "The owner password record's mtime as this process last saw it."
+  (atom nil))
+
+(def ^:private ro-password-record-mtime
+  "The read-only password record's mtime as this process last saw it."
   (atom nil))
 
 (defn- record-mtime
-  "Current mtime of the password record, nil when no record exists."
-  []
+  "Current mtime of a password record, nil when no record exists."
+  [file]
   (try
-    (when (fs/exists? (password-file))
-      (fs/last-modified-time (password-file)))
+    (when (fs/exists? file)
+      (fs/last-modified-time file))
     (catch Exception _ nil)))
 
+(defn- revoke-ro-sessions!
+  "Drop every :ro session while leaving :owner sessions untouched."
+  []
+  (swap! sessions (fn [m]
+                    (into {} (remove (fn [[_ v]] (= :ro (:role v))) m))))
+  (persist-sessions!))
+
 (defn- sync-password-record!
-  "Notice an out-of-process rotation: when the record's mtime moved
-  since this process last looked, drop every live session and persist
-  the empty table — the secret that minted them is gone. Best-effort
-  like every durability write here: a stat failure must never fail a
-  session check."
+  "Notice an out-of-process rotation of either password record: owner
+  rotation kills every live session; RO rotation or removal kills every
+  :ro session."
   []
   (try
-    (let [mtime (record-mtime)]
+    (let [mtime (record-mtime (password-file))
+          ro-mtime (record-mtime (ro-password-file))
+          prev-ro @ro-password-record-mtime]
       (when (and mtime (not= @password-record-mtime mtime))
         (reset! password-record-mtime mtime)
         (reset-sessions!)
-        (persist-sessions!)))
+        (persist-sessions!))
+      (when (not= prev-ro ro-mtime)
+        (reset! ro-password-record-mtime ro-mtime)
+        (when (some? prev-ro)
+          (revoke-ro-sessions!))))
     (catch Exception _ nil)))
 
 (defn load-sessions!
   "Reload the durable session table (boot after a restart). Entries
   whose TTL passed while the deck was down die here — honest expiry,
-  not resurrection. A rotation that happened while we were down emptied
-  the durable table itself (set-password! persists it), and the record
-  watch starts at the CURRENT mtime so boot does not kill what it just
-  loaded."
+  not resurrection."
   []
-  (reset! sessions
-          (into {} (remove (fn [[_ v]] (<= (:expires v) (now))))
-                (try (edn/read-string (slurp (str (sessions-file))))
-                     (catch Exception _ {}))))
-  (reset! password-record-mtime (record-mtime))
+  (let [t (now)]
+    (reset! sessions
+            (into {}
+                  (remove (fn [[_ v]] (or (nil? (:expires v)) (<= (:expires v) t))))
+                  (try (edn/read-string (slurp (str (sessions-file))))
+                       (catch Exception _ {})))))
+  (reset! password-record-mtime (record-mtime (password-file)))
+  (reset! ro-password-record-mtime (record-mtime (ro-password-file)))
   @sessions)
 
 (defn session-live?
   "True when this session token exists and has not expired. Every check
-  first notices an out-of-process password rotation: if the record moved,
-  the old secret's sessions die before this token is even consulted."
+  first notices an out-of-process password rotation."
   [token]
   (sync-password-record!)
-  (boolean (when (string? token)
-             (when-let [{:keys [expires]} (get @sessions token)]
-               (and expires (> expires (now)))))))
+  (boolean (when-let [{:keys [expires]} (lookup-session token)]
+             (and expires (> expires (now))))))
 
 (defn session-role
-  ":owner or :ro for a live token, nil otherwise. Roles split the deck:
-  reads for both, writes for the owner (parity row 19)."
+  ":owner or :ro for a live token, nil otherwise. Fails closed on
+  missing or unrecognized roles — never promotes an unknown role."
   [token]
   (when (session-live? token)
-    (let [role (:role (get @sessions token))]
-      (if (contains? #{:owner :ro} role) role :owner))))
+    (let [role (:role (lookup-session token))]
+      (when (contains? #{:owner :ro} role) role))))
 
 (defn logout!
   "Revoke one token. The browser logout button — the durable table
   updates so a restart does not resurrect a logged-out tab."
   [token]
   (when (string? token)
-    (swap! sessions dissoc token)
+    (swap! sessions dissoc token (token-hash token))
     (persist-sessions!)
     true))
 
-;; ---------- password record on disk ----------
-
-(defn password-file
-  "Path of the master-password record: salt + PBKDF2 hash, owner-only."
-  []
-  (fs/path (config/home) ".web-pass.edn"))
-
-(defn password-set? []
-  (fs/exists? (password-file)))
+;; ---------- hashing + password management ----------
 
 (defn derive-key
   "Pure PBKDF2-HMAC-SHA256. Iterations are an argument so tests can run
@@ -184,38 +247,31 @@
           (.decode (Base64/getDecoder) ^String hash))
          (catch Exception _ false))))
 
-(defn set-password!
-  "Hash and persist the master password (owner-only perms), and clear
-  every live session: a new secret invalidates the old ones — here in
-  memory, in the durable table on disk, and (via the record-mtime watch)
-  in every other process checking sessions against this home."
-  [password]
-  (let [rec  (hash-password password)
-        path (str (password-file))]
-    (spit path (pr-str rec))
-    (try (fs/set-posix-file-permissions path "rw-------")
-         (catch Exception _ nil))
-    (reset! password-record-mtime (record-mtime))
-    (reset-sessions!)
-    (persist-sessions!)
-    rec))
-
 ;; ---------- login ----------
 
 (def ^:private max-login-failures 5)
 (def ^:private login-lockout-ms 60000)
 
 (def ^:private login-failures
-  "Consecutive-failure counter for the login endpoint: the write surface
-  made this door load-bearing, so guessing gets expensive — 5 misses
-  lock it for a minute. In-memory: a restart clears it, and the password
-  record on disk is untouched."
+  "Consecutive-failure counter for the login endpoint."
   (atom {:count 0 :locked-until 0}))
 
 (defn reset-login-failures!
   "Tests: clear the lockout so a suite run never inherits it."
   []
   (reset! login-failures {:count 0 :locked-until 0}))
+
+(defn set-password!
+  "Hash and persist the master password (atomic owner-only perms), clear
+  every live session, and reset login lockout."
+  [password]
+  (let [rec (hash-password password)]
+    (write-private-file! (password-file) (pr-str rec))
+    (reset! password-record-mtime (record-mtime (password-file)))
+    (reset-sessions!)
+    (persist-sessions!)
+    (reset-login-failures!)
+    rec))
 
 (defn- mint-session!
   "Register a token with a role and persist the table."
@@ -226,26 +282,20 @@
     (persist-sessions!)
     {:token token :expires expires :role (name role)}))
 
-(defn- ro-password-file
-  "The optional read-only password record: same shape, second secret.
-  Absent file = no read-only access, which is the default."
-  []
-  (fs/path (config/home) ".web-pass-ro.edn"))
-
-(defn ro-password-set? []
-  (fs/exists? (ro-password-file)))
-
 (defn set-ro-password!
-  "Owner action: define/clear the read-only password. A nil password
-  REMOVES the record."
+  "Owner action: define/clear the read-only password. A blank/nil password
+  REMOVES the record. Always revokes existing :ro sessions immediately."
   [password]
   (if (str/blank? password)
-    (when (fs/exists? (ro-password-file))
-      (fs/delete (ro-password-file)))
-    (let [path (str (ro-password-file))]
-      (spit path (pr-str (hash-password password)))
-      (try (fs/set-posix-file-permissions path "rw-------")
-           (catch Exception _ nil)))))
+    (do
+      (when (fs/exists? (ro-password-file))
+        (fs/delete (ro-password-file)))
+      (reset! ro-password-record-mtime nil))
+    (do
+      (write-private-file! (ro-password-file) (pr-str (hash-password password)))
+      (reset! ro-password-record-mtime (record-mtime (ro-password-file)))))
+  (revoke-ro-sessions!)
+  nil)
 
 (defn- read-record [file]
   (try (edn/read-string (slurp (str file)))
@@ -253,33 +303,26 @@
 
 (defn login!
   "Verify the master password against the record on disk; mint a session
-  token on success. Owner password → :owner role; otherwise the
-  read-only password (if one exists) → :ro role. Returns
-  {:token .. :expires .. :role ..}, {:locked true :retry-ms n} while
-  rate-limited, or nil on a bad password. Expired entries are pruned on
-  every attempt; a success resets the counter."
+  token on success. Owner password -> :owner role; otherwise the
+  read-only password (if one exists) -> :ro role."
   [password]
-  ;; sync first: a login arriving right after an out-of-process rotation
-  ;; must mint under the NEW watch, or a later session check would kill
-  ;; the fresh token it just handed out
   (sync-password-record!)
   (let [{:keys [locked-until]} @login-failures]
     (if (> locked-until (now))
       {:locked true :retry-ms (- locked-until (now))}
-      (if-let [session (when-let [role (cond
-                                          (and (password-set?)
-                                               (verify-password password (read-record (password-file))))
-                                          :owner
+      (if-let [role (cond
+                      (and (password-set?)
+                           (verify-password password (read-record (password-file))))
+                      :owner
 
-                                          (and (ro-password-set?)
-                                               (verify-password password (read-record (ro-password-file))))
-                                          :ro)]
-                         (do (swap! sessions (fn [m]
-                                               (into {} (remove (fn [[_ v]]
-                                                                  (<= (:expires v) (now)))) m)))
-                             (mint-session! role)))]
-        (do (reset! login-failures {:count 0 :locked-until 0})
-            session)
+                      (and (ro-password-set?)
+                           (verify-password password (read-record (ro-password-file))))
+                      :ro)]
+        (let [t (now)]
+          (swap! sessions (fn [m]
+                            (into {} (remove (fn [[_ v]] (<= (:expires v) t))) m)))
+          (reset-login-failures!)
+          (mint-session! role))
         (do (swap! login-failures
                    (fn [{:keys [count]}]
                      (let [count (inc (long count))]
@@ -290,10 +333,7 @@
 
 (defn rotate-password!
   "Owner action from the browser: verify the CURRENT password, replace
-  the record, kill every session, then hand back a fresh owner token so
-  the rotating browser stays logged in — every other session (and the
-  read-only role's tokens) died with the old secret. Throws ex-info
-  {:status 400} on a wrong current password."
+  the record, kill every session, then hand back a fresh owner token."
   [{:keys [current new]}]
   (when-not (and (string? current) (string? new) (seq new))
     (throw (ex-info "rotation needs current and new passwords" {:status 400})))

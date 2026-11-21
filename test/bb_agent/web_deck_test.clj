@@ -293,3 +293,15 @@
           (auth/reset-login-failures!)
           (auth/set-password! "deck-pass")
           (reset! token (:token (auth/login! "deck-pass"))))))))
+
+(deftest open-sse-stream-closes-on-logout
+  (testing "an already-open SSE client receives unauthorized and closes when its token is revoked"
+    (let [session (auth/login! "deck-pass")
+          tok (:token session)
+          rdr (open-stream! @deck-port (str "?token=" tok))
+          ev1 (read-event! rdr)]
+      (is (= "state" (:event ev1)))
+      (auth/logout! tok)
+      (let [ev2 (read-event! rdr)]
+        (is (= "unauthorized" (:event ev2)))
+        (is (nil? (read-event! rdr)))))))

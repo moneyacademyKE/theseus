@@ -9,8 +9,10 @@
             [bb-agent.web-http :as http]
             [bb-agent.web-turn :as turn]
             [clojure.string :as str])
-  (:import (java.security SecureRandom)
-           (java.nio.file.attribute PosixFilePermissions)))
+  (:import (java.nio.charset StandardCharsets)
+           (java.nio.file Files Paths StandardCopyOption)
+           (java.nio.file.attribute PosixFilePermissions)
+           (java.security SecureRandom)))
 
 (defn- token-file []
   (fs/path (config/home) "state" "a2a-token"))
@@ -26,15 +28,36 @@
      path (PosixFilePermissions/fromString "rw-------"))
     (catch Exception _ nil)))
 
+(defn- write-private-token! [path value]
+  (let [target (.toPath (java.io.File. (str path)))
+        parent (.getParent target)]
+    (when parent (Files/createDirectories parent (into-array java.nio.file.attribute.FileAttribute [])))
+    (let [tmp (Paths/get (str parent) (into-array String [(str "." (.getFileName target) ".tmp." (System/nanoTime))]))
+          bytes (.getBytes (str value) StandardCharsets/UTF_8)]
+      (try
+        (let [attr (PosixFilePermissions/asFileAttribute
+                    (PosixFilePermissions/fromString "rw-------"))]
+          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute [attr])))
+        (catch UnsupportedOperationException _
+          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute []))))
+      (Files/write tmp bytes (into-array java.nio.file.OpenOption []))
+      (try
+        (Files/move tmp target
+                    (into-array java.nio.file.CopyOption
+                                [StandardCopyOption/REPLACE_EXISTING
+                                 StandardCopyOption/ATOMIC_MOVE]))
+        (catch Exception _
+          (Files/move tmp target
+                      (into-array java.nio.file.CopyOption
+                                  [StandardCopyOption/REPLACE_EXISTING])))))))
+
 (defn- token []
   (let [path (token-file)]
     (if (fs/regular-file? path)
       (do (chmod-600! path)
           (str/trim (slurp (str path))))
       (let [value (new-token)]
-        (fs/create-dirs (fs/parent path))
-        (spit (str path) value)
-        (chmod-600! path)
+        (write-private-token! path value)
         value))))
 
 (defn- authorized? [req]
@@ -115,29 +138,35 @@
 (defn handle-rpc [req]
   (if-not (authorized? req)
     (http/json-res 401 {:error "unauthorized"})
-    (let [payload (http/parse-json-body req)
-          id (:id payload)
-          method (:method payload)
-          params (:params payload)]
-      (cond
-        (nil? payload) (rpc-error id -32600 "invalid request")
-        (= method "message/send")
-        (if-let [text (text-from-message (:message params))]
-          (try
-            (let [session (or (:session params)
-                              (get-in params [:message :contextId])
-                              "a2a")
-                  job (turn/submit-turn! {:session session :text text})]
-              (http/json-res 200 {:jsonrpc "2.0" :id id
-                                  :result (task-view (:job/id job))}))
-            (catch Exception e
-              (rpc-error id -32000 (or (.getMessage e) "could not queue message"))))
-          (rpc-error id -32602 "message must contain a non-empty text part"))
-        (= method "tasks/get")
-        (if-let [task (task-view (str (:id params)))]
-          (http/json-res 200 {:jsonrpc "2.0" :id id :result task})
-          (rpc-error id -32001 "task not found"))
-        :else (rpc-error id -32601 "method not found")))))
+    (let [parsed (try {:ok (http/parse-json-body req)}
+                      (catch Exception e
+                        {:status (or (get (ex-data e) :status) 413)
+                         :error (.getMessage e)}))]
+      (if (:status parsed)
+        (http/json-res (:status parsed) {:error (or (:error parsed) "payload-too-large")})
+        (let [payload (:ok parsed)
+              id (:id payload)
+              method (:method payload)
+              params (:params payload)]
+          (cond
+            (nil? payload) (rpc-error id -32600 "invalid request")
+            (= method "message/send")
+            (if-let [text (text-from-message (:message params))]
+              (try
+                (let [session (or (:session params)
+                                  (get-in params [:message :contextId])
+                                  "a2a")
+                      job (turn/submit-turn! {:session session :text text})]
+                  (http/json-res 200 {:jsonrpc "2.0" :id id
+                                      :result (task-view (:job/id job))}))
+                (catch Exception e
+                  (rpc-error id -32000 (or (.getMessage e) "could not queue message"))))
+              (rpc-error id -32602 "message must contain a non-empty text part"))
+            (= method "tasks/get")
+            (if-let [task (task-view (str (:id params)))]
+              (http/json-res 200 {:jsonrpc "2.0" :id id :result task})
+              (rpc-error id -32001 "task not found"))
+            :else (rpc-error id -32601 "method not found")))))))
 
 (defn routes [req]
   (cond

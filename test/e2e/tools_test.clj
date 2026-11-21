@@ -6,7 +6,7 @@
             [bb-agent.tool.common :as common]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is]]))
+            [clojure.test :refer [deftest is testing]]))
 
 (defn- run-agent [home prompt]
   (p/shell {:out :string
@@ -308,5 +308,80 @@
           (is (= 4 (get-in whole [:document :total-chars])))
           (is (= "tiny" (get-in whole [:document :text])))
           (is (not (str/includes? (get-in whole [:document :text]) "TRUNCATED")))))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest protected-secret-paths-are-refused-even-under-auto-safe
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-secrets-"})
+        cfg-path (fs/path home "config.edn")
+        pass-path (fs/path home ".web-pass.edn")
+        sess-path (fs/path home "state" "web-sessions.edn")
+        a2a-path (fs/path home "state" "a2a-token")
+        link-path (fs/path home "alias.edn")
+        normal-path (fs/path home "notes.txt")]
+    (try
+      (fs/create-dirs (fs/path home "state"))
+      (spit (str cfg-path) "{:api-key \"top-secret-cfg\"}")
+      (spit (str pass-path) "{:hash \"secret-hash\"}")
+      (spit (str sess-path) "{\"tok\" {:role :owner}}")
+      (spit (str a2a-path) "secret-a2a")
+      (fs/create-sym-link link-path cfg-path)
+      (spit (str normal-path) "public top-secret-cfg note")
+      (with-redefs [bb-agent.config/home (fn [] (str home))]
+        (doseq [target [cfg-path pass-path sess-path a2a-path link-path]]
+          (let [r1 (tool/handle-tool-request {:tool/name "read_file"
+                                              :approval/policy :auto-safe
+                                              :tool/args {:path (str target)}})
+                r2 (tool/handle-tool-request {:tool/name "document_read"
+                                              :approval/policy :auto-safe
+                                              :tool/args {:path (str target)}})
+                r3 (tool/handle-tool-request {:tool/name "search"
+                                              :approval/policy :auto-safe
+                                              :tool/args {:path (str target)
+                                                          :query "secret"}})]
+            (is (= :error (:status r1)) (str "read_file must refuse " target))
+            (is (false? (:executed? r1)))
+            (is (= :error (:status r2)) (str "document_read must refuse " target))
+            (is (false? (:executed? r2)))
+            (is (= :error (:status r3)) (str "search must refuse " target))
+            (is (false? (:executed? r3)))))
+        (testing "directory search skips protected files, oversized files, and binary files"
+          (let [bin-path (fs/path home "blob.bin")
+                big-path (fs/path home "huge.txt")]
+            (fs/write-bytes bin-path (byte-array [65 0 66 116 111 112 45 115 101 99 114 101 116 45 99 102 103]))
+            (spit (str big-path) (apply str (repeat (+ common/max-read-bytes 10) "a")))
+            (let [sr (tool/handle-tool-request {:tool/name "search"
+                                                :approval/policy :auto-safe
+                                                :tool/args {:path (str home)
+                                                            :query "top-secret-cfg"}})
+                  matched-paths (set (map :path (:matches sr)))]
+              (is (= :ok (:status sr)))
+              (is (contains? matched-paths (str normal-path)))
+              (is (not (contains? matched-paths (str cfg-path))))
+              (is (not (contains? matched-paths (str link-path))))
+              (is (not (contains? matched-paths (str bin-path))))))))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest shell-floor-blocks-bypass-variants-and-browser-cli-fails-closed
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-bypass2-"})]
+    (try
+      (with-redefs [bb-agent.config/home (fn [] (str home))]
+        (doseq [cmd ["/bin/rm /tmp/x"
+                     "\\rm /tmp/x"
+                     "env rm /tmp/x"
+                     "nohup rm /tmp/x"
+                     "echo hi\nrm /tmp/x"
+                     "echo $(rm /tmp/x)"]]
+          (let [r (tool/handle-tool-request {:tool/name "shell"
+                                             :approval/policy :auto-all
+                                             :tool/args {:cmd cmd}})]
+            (is (= :error (:status r)) (str "must deny " cmd))
+            (is (false? (:executed? r)))))
+        (let [br (tool/handle-tool-request {:tool/name "browser_cli"
+                                            :approval/policy :auto-all
+                                            :tool/args {:url "https://example.com"}})]
+          (is (= :error (:status br)))
+          (is (false? (:executed? br)))))
       (finally
         (fs/delete-tree home)))))

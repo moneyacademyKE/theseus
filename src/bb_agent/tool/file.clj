@@ -16,6 +16,11 @@
       (fs/directory? target)
       (common/error-result "read_file" (str "Path is a directory: " path) {:path path})
 
+      (path/protected-secret-path? target)
+      (common/error-result "read_file"
+                           (str "Refused: protected secret path: " path)
+                           {:path path :executed? false})
+
       (path/file-too-large? target common/max-read-bytes)
       (common/error-result "read_file"
                            (str "File too large: " path)
@@ -42,11 +47,7 @@
       (fs/create-dirs parent)))
   (if append?
     (spit (str target) content :append true)
-    (do
-      (when-let [parent (fs/parent target)]
-        (when create-dirs?
-          (fs/create-dirs parent)))
-      (spit (str target) content)))
+    (spit (str target) content))
   (merge (common/ok-result "write_file"
                            {:path (str target)
                             :bytes bytes
@@ -84,6 +85,28 @@
    :line/text line
    :match query})
 
+(defn- binary-file?
+  "Check first 512 bytes for a NUL byte so binary blobs are skipped before slurp."
+  [file]
+  (try
+    (with-open [is (java.io.FileInputStream. (fs/file file))]
+      (let [buf (byte-array 512)
+            n (.read is buf)]
+        (boolean
+         (and (pos? n)
+              (some #(zero? (aget buf %)) (range n))))))
+    (catch Exception _ true)))
+
+(defn- git-internal-path? [file]
+  (some #(= ".git" (str %)) (fs/components file)))
+
+(defn- searchable-file? [file]
+  (and (fs/regular-file? file)
+       (not (git-internal-path? file))
+       (not (path/protected-secret-path? file))
+       (not (path/file-too-large? file common/max-read-bytes))
+       (not (binary-file? file))))
+
 (defn- search-file [file query]
   (let [checked (path/checked-read-path "search" (str file))]
     (if (= :error (:status checked))
@@ -106,10 +129,16 @@
       (not (fs/exists? base))
       (common/error-result "search" (str "Search path not found: " path) {:path path})
 
+      (and (not (fs/directory? base)) (path/protected-secret-path? base))
+      (common/error-result "search"
+                           (str "Refused: protected secret path: " path)
+                           {:path path :executed? false})
+
       :else
       (let [files (if (fs/directory? base)
-                    (->> (fs/glob base "**/*") (filter fs/regular-file?))
-                    [base])
+                    (->> (fs/glob base "**")
+                         (filter searchable-file?))
+                    (if (searchable-file? base) [base] []))
             matches (->> files
                          (mapcat (fn [file]
                                    (map #(assoc % :path (str file))

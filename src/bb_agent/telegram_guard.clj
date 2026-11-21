@@ -1,12 +1,18 @@
 (ns bb-agent.telegram-guard
   "Pure Telegram authorization. DMs and groups deliberately use different
    keys: a chat identifies the conversation; a user identifies the actor."
-  (:require [bb-agent.telegram-group :as group]))
+  (:require [bb-agent.telegram-group :as group]
+            [clojure.string :as str]))
 
 (defn- member?
   [ids value]
   (boolean
-   (some #(= (str %) (str value)) ids)))
+   (and (some? value)
+        (not (str/blank? (str value)))
+        (some #(and (some? %)
+                    (not (str/blank? (str %)))
+                    (= (str %) (str value)))
+              ids))))
 
 (defn allowed?
   "Legacy DM allowlist check retained for config compatibility."

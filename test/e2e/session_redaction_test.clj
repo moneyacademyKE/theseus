@@ -37,3 +37,24 @@
           (is (= #{"OWNER_READ" "OWNER_WRITE"} perms)
               "session files must be born 0600, not chmodded later")))
       (finally (fs/delete-tree home)))))
+
+(deftest extended-secret-patterns-are-redacted
+  (let [home (fs/create-temp-dir {:prefix "theseus-redact-ext-"})
+        gh (str "ghp_" "AbCdEf0123456789wxyz1234")
+        ghf (str "github_pat_" "AbCdEf0123456789wxyz1234")
+        aws (str "AKI" "AABCDEFGH01234567")
+        slk (str "xox" "b-AbCdEf0123456789")
+        pk (str "-----" "BEGIN RSA PRIVATE KEY" "-----")
+        bdr (str "Bearer " "abcdef0123456789abcdef0123456789")]
+    (try
+      (with-redefs [config/home (constantly home)]
+        (session/append-turn!
+         "redact-ext"
+         {:user/input "tokens"
+          :assistant/final "captured"
+          :tool/results [{:tool/name "read_file"
+                          :content (str/join "\n" [gh ghf aws slk pk bdr])}]})
+        (let [on-disk (slurp (str (session/session-file "redact-ext")))]
+          (doseq [s [gh ghf aws slk pk bdr]]
+            (is (not (str/includes? on-disk s)) (str "leaked " (subs s 0 6))))))
+      (finally (fs/delete-tree home)))))

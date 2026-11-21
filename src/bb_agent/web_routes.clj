@@ -22,6 +22,9 @@
             [clojure.string :as str]
             [babashka.fs :as fs]))
 
+(defn- safe-disposition-name [s]
+  (str/replace (or (some-> s str) "artifact") #"[\r\n\"\\]" "_"))
+
 (defn handle-artifact
   "GET /api/artifact/<id> — serve one registered artifact's bytes.
   Auth accepts Bearer OR ?token= (a browser download link cannot set
@@ -42,7 +45,7 @@
              :headers {"Content-Type" (artifacts/content-type (:name art))
                        "Content-Length" (str (alength bytes))
                        "Content-Disposition"
-                       (str "attachment; filename=\"" (:name art) "\"")
+                       (str "attachment; filename=\"" (safe-disposition-name (:name art)) "\"")
                        "Cache-Control" "no-store"
                        "X-Content-Type-Options" "nosniff"}
              :body bytes})
@@ -54,8 +57,14 @@
   "GET /api/goal-detail?id=<slug> — one workspace's operator view."
   [req]
   (let [slug (get (http/query-params req) :id)]
-    (if-not (not-empty slug)
+    (cond
+      (str/blank? (str (or slug "")))
       (http/json-res 400 {:error "missing-id"})
+
+      (not (data/valid-goal-slug? slug))
+      (http/json-res 400 {:error "invalid-id"})
+
+      :else
       (http/guarded req (fn []
                           (or (data/goal-detail slug)
                               (throw (ex-info "no such goal" {:status 404}))))))))
@@ -64,11 +73,17 @@
   "The goal's RUN workdir from its workspace config.edn — where control
   files land and where the runner looks for them."
   [slug]
-  (let [ws (fs/path (config/home) "goals" (str slug))]
-    (when (fs/directory? ws)
-      (let [cfg (try (edn/read-string (slurp (str (fs/path ws "config.edn"))))
-                     (catch Exception _ nil))]
-        (or (when (map? cfg) (:workdir cfg)) (str ws))))))
+  (when (data/valid-goal-slug? slug)
+    (let [goals-root (fs/path (config/home) "goals")
+          ws (fs/path goals-root (str slug))]
+      (when (and (fs/directory? goals-root) (fs/directory? ws))
+        (let [canon-root (fs/canonicalize goals-root)
+              canon-ws (fs/canonicalize ws)]
+          (when (and (fs/starts-with? canon-ws canon-root)
+                     (not= canon-ws canon-root))
+            (let [cfg (try (edn/read-string (slurp (str (fs/path canon-ws "config.edn"))))
+                           (catch Exception _ nil))]
+              (or (when (map? cfg) (:workdir cfg)) (str canon-ws)))))))))
 
 (defn- goal-registry-entry
   "The goal's registry run entry (pid, owning chat/topic), if any."
@@ -82,36 +97,40 @@
   (goal.control, into the goal's run workdir); resume/cancel route
   through the goal bridge with the goal's own registered chat/topic."
   [req]
-  (let [payload (http/parse-json-body req)]
-    (if-not payload
-      (http/json-res 400 {:error "invalid-json"})
-      (http/guarded-owner req (fn []
-                          (let [slug (str (:id payload))
-                                action (keyword (str (:action payload)))]
-                            (when (str/blank? slug)
-                              (throw (ex-info "missing id" {:status 400})))
-                            (case action
-                              (:pause :stop)
-                              (if-let [workdir (goal-workdir slug)]
-                                (let [result (goal-control/apply-command!
-                                              {:workdir workdir} action)]
-                                  (assoc result :goal slug))
-                                (throw (ex-info "no such goal" {:status 404})))
-                              (:resume :cancel)
-                              (let [entry (goal-registry-entry slug)]
-                                (case action
-                                  :resume (goal-bridge/resume!
-                                           slug
-                                           (or (:chat-id entry) (get-in (config/load-config) [:web :goal-chat-id]))
-                                           (or (:thread-id entry) (get-in (config/load-config) [:web :goal-thread-id]))
-                                           (fn [& _]))
-                                  :cancel (if entry
-                                            (goal-bridge/cancel! (:chat-id entry)
-                                                                 (:thread-id entry))
-                                            (str "No registered run for `" slug
-                                                 "` — it is not running."))))
-                              (throw (ex-info (str "unknown action: " (:action payload))
-                                              {:status 400})))))))))
+  (http/guarded-owner
+   req
+   (fn []
+     (let [payload (http/parse-json-body req)]
+       (when-not payload
+         (throw (ex-info "invalid-json" {:status 400})))
+       (let [slug (str (:id payload))
+             action (keyword (str (:action payload)))]
+         (when (str/blank? slug)
+           (throw (ex-info "missing id" {:status 400})))
+         (when-not (data/valid-goal-slug? slug)
+           (throw (ex-info "invalid id" {:status 400})))
+         (case action
+           (:pause :stop)
+           (if-let [workdir (goal-workdir slug)]
+             (let [result (goal-control/apply-command!
+                           {:workdir workdir} action)]
+               (assoc result :goal slug))
+             (throw (ex-info "no such goal" {:status 404})))
+           (:resume :cancel)
+           (let [entry (goal-registry-entry slug)]
+             (case action
+               :resume (goal-bridge/resume!
+                        slug
+                        (or (:chat-id entry) (get-in (config/load-config) [:web :goal-chat-id]))
+                        (or (:thread-id entry) (get-in (config/load-config) [:web :goal-thread-id]))
+                        (fn [& _]))
+               :cancel (if entry
+                         (goal-bridge/cancel! (:chat-id entry)
+                                              (:thread-id entry))
+                         (str "No registered run for `" slug
+                              "` — it is not running."))))
+           (throw (ex-info (str "unknown action: " (:action payload))
+                           {:status 400}))))))))
 
 ;; ---------- account: logout, rotation, the read-only role ----------
 
@@ -126,29 +145,33 @@
   "POST /api/password {current, new} — owner-only. Kills every session,
   returns a fresh owner token so the rotating browser stays logged in."
   [req]
-  (let [payload (http/parse-json-body req)]
-    (if-not payload
-      (http/json-res 400 {:error "invalid-json"})
-      (http/guarded-owner req (fn []
-                                (auth/rotate-password!
-                                 {:current (:current payload)
-                                  :new (:new payload)}))))))
+  (http/guarded-owner
+   req
+   (fn []
+     (let [payload (http/parse-json-body req)]
+       (when-not payload
+         (throw (ex-info "invalid-json" {:status 400})))
+       (auth/rotate-password!
+        {:current (:current payload)
+         :new (:new payload)})))))
 
 (defn handle-ro-password
   "POST /api/ro-password {password} — owner-only, defines the read-only
   password. DELETE /api/ro-password removes it. Blank password = clear."
   [req clear?]
-  (let [payload (http/parse-json-body req)]
-    (if (and (not clear?) (not payload))
-      (http/json-res 400 {:error "invalid-json"})
-      (http/guarded-owner req (fn []
-                                (if clear?
-                                  (do (auth/set-ro-password! nil)
-                                      {:ro-password "cleared"})
-                                  (do (auth/set-ro-password! (str (:password payload)))
-                                      (if (str/blank? (str (:password payload)))
-                                        {:ro-password "cleared"}
-                                        {:ro-password "set"}))))))))
+  (http/guarded-owner
+   req
+   (fn []
+     (if clear?
+       (do (auth/set-ro-password! nil)
+           {:ro-password "cleared"})
+       (let [payload (http/parse-json-body req)]
+         (when-not payload
+           (throw (ex-info "invalid-json" {:status 400})))
+         (auth/set-ro-password! (str (:password payload)))
+         (if (str/blank? (str (:password payload)))
+           {:ro-password "cleared"}
+           {:ro-password "set"}))))))
 
 ;; ---------- schedules: browser CRUD over the shared registry ----------
 
@@ -166,25 +189,27 @@
   add-schedule! the CLI/Telegram lanes use; the daemon sees it on its
   next read."
   [req]
-  (let [payload (http/parse-json-body req)]
-    (if-not payload
-      (http/json-res 400 {:error "invalid-json"})
-      (http/guarded-owner req (fn []
-                                (let [id (str/trim (str (or (:id payload) "")))
-                                      prompt (str/trim (str (or (:prompt payload) "")))
-                                      cron-expr (some-> (:cron payload) str str/trim)]
-                                  (cond
-                                    (not (re-matches #"[A-Za-z0-9_-]{1,64}" id))
-                                    (throw (ex-info "id must be 1-64 chars of [A-Za-z0-9_-]"
-                                                    {:status 400}))
-                                    (str/blank? prompt)
-                                    (throw (ex-info "prompt must not be empty"
-                                                    {:status 400}))
-                                    (and cron-expr (not (valid-cron? cron-expr)))
-                                    (throw (ex-info "cron must be a 5-field expression"
-                                                    {:status 400}))
-                                    :else
-                                    (schedule/add-schedule! id prompt cron-expr))))))))
+  (http/guarded-owner
+   req
+   (fn []
+     (let [payload (http/parse-json-body req)]
+       (when-not payload
+         (throw (ex-info "invalid-json" {:status 400})))
+       (let [id (str/trim (str (or (:id payload) "")))
+             prompt (str/trim (str (or (:prompt payload) "")))
+             cron-expr (some-> (:cron payload) str str/trim)]
+         (cond
+           (not (re-matches #"[A-Za-z0-9_-]{1,64}" id))
+           (throw (ex-info "id must be 1-64 chars of [A-Za-z0-9_-]"
+                           {:status 400}))
+           (str/blank? prompt)
+           (throw (ex-info "prompt must not be empty"
+                           {:status 400}))
+           (and cron-expr (not (valid-cron? cron-expr)))
+           (throw (ex-info "cron must be a 5-field expression"
+                           {:status 400}))
+           :else
+           (schedule/add-schedule! id prompt cron-expr)))))))
 
 (defn handle-schedule-delete
   "DELETE /api/schedule/<id> — owner-only."
