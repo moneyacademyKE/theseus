@@ -59,15 +59,38 @@
   [cmd rules]
   (some #(when (re-find (:cmd %) (or cmd "")) %) rules))
 
+(defn- coerce-pattern [p]
+  (cond
+    (instance? java.util.regex.Pattern p) p
+    (string? p) (re-pattern p)
+    :else nil))
+
+(defn- sanitize-rule [r]
+  (when (map? r)
+    (when-let [cmd-pat (coerce-pattern (:cmd r))]
+      (let [drops (when (sequential? (:drop-lines r))
+                    (vec (keep coerce-pattern (:drop-lines r))))]
+        (cond-> (assoc r :cmd cmd-pat)
+          (some? drops) (assoc :drop-lines drops))))))
+
 (defn rules
   "Default rules plus user rules from <home>/rtk-filters.edn when present.
-   A malformed user file is ignored (defaults win) — filters must never
-   become a new way to break the tool layer."
+   Read with *read-eval* disabled and explicit #= rejection so a filter file
+   can never execute arbitrary code. A malformed user file is ignored
+   (defaults win) — filters must never become a new way to break the tool layer."
   []
   (let [f (fs/path (config/home) "rtk-filters.edn")]
     (if (fs/regular-file? f)
-      (try (into [] (concat default-rules (read-string (slurp (str f)))))
-           (catch Exception _ default-rules))
+      (try
+        (let [raw (slurp (str f))]
+          (when (str/includes? raw "#=")
+            (throw (ex-info "Disallowed read-eval form in rtk-filters.edn" {})))
+          (let [parsed (binding [*read-eval* false]
+                         (read-string raw))]
+            (if (sequential? parsed)
+              (into [] (concat default-rules (keep sanitize-rule parsed)))
+              default-rules)))
+        (catch Exception _ default-rules))
       default-rules)))
 
 (def ^:private compacted-tools #{"shell" "git_status"})

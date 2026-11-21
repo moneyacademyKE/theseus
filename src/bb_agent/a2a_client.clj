@@ -17,6 +17,10 @@
 (def default-http-timeout-ms 30000)
 (def default-poll-ms 2000)
 (def max-transient-nils 3)
+(def max-body-chars 2000000)
+
+(def ^:private no-redirect-client
+  (delay (http/client {:follow-redirects :never})))
 
 (defn- headers [token]
   (cond-> {"Content-Type" "application/json"}
@@ -28,6 +32,7 @@
   [url body token]
   (try
     (let [resp (http/post url {:throw false
+                               :client @no-redirect-client
                                :timeout default-http-timeout-ms
                                :headers (headers token)
                                :body (json/generate-string body)})]
@@ -41,13 +46,21 @@
   [url]
   (try
     (let [resp (http/get url {:throw false
+                              :client @no-redirect-client
                               :timeout default-http-timeout-ms})]
       {:status (:status resp) :body (:body resp)})
     (catch Exception e
       {:error (or (.getMessage e) "a2a request failed")})))
 
+(defn- body-too-large? [resp]
+  (and (map? resp)
+       (string? (:body resp))
+       (> (count (:body resp)) max-body-chars)))
+
 (defn- parse-body [resp]
-  (when (and (map? resp) (string? (:body resp)))
+  (when (and (map? resp)
+             (string? (:body resp))
+             (<= (count (:body resp)) max-body-chars))
     (try (json/parse-string (:body resp) true)
          (catch Exception _ nil))))
 
@@ -70,6 +83,7 @@
                         token)]
     (cond
       (:error resp) {:ok? false :error (:error resp)}
+      (body-too-large? resp) {:ok? false :error "a2a response body exceeds bound" :status (:status resp)}
       (not= 200 (:status resp)) {:ok? false
                                  :error (str "a2a send failed: HTTP " (:status resp))
                                  :status (:status resp)}

@@ -61,6 +61,11 @@
     (cond
       (= :error (:status target)) target
 
+      (path/protected-write-path? target)
+      (common/error-result "write_file"
+                           (str "Refused: protected secret path: " path)
+                           {:path path :executed? false})
+
       (> bytes common/max-write-bytes)
       (common/error-result "write_file"
                            (str "Content too large for write_file: " path)

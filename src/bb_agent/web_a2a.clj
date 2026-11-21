@@ -29,14 +29,28 @@
 
 (def ^:private write-private-token! aio/write-private-file!)
 
+(def ^:private token-lock (Object.))
+(def ^:private token-cache (atom nil))
+
 (defn- token []
-  (let [path (token-file)]
-    (if (fs/regular-file? path)
-      (do (chmod-600! path)
-          (str/trim (slurp (str path))))
-      (let [value (new-token)]
-        (write-private-token! path value)
-        value))))
+  (locking token-lock
+    (let [path (token-file)
+          path-str (str path)]
+      (if (fs/regular-file? path)
+        (let [mtime (.toMillis (fs/last-modified-time path))
+              cached @token-cache]
+          (if (and cached (= path-str (:path cached)) (= mtime (:mtime cached)))
+            (:value cached)
+            (do
+              (chmod-600! path)
+              (let [v (str/trim (slurp path-str))]
+                (reset! token-cache {:path path-str :mtime mtime :value v})
+                v))))
+        (let [value (new-token)]
+          (write-private-token! path value)
+          (let [mtime (try (.toMillis (fs/last-modified-time path)) (catch Exception _ nil))]
+            (reset! token-cache {:path path-str :mtime mtime :value value}))
+          value)))))
 
 (defn- authorized? [req]
   (let [supplied (http/bearer req)
@@ -48,9 +62,25 @@
           (.getBytes supplied "UTF-8")
           (.getBytes expected "UTF-8")))))
 
+(def ^:private valid-host-re
+  #"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(?::\d{1,5})?$")
+
+(defn- safe-proto [raw]
+  (let [p (some-> raw str str/trim str/lower-case)]
+    (if (contains? #{"http" "https"} p) p "http")))
+
+(defn- safe-host [raw]
+  (let [h (some-> raw str str/trim)]
+    (if (and (seq h)
+             (<= (count h) 255)
+             (re-matches valid-host-re h))
+      h
+      "127.0.0.1:8787")))
+
 (defn- base-url [req]
-  (str (or (get-in req [:headers "x-forwarded-proto"]) "http") "://"
-       (or (get-in req [:headers "host"]) "127.0.0.1:8787")))
+  (str (safe-proto (get-in req [:headers "x-forwarded-proto"]))
+       "://"
+       (safe-host (get-in req [:headers "host"]))))
 
 (defn handle-card [req]
   (let [endpoint (str (base-url req) "/a2a/v1")]

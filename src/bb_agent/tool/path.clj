@@ -63,6 +63,21 @@
            (fs/starts-with? canon gnupg)
            (ssh-private-key? canon user-home))))))
 
+(defn protected-write-path?
+  "True when p (after symlink resolution) is a protected secret path or a
+  high-impact SSH control file (~/.ssh/authorized_keys, ~/.ssh/config) that
+  write_file must never overwrite."
+  [p]
+  (when-not (str/blank? (or (some-> p str) ""))
+    (let [canon (safe-canonical p)
+          user-home (System/getProperty "user.home")
+          ssh-dir (safe-canonical (fs/path user-home ".ssh"))]
+      (boolean
+       (or (protected-secret-path? p)
+           (and (fs/starts-with? canon ssh-dir)
+                (contains? #{"authorized_keys" "config"}
+                           (str (fs/file-name canon)))))))))
+
 (defn checked-read-path [tool-name path]
   (cond
     (str/blank? (or path ""))

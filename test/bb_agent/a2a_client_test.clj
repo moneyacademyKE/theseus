@@ -201,3 +201,9 @@
         (a2a-tool/a2a-task {:url "http://127.0.0.1:18790" :text "x" :timeout_ms 2500})
         (is (= [1000 600000 5000 2500] @seen))))))
 
+(deftest send-rejects-oversize-response-body
+  (let [huge-body (apply str (repeat 2100000 "a"))]
+    (with-redefs [a2a/post-json (fn [_ _ _] {:status 200 :body huge-body})]
+      (let [r (a2a/send-message {:base-url "http://127.0.0.1:18790" :text "x"})]
+        (is (not (:ok? r)))))))
+

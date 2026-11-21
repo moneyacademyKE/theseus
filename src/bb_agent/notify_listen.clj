@@ -8,11 +8,13 @@
   make-handler are pure (a 1-arg send! fn), so tests need no token."
   (:require [bb-agent.config :as config]
             [bb-agent.telegram-delivery :as delivery]
+            [bb-agent.web-http :as web-http]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [org.httpkit.server :as http]))
 
 (def ^:private default-port 7787)
+(def ^:private max-body-bytes 65536)
 
 (defn format-page
   "PURE: an bb-agent.goal.notify/build-message map -> one Telegram page string."
@@ -37,29 +39,38 @@
   (and (string? hex-sig) (pos? (count hex-sig)) (even? (count hex-sig))
        (try (require '[pod.babashka.buddy.core.mac :as mac])
             (let [verify (resolve 'pod.babashka.buddy.core.mac/verify)]
-              (boolean (verify (.getBytes ^String body)
+              (boolean (verify (.getBytes ^String body "UTF-8")
                                (unhex hex-sig)
-                               {:key (.getBytes ^String secret) :alg :hmac :sha :256})))
+                               {:key (.getBytes ^String secret "UTF-8") :alg :hmac :sha :256})))
             (catch Exception _ false))))
 
 (defn make-handler
   "Ring handler around a 1-arg `send!` (page-text -> receipt). 200 on a
-  parsed-and-sent halt map, 400 on anything else, 403 on a bad or missing
-  X-Signature when opts carry :hmac-secret. Any path accepted —
-  this is a single-purpose server."
+  parsed-and-sent halt map, 400 on malformed EDN, 403 on a bad or missing
+  X-Signature when opts carry :hmac-secret, 405 on non-POST requests, and
+  413 when the body exceeds 64KB."
   ([send!] (make-handler send! nil))
   ([send! {:keys [hmac-secret] :as _opts}]
-   (fn [{:keys [body headers]}]
-     (let [body-str (slurp body)]
-       (if (and hmac-secret
-                (not (signature-valid? hmac-secret body-str (get headers "x-signature"))))
-         {:status 403 :body "bad or missing signature"}
-         (let [msg (try (edn/read-string body-str)
-                        (catch Exception _ ::malformed))]
-           (if (map? msg)
-             (do (send! (format-page msg))
-                 {:status 200 :body "paged"})
-             {:status 400 :body "expected an EDN map"})))))))
+   (fn [{:keys [body headers request-method]}]
+     (if (and (some? request-method) (not= :post request-method))
+       {:status 405 :body "method not allowed"}
+       (let [read-res (try
+                        {:ok (web-http/read-bounded-string body max-body-bytes)}
+                        (catch Exception e
+                          {:status (or (get (ex-data e) :status) 413)
+                           :body (or (.getMessage e) "request body too large")}))]
+         (if (:status read-res)
+           read-res
+           (let [body-str (:ok read-res)]
+             (if (and hmac-secret
+                      (not (signature-valid? hmac-secret body-str (get headers "x-signature"))))
+               {:status 403 :body "bad or missing signature"}
+               (let [msg (try (edn/read-string body-str)
+                              (catch Exception _ ::malformed))]
+                 (if (map? msg)
+                   (do (send! (format-page msg))
+                       {:status 200 :body "paged"})
+                   {:status 400 :body "expected an EDN map"}))))))))))
 
 (defn start!
   "Start the server on 127.0.0.1:port. Returns the httpkit stop-fn."

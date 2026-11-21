@@ -101,3 +101,12 @@
         handler (nl/make-handler #(swap! sent conj %))]
     (is (= 200 (:status (post handler (pr-str {:name "y"})))))
     (is (= 1 (count @sent)))))
+
+(deftest rejects-oversize-body-and-non-post-method
+  (let [sent (atom [])
+        handler (nl/make-handler #(swap! sent conj %) {:hmac-secret test-secret})
+        huge (apply str (repeat 70000 "a"))]
+    (is (= 413 (:status (post-signed handler huge "deadbeef"))))
+    (is (= 405 (:status (handler {:request-method :get
+                                  :body (java.io.ByteArrayInputStream. (.getBytes "{}" "UTF-8"))}))))
+    (is (empty? @sent))))

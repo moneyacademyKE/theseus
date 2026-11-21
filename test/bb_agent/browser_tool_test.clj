@@ -44,9 +44,15 @@
         (is (not (str/includes? (pr-str result) "existing pages hidden")))))))
 
 (deftest refuses-invalid-input-before-connecting
-  (doseq [url [nil "" "file:///etc/passwd" "javascript:alert(1)" "https://user:secret@example.com"]]
+  (doseq [url [nil "" "file:///etc/passwd" "javascript:alert(1)" "https://user:secret@example.com"
+               "https://localhost/admin" "https://127.0.0.1:8443/api"
+               "https://169.254.169.254/latest/meta-data" "https://10.0.0.1/secret"
+               "https://192.168.1.1/router" "https://172.16.0.1/internal"
+               "https://[::1]/local" "https://0.0.0.0/"]]
     (with-redefs [mcp/connect (fn [_] (throw (ex-info "must not connect" {})))]
-      (is (= :error (:status (browser/read-page {:url url})))))))
+      (let [r (browser/read-page {:url url})]
+        (is (= :error (:status r)) (str "should refuse: " url))
+        (is (false? (:executed? r)) (str "must not execute: " url))))))
 
 (deftest errors-fail-closed-and-clean-up
   (testing "an MCP-level tool error is not a success and the owned tab is closed"

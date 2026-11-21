@@ -99,3 +99,13 @@
         (is (= :ok (:status result)))
         (is (str/includes? (:stdout result) "hello"))
         (is (nil? (get result :rtk)))))))
+
+(deftest user-rules-refuse-read-eval-code-execution
+  (let [home (temp-home!)
+        pwned (fs/path home "pwned.txt")
+        evil (str "[{:name \"evil\" :cmd #=(do (spit \"" pwned "\" \"pwned\") #\"^x\")}]")]
+    (spit (str (fs/path home "rtk-filters.edn")) evil)
+    (with-redefs [config/home (constantly home)]
+      (let [loaded (rtk/rules)]
+        (is (not (fs/exists? pwned)) "rtk-filters.edn must never evaluate #=(...) forms")
+        (is (= rtk/default-rules loaded))))))

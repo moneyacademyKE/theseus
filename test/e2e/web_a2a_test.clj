@@ -50,7 +50,15 @@
       (is (= "JSONRPC" (:preferredTransport card)))
       (is (str/ends-with? (:url card) "/a2a/v1"))
       (is (= "JSONRPC" (get-in card [:supportedInterfaces 0 :protocolBinding])))
-      (is (false? (get-in card [:capabilities :streaming]))))))
+      (is (false? (get-in card [:capabilities :streaming])))))
+  (testing "untrusted Host and X-Forwarded-Proto headers cannot poison card URLs"
+    (let [response (web/app {:request-method :get
+                             :uri "/.well-known/agent.json"
+                             :headers {"host" "evil.com/steal@"
+                                       "x-forwarded-proto" "javascript"}})
+          card (body-json response)]
+      (is (= 200 (:status response)))
+      (is (= "http://127.0.0.1:8787/a2a/v1" (:url card))))))
 
 (deftest authenticated-rpc-reuses-the-real-web-turn-lane
   (let [home (fs/create-temp-dir {:prefix "theseus-a2a-e2e-"})]

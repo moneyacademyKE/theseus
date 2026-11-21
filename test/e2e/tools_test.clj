@@ -338,13 +338,19 @@
                 r3 (tool/handle-tool-request {:tool/name "search"
                                               :approval/policy :auto-safe
                                               :tool/args {:path (str target)
-                                                          :query "secret"}})]
+                                                          :query "secret"}})
+                r4 (tool/handle-tool-request {:tool/name "write_file"
+                                              :approval/policy :auto-all
+                                              :tool/args {:path (str target)
+                                                          :content "overwritten"}})]
             (is (= :error (:status r1)) (str "read_file must refuse " target))
             (is (false? (:executed? r1)))
             (is (= :error (:status r2)) (str "document_read must refuse " target))
             (is (false? (:executed? r2)))
             (is (= :error (:status r3)) (str "search must refuse " target))
-            (is (false? (:executed? r3)))))
+            (is (false? (:executed? r3)))
+            (is (= :error (:status r4)) (str "write_file must refuse " target))
+            (is (false? (:executed? r4)))))
         (testing "directory search skips protected files, oversized files, and binary files"
           (let [bin-path (fs/path home "blob.bin")
                 big-path (fs/path home "huge.txt")]

@@ -8,11 +8,41 @@
 (def mcp-url "http://127.0.0.1:9210/mcp")
 (def max-output-chars 20000)
 
+(defn- private-ip-or-host? [raw]
+  (let [h (-> (str raw) str/lower-case
+              (str/replace #"^\[|\]$" "")
+              (str/replace #"^::ffff:" ""))]
+    (or (str/blank? h)
+        (= "localhost" h)
+        (str/ends-with? h ".localhost")
+        (str/ends-with? h ".local")
+        (= "::1" h)
+        (= "0:0:0:0:0:0:0:1" h)
+        (= "0.0.0.0" h)
+        (= "::" h)
+        (str/starts-with? h "127.")
+        (str/starts-with? h "10.")
+        (str/starts-with? h "192.168.")
+        (str/starts-with? h "169.254.")
+        (boolean (re-matches #"172\.(1[6-9]|2\d|3[0-1])\..*" h))
+        (boolean (re-matches #"100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\..*" h))
+        (boolean (re-matches #"(fc|fd)[0-9a-f]{2}:.*" h))
+        (boolean (re-matches #"fe[89ab][0-9a-f]:.*" h)))))
+
+(defn- private-or-local-host? [host]
+  (or (private-ip-or-host? host)
+      (try
+        (let [^java.net.InetAddress addr (java.net.InetAddress/getByName (str host))]
+          (private-ip-or-host? (.getHostAddress addr)))
+        (catch Throwable _ false))))
+
 (defn- valid-url? [url]
   (try
-    (let [u (java.net.URI. url)]
+    (let [u (java.net.URI. url)
+          host (.getHost u)]
       (and (= "https" (.getScheme u))
-           (some? (.getHost u))
+           (some? host)
+           (not (private-or-local-host? host))
            (nil? (.getUserInfo u))
            (nil? (.getFragment u))))
     (catch Exception _ false)))
