@@ -87,7 +87,8 @@
                                [bb-agent.browser-tool-test]
                                [bb-agent.a2a-client-test]
                                [bb-agent.hot-reload-test]
-                               [bb-agent.atomic-io-test])
+                               [bb-agent.atomic-io-test]
+                               [bb-agent.security-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -122,7 +123,8 @@
                                              'bb-agent.browser-tool-test
                                              'bb-agent.a2a-client-test
                                              'bb-agent.hot-reload-test
-                                             'bb-agent.atomic-io-test)]
+                                             'bb-agent.atomic-io-test
+                                             'bb-agent.security-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"

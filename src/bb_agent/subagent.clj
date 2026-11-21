@@ -13,14 +13,18 @@
   (if (map? x) (:subagent/id x) x))
 
 (defn spawn
-  "([ledger prompt] [ledger id prompt]) -> [ledger record].
-  Explicit id replaces an existing record instead of duplicating."
+  "([ledger prompt] [ledger id prompt] [ledger id prompt opts]) -> [ledger record].
+  Explicit id replaces an existing record instead of duplicating.
+  Optional :exposure in opts propagates parent turn taint into the subagent."
   ([ledger prompt]
-   (spawn ledger (str (java.util.UUID/randomUUID)) prompt))
+   (spawn ledger (str (java.util.UUID/randomUUID)) prompt {}))
   ([ledger id prompt]
-   (let [record {:subagent/id     (->id id)
-                 :subagent/prompt prompt
-                 :subagent/status :pending}]
+   (spawn ledger id prompt {}))
+  ([ledger id prompt {:keys [exposure]}]
+   (let [record (cond-> {:subagent/id     (->id id)
+                         :subagent/prompt prompt
+                         :subagent/status :pending}
+                  exposure (assoc :subagent/exposure exposure))]
      [(conj (vec (remove #(= (:subagent/id record) (:subagent/id %)) ledger))
             record)
       record])))
@@ -87,13 +91,15 @@
                    (fn [ledger]
                      (vec (apply f (if (sequential? ledger) (vec ledger) []) args)))))
 
-(defn spawn! [id prompt]
-  (aio/update-edn! (ledger-file) []
-                   (fn [ledger]
-                     (let [[ledger' _record]
-                           (spawn (if (sequential? ledger) (vec ledger) [])
-                                  (->id id) prompt)]
-                       (vec ledger')))))
+(defn spawn!
+  ([id prompt] (spawn! id prompt {}))
+  ([id prompt opts]
+   (aio/update-edn! (ledger-file) []
+                    (fn [ledger]
+                      (let [[ledger' _record]
+                            (spawn (if (sequential? ledger) (vec ledger) [])
+                                   (->id id) prompt opts)]
+                        (vec ledger'))))))
 
 (defn claim! [id assignee t]
   (apply! claim (->id id) assignee t))

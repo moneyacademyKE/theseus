@@ -3,6 +3,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
+            [bb-agent.redact :as redact]
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
@@ -39,30 +40,10 @@
              []))
       [])))
 
-(def ^:private private-key-re
-  (re-pattern (str "-----" "BEGIN [A-Z ]*PRIVATE KEY" "-----")))
-
-(def ^:private secret-patterns
-  "Secret shapes that must never persist in session records. Kept as data:
-   extend by appending a pattern, never by special-casing call sites.
-   Boundary checks tolerate pr-str escapes (\\n, \\t, \\r) ahead of tokens."
-  [#"\d{8,}:AA[A-Za-z0-9_-]{20,}"                         ; Telegram bot tokens
-   #"(?:(?<![A-Za-z0-9_])|(?<=\\[ntr]))sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}" ; API keys (sk-*)
-   #"ghp_[A-Za-z0-9]{20,}"                                ; GitHub classic PAT
-   #"github_pat_[A-Za-z0-9_]{20,}"                        ; GitHub fine-grained PAT
-   #"xox[baprs]-[A-Za-z0-9-]{10,}"                        ; Slack tokens
-   #"AKIA[0-9A-Z]{16}"                                    ; AWS access key IDs
-   #"AIza[0-9A-Za-z_-]{30,}"                              ; Google API keys
-   private-key-re                                         ; PEM private key header
-   #"(?i)(?:(?<![A-Za-z0-9_])|(?<=\\[ntr]))Bearer\s+[A-Za-z0-9._-]{20,}"]) ; Bearer tokens
-
-(defn redact-secrets
-  "Replace known secret shapes in s with a redaction marker. Pure. Used at
-   the persistence seam and by channel status renderers — a tool call's
-   args can carry a token, and no surface may ever show one."
-  [s]
-  (reduce (fn [acc pat] (str/replace acc pat "<REDACTED-SECRET>"))
-          s secret-patterns))
+(def redact-secrets
+  "Replace known secret shapes and runtime-registered literals in s with a
+   redaction marker. Delegates to bb-agent.redact."
+  redact/redact-secrets)
 
 (defn- channel-read-all [^java.nio.channels.FileChannel ch]
   (.position ch 0)

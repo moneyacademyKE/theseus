@@ -1,5 +1,6 @@
 (ns bb-agent.provider
   (:require [babashka.http-client :as http]
+            [bb-agent.redact :as redact]
             [cheshire.core :as json]
             [clojure.string :as str]
             [bb-agent.tools :as tools]
@@ -119,11 +120,11 @@
     (when (or (nil? status) (>= status 400))
       (throw (ex-info (str "Provider request failed with status " status)
                       {:status status
-                       :body (:body response)})))
+                       :body (redact/redact-secrets (:body response))})))
     (when (nil? body)
       (throw (ex-info (str "Provider returned non-JSON response (status " status ")")
                       {:status status
-                       :body (:body response)})))
+                       :body (redact/redact-secrets (:body response))})))
     [status body vision-degraded?]))
 
 (defmethod complete :openai-compatible [_ {:keys [model messages images provider/config]

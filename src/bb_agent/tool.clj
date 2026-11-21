@@ -1,7 +1,9 @@
 (ns bb-agent.tool
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
+            [bb-agent.redact :as redact]
             [bb-agent.rtk :as rtk]
+            [bb-agent.security :as sec]
             [bb-agent.a2a-tool :as a2a-tool]
             [bb-agent.net-search :as net-search]
             [bb-agent.browser-tool :as browser-tool]
@@ -97,17 +99,33 @@
                             (assoc request :approval/policy (:approval/mode cfg))
                             request)
          approval-decision* (approval-decision decision-request)
-         result (if (tools/dormant? cfg (:tool/name request))
-                  ;; Optional capability the owner never opted into: refuse
-                  ;; BEFORE execution. A tool absent from the prompt must not
-                  ;; run just because a model hallucinated its name.
-                  (deny-result request :dormant)
-                  (case approval-decision*
-                    :approved (execute-tool-request request)
-                    :ask (if (and approver (= :approved (approver request)))
-                           (execute-tool-request request)
-                           (deny-result request))
-                    :denied (deny-result request)))]
+         taint-decision (when-let [exp (:security/exposure cfg)]
+                          (sec/taint-gate-decision exp (:tool/name request) (:tool/args request) cfg))
+         raw-result (cond
+                      (tools/dormant? cfg (:tool/name request))
+                      ;; Optional capability the owner never opted into: refuse
+                      ;; BEFORE execution. A tool absent from the prompt must not
+                      ;; run just because a model hallucinated its name.
+                      (deny-result request :dormant)
+
+                      (and (map? taint-decision) (:require-approval? taint-decision))
+                      (if (and approver (= :approved (approver request)))
+                        (execute-tool-request request)
+                        (deny-result request :taint {:reason (:reason taint-decision)}))
+
+                      :else
+                      (case approval-decision*
+                        :approved (execute-tool-request request)
+                        :ask (if (and approver (= :approved (approver request)))
+                               (execute-tool-request request)
+                               (deny-result request))
+                        :denied (deny-result request)))
+         redacted-result (redact/redact-deep raw-result)
+         [_exp scan] (sec/note-exposure (:security/exposure cfg) (:tool/name request) redacted-result)
+         result (cond-> redacted-result
+                  (:suspicious? scan)
+                  (assoc :security/spotlight (sec/spotlight-note scan)
+                         :security/signals (:signals scan)))]
      ;; THE funnel: one recording site for every tool outcome — ok, error,
      ;; or denied with its denial source (approval vs constitution). The
      ;; RSI digest builds its tool-failure table from these events; a

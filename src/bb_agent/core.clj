@@ -6,7 +6,9 @@
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
             [bb-agent.provider :as provider]
+            [bb-agent.redact :as redact]
             [bb-agent.retry :as retry]
+            [bb-agent.security :as sec]
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
             [bb-agent.skill :as skill]
@@ -347,6 +349,7 @@
 (def ^:private live-tool-keep-recent 4)
 
 (defn run-turn! [cfg prompt]
+  (redact/register-config-secrets! cfg)
   (let [cfg (model/effective-config cfg)
         cfg (vision-chain-cfg cfg)
         max-rounds (or (:max-tool-rounds cfg) default-max-tool-rounds)
@@ -391,6 +394,7 @@
            rounds-left max-rounds
            seen-calls {}
            read-cache {}
+           exposure (sec/note-input-urls (or (:security/exposure cfg) sec/empty-exposure) prompt)
            final-nudge-used? false
            reasoning-streak 0
            phantom-streak 0]
@@ -437,10 +441,10 @@
                 ;; channel flips ⚙️→✅/❌ live inside a single flow message.
                 ;; Read-only tool results are cached within the turn and
                 ;; invalidated whenever any mutating tool runs.
-                {:keys [results cache]}
+                {:keys [results cache exp]}
                 (if (seq tool-requests)
                   (reduce
-                   (fn [{:keys [results cache]} req]
+                   (fn [{:keys [results cache exp]} req]
                      (let [tname (:tool/name req)
                            k [tname (canonical-args (:tool/args req))]
                            cacheable? (contains? cacheable-read-tools tname)]
@@ -458,17 +462,20 @@
                                                               tname
                                                               (inc (get seen-calls k 0))
                                                               threshold)})
-                              :cache cache})
+                              :cache cache
+                              :exp exp})
 
                          (and cacheable? (contains? cache k))
                          (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
                              (safe-emit cfg {:status :tool/done :tool tname :args {:ok? true :cached? true}})
                              {:results (conj results (assoc (get cache k) :cached? true))
-                              :cache cache})
+                              :cache cache
+                              :exp exp})
 
                          :else
                          (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
-                             (let [result (tool/handle-tool-request req cfg)]
+                             (let [result (tool/handle-tool-request req (assoc cfg :security/exposure exp))
+                                   [exp* _scan] (sec/note-exposure exp tname result)]
                                (safe-emit cfg {:status :tool/done
                                                :tool tname
                                                :args {:ok? (= :ok (:status result))}})
@@ -477,12 +484,14 @@
                                          (and cacheable? (= :ok (:status result)))
                                          (assoc cache k result)
                                          (not cacheable?) {}
-                                         :else cache)})))))
-                   {:results [] :cache read-cache}
+                                         :else cache)
+                                :exp exp*})))))
+                   {:results [] :cache read-cache :exp exposure}
                    tool-requests)
-                  {:results nil :cache read-cache})
+                  {:results nil :cache read-cache :exp exposure})
                 tool-results results
                 read-cache* cache
+                exposure* exp
                 turn* (cond-> (append-tool-round turn response (or tool-results []))
                         (:fallback/tried response)
                         (assoc :fallback/tried (:fallback/tried response))
@@ -508,6 +517,7 @@
                          (if extend? nudge-final-rounds rounds-next)
                          seen-calls*
                          read-cache*
+                         exposure*
                          (or extend? final-nudge-used?)
                          0
                          0)))
@@ -526,6 +536,7 @@
                            (dec rounds-left)
                            seen-calls*
                            read-cache*
+                           exposure*
                            final-nudge-used?
                            0
                            pstreak)
@@ -544,6 +555,7 @@
                            (dec rounds-left)
                            seen-calls*
                            read-cache*
+                           exposure*
                            final-nudge-used?
                            streak
                            phantom-streak)

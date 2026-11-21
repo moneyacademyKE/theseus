@@ -182,6 +182,10 @@
         :approval (str "Tool " name " requires explicit approval and no approver is "
                        "present in this turn. Recourse: ask the user to approve, or "
                        "report this step as skipped — do not silently retry.")
+        :taint (str "Tool " name " requires explicit approval because this turn "
+                    "is tainted or flagged for exfiltration risk"
+                    (when reason (str ": " reason))
+                    ". Recourse: ask the user to approve before continuing.")
         (str "Tool " name " requires explicit approval" detail))}
        (some? rule) (assoc :denial/rule rule)
        (some? category) (assoc :denial/category category)
