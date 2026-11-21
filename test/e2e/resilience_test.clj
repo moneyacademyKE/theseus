@@ -94,3 +94,16 @@
     (doseq [raw ["request timed out" "Operation timed out" "Read timed out"]]
       (is (= :infra (:kind (ec/classify raw))) (str raw " → infra"))
       (is (true? (ec/retryable? (ec/classify raw))) (str raw " → retryable")))))
+
+(deftest classifier-recognizes-5xx-and-connection-reset-errors
+  (doseq [raw ["Provider request failed with status 500"
+               "Provider request failed with status 520"
+               "Provider request failed with status 522"
+               "Provider request failed with status 524"
+               "Connection reset by peer"
+               "Broken pipe"
+               "EOF reached while reading"]]
+    (let [c (ec/classify raw)]
+      (is (= :infra (:kind c)) (str raw " → infra"))
+      (is (true? (ec/retryable? c)) (str raw " → retryable")))))
+

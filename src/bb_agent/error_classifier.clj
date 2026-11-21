@@ -21,7 +21,9 @@
    ;; "timed out" beside "timeout": that is the wording the JVM and
    ;; http-client actually emit, and missing it filed real provider
    ;; timeouts as :unknown — unretryable, and invisible to rsi as infra.
-   [:infra ["502" "503" "504" "timeout" "timed out" "connection refused" "econnrefused"
+   [:infra ["500" "502" "503" "504" "520" "522" "524"
+            "timeout" "timed out" "connection refused" "econnrefused"
+            "reset by peer" "broken pipe" "eof"
             "stream failed" "provider returned error" "model is unavailable"]]
    [:logic ["400" "invalid model" "not a valid model" "not found"]]])
 

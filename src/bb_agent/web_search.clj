@@ -83,12 +83,13 @@
       (count stale))))
 
 (defn- sanitize-query
-  "FTS5 has its own query grammar (quotes, colons, AND/OR); raw user
-  text can error the parser. Reduce to word tokens joined by implicit
-  AND — the shape of a phrase people actually type."
+  "FTS5 has its own query grammar (quotes, colons, AND/OR/NOT, hyphens);
+  raw user text can error or trigger boolean/column operators. Split into
+  alphanumeric/underscore tokens and quote each one as a literal term."
   [q]
-  (->> (str/split (str q "") #"[^A-Za-z0-9_\-]+")
-       (filter #(> (count %) 0))
+  (->> (str/split (str (or q "")) #"[^A-Za-z0-9_]+")
+       (remove str/blank?)
+       (map #(str "\"" % "\""))
        (str/join " ")))
 
 (defn search

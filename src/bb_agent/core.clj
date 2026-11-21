@@ -386,7 +386,7 @@
                                  (zero? (mod consumed nudge-interval))
                                  (not final-nudge-used?))
                         (checkpoint-nudge-message consumed max-rounds))
-            messages (cond-> messages nudge-msg (conj {:role "user" :content nudge-msg}))
+            messages (cond-> messages nudge-msg (conj {:role :user :content nudge-msg}))
             request {:provider provider
                      :model model
                      :messages messages
@@ -468,7 +468,7 @@
                                    (pos? nudge-final-rounds)
                                    (not final-nudge-used?))]
                   (recur (cond-> (continue-messages messages response tool-results)
-                           extend? (conj {:role "user"
+                           extend? (conj {:role :user
                                           :content (final-nudge-message nudge-final-rounds)}))
                          turn*
                          (if extend? nudge-final-rounds rounds-next)
@@ -485,7 +485,7 @@
                     ;; A tool call emitted as text: nudge, don't finish — the
                     ;; model re-emits through the tool channel. Bounded: after
                     ;; the threshold the text is accepted as the final answer.
-                    (recur (conj messages {:role "user"
+                    (recur (conj messages {:role :user
                                            :content (phantom-nudge-message phantom pstreak pthreshold)})
                            turn*
                            (dec rounds-left)
@@ -502,7 +502,7 @@
                       rthreshold (or (:reasoning-nudge-threshold cfg)
                                      default-reasoning-nudge-threshold)]
                   (if (< streak rthreshold)
-                    (recur (conj messages {:role "user"
+                    (recur (conj messages {:role :user
                                            :content (reasoning-nudge-message streak rthreshold)})
                            turn*
                            (dec rounds-left)
@@ -510,5 +510,4 @@
                            final-nudge-used?
                            streak
                            phantom-streak)
-                    (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (reasoning-death-message streak) (:usage response)))))))))))
-)
+                    (finish-turn id cfg prompt memory-matches semantic-ctx (assoc turn* :turn/ok false) (reasoning-death-message streak) (:usage response))))))))))))

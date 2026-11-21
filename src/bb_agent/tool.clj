@@ -50,9 +50,9 @@
       (common/error-result name (str "Unknown tool: " name) {}))))
 
 (defn handle-tool-request
-  "Route one request through optional capability, constitution, and approval
-  gates. Constitution denies always win. A constitution allow may replace only
-  an implicit :ask; explicit or configured approval modes remain authoritative."
+  "Route one request through optional-capability and approval gates.
+  Dormant optional tools are denied before any approval runs; approved tools
+  execute once through the wrapped handler."
   ([request] (handle-tool-request request {}))
   ([request cfg]
    (let [started-at (System/nanoTime)

@@ -64,3 +64,14 @@
 
 (deftest empty-home-is-empty
   (is (empty? (ws/search "anything"))))
+
+(deftest hyphen-and-keyword-queries-match-literally
+  (seed-session! "hyphens" [{:user/input "goal-bridge OR NOT discussion"
+                             :assistant/final "AND bridge details"
+                             :source :web :turn/ok true}])
+  (is (= 1 (count (ws/search "goal-bridge"))))
+  (is (= 1 (count (ws/search "OR"))))
+  (is (= 1 (count (ws/search "NOT"))))
+  (is (= 1 (count (ws/search "-bridge"))))
+  (is (empty? (ws/search "---"))))
+

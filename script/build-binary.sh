@@ -90,11 +90,6 @@ rm -f "$APP"
 BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep 'bb-excel-.*\.jar$' | head -1)"
 [ -n "$BB_EXCEL_JAR" ] || { echo "FATAL: bb-excel dependency not resolved" >&2; exit 1; }
 ( cd "$STAGE" && unzip -qo "$BB_EXCEL_JAR" -d app-deps && rm -rf app-deps/META-INF && cd app-deps && zip -qr "$APP" . )
-# bb-excel is a source dependency: app archives do not resolve bb.edn Maven
-# coordinates at runtime, so unpack its source into the archive classpath.
-BB_EXCEL_JAR="$(bb print-deps --format classpath | tr ':' '\n' | grep 'bb-excel-.*\.jar$' | head -1)"
-[ -n "$BB_EXCEL_JAR" ] || { echo "FATAL: bb-excel dependency not resolved" >&2; exit 1; }
-( cd "$STAGE" && unzip -qo "$BB_EXCEL_JAR" -d app-deps && rm -rf app-deps/META-INF && cd app-deps && zip -qr "$APP" . )
 # The local sqlite pod is a native sidecar; ship it beside the archive and
 # point BABASHKA_PODS_DIR at that directory at runtime.
 POD_BIN="$ROOT/../.pods/pod-babashka-go-sqlite3"

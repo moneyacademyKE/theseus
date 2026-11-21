@@ -12,7 +12,9 @@
     (try
       (fs/create-dirs (fs/path home "state"))
       (doseq [e ["sessions" "outbox" "memory.edn" "usage.edn"
-                 "telegram-offset.edn" "telegram-poll.log"]]
+                 "telegram-offset.edn" "telegram-poll.log"
+                 "approvals.edn" "approvals.edn.lock"
+                 "memory.sqlite" "search.db" "skill-research" "subagents.edn"]]
         (spit (str (fs/path home "state" e)) ""))
       (is (= [] (hygiene/violations (fs/path home "state"))))
       (finally (fs/delete-tree home)))))

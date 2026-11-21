@@ -10,6 +10,22 @@
             [clojure.string :as str]))
 
 (def max-output-chars 20000)
+(def ^:private min-timeout-ms 1000)
+(def ^:private max-timeout-ms 600000)
+
+(defn- parse-timeout-ms
+  "Parse an optional positive integer timeout-ms, clamped to [1000 600000].
+  Returns nil when absent, a long when valid, or :invalid when malformed."
+  [raw]
+  (when (some? raw)
+    (let [parsed (cond
+                   (integer? raw) (long raw)
+                   (and (string? raw) (re-matches #"\s*\d+\s*" raw))
+                   (try (Long/parseLong (str/trim raw)) (catch Exception _ nil))
+                   :else nil)]
+      (if (and parsed (pos? parsed))
+        (-> parsed (max min-timeout-ms) (min max-timeout-ms))
+        :invalid))))
 
 (defn- token-file []
   (fs/path (config/home) "state" "a2a-opencrabs-token"))
@@ -54,7 +70,9 @@
   [args]
   (let [url (or (:url args) (get args "url"))
         text (or (:text args) (get args "text"))
-        timeout-ms (or (:timeout-ms args) (get args "timeout-ms"))]
+        raw-timeout (some #(when (some? (get args %)) (get args %))
+                          [:timeout-ms "timeout-ms" :timeout_ms "timeout_ms"])
+        timeout-ms (parse-timeout-ms raw-timeout)]
     (cond
       (not (and (string? url) (valid-url? url)))
       (common/error-result "a2a_task"
@@ -63,13 +81,14 @@
       (not (and (string? text) (not (str/blank? text))))
       (common/error-result "a2a_task" "text must be a non-empty string"
                            {:executed? false})
+      (= :invalid timeout-ms)
+      (common/error-result "a2a_task" "timeout-ms must be a positive integer"
+                           {:executed? false})
       :else
       (let [result (a2a/run-task {:base-url url
                                   :text text
                                   :token (bearer-for url)
-                                  :timeout-ms (when timeout-ms
-                                               (min (Long/parseLong (str timeout-ms))
-                                                    600000))})]
+                                  :timeout-ms timeout-ms})]
         (if (:ok? result)
           (common/ok-result "a2a_task"
                             {:output (bounded (str "remote agent replied:\n"

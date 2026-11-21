@@ -41,7 +41,11 @@
     ;; Outbound bridge credential: the OpenCrabs A2A api_key, copied
     ;; file-to-file (mode 600, outside the repo) for the a2a_task borrow
     ;; lane (bk-31e2). Same lifetime as a2a-token.
-    "a2a-opencrabs-token"})
+    "a2a-opencrabs-token"
+    ;; Approvals lock/state, SQLite memory/search stores, quarantined skill
+    ;; proposals, and subagent ledger.
+    "approvals.edn" "approvals.edn.lock" "memory.sqlite" "search.db"
+    "skill-research" "subagents.edn"})
 
 (defn violations
   "Top-level entries under state-dir that are not allowlisted durable

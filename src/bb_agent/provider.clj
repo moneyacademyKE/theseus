@@ -28,10 +28,18 @@
     {}
     (json/parse-string args keyword)))
 
+(defn- safe-parse-json
+  "Best-effort JSON parse; returns nil on empty or non-JSON payloads (such
+   as HTML 502/503 proxy error pages) so status checks fire cleanly."
+  [s]
+  (when-not (str/blank? (or s ""))
+    (try (json/parse-string s keyword)
+         (catch Exception _ nil))))
+
 (defn- openai-tool-request [tool-call]
   (let [function (:function tool-call)]
     {:tool/name (:name function)
-      :tool/args (parse-json-args (:arguments function))}))
+     :tool/args (parse-json-args (:arguments function))}))
 
 (defn- openai-usage [body]
   (when-let [usage (:usage body)]
@@ -90,7 +98,33 @@
        (= 400 (long (or status 0)))
        (boolean
         (re-find #"(?i)image|vision|multimodal"
-                 (pr-str body)))))
+                 (if (string? body) body (pr-str body))))))
+
+(defn- perform-with-vision-fallback
+  "Execute `post!` with images, falling back once to text-only if the model
+   returns a vision-specific 400. Throws structured status errors BEFORE
+   requiring a valid JSON body so HTML 5xx pages classify as retryable :infra."
+  [post! images]
+  (let [first-resp (post! images)
+        first-body (safe-parse-json (:body first-resp))
+        [response body vision-degraded?]
+        (if (vision-rejection? (:status first-resp)
+                               (or first-body (:body first-resp))
+                               images)
+          (let [r (post! nil)
+                b (safe-parse-json (:body r))]
+            [r b true])
+          [first-resp first-body false])
+        status (:status response)]
+    (when (or (nil? status) (>= status 400))
+      (throw (ex-info (str "Provider request failed with status " status)
+                      {:status status
+                       :body (:body response)})))
+    (when (nil? body)
+      (throw (ex-info (str "Provider returned non-JSON response (status " status ")")
+                      {:status status
+                       :body (:body response)})))
+    [status body vision-degraded?]))
 
 (defmethod complete :openai-compatible [_ {:keys [model messages images provider/config]
                                            :as request}]
@@ -112,21 +146,10 @@
                                     :messages (openai-wire-messages
                                                (vision/attach-to-first-user messages imgs :openai))
                                     :tools advertised-tools})}))
-        first-resp (post! images)
-        first-body (json/parse-string (:body first-resp) keyword)
-        [response body vision-degraded?]
-        (if (vision-rejection? (:status first-resp) first-body images)
-          (let [r (post! nil)
-                b (json/parse-string (:body r) keyword)]
-            [r b true])
-          [first-resp first-body false])
-        status (:status response)
+        [status body vision-degraded?] (perform-with-vision-fallback post! images)
         message (get-in body [:choices 0 :message])
         content (:content message)
         tool-calls (:tool_calls message)]
-    (when (or (nil? status) (>= status 400))
-      (throw (ex-info (str "Provider request failed with status " status)
-                      {:status status})))
     (when (and (str/blank? content) (empty? tool-calls))
       (throw (ex-info "Provider response did not include assistant content"
                       {:status status})))
@@ -141,8 +164,9 @@
 
 (defn- anthropic-tool-request [block]
   (when (= "tool_use" (:type block))
-    {:tool/name (:name block)
-     :tool/args (:input block)}))
+    (cond-> {:tool/name (:name block)
+             :tool/args (or (:input block) {})}
+      (:id block) (assoc :tool/id (:id block)))))
 
 (defn- anthropic-extract [content-blocks]
   (let [text (->> content-blocks
@@ -164,34 +188,103 @@
      :tokens/cache-read (or (:cache_read_input_tokens usage) 0)
      :tokens/cache-write (or (:cache_creation_input_tokens usage) 0)}))
 
-(defmethod complete :anthropic-compatible [_ {:keys [model messages images provider/config]}]
+(defn anthropic-tools
+  "Translate OpenAI function-calling tool definitions into Anthropic Messages
+   API schemas (`:name`, `:description`, `:input_schema`)."
+  [defs]
+  (mapv (fn [d]
+          (let [f (:function d)]
+            {:name (:name f)
+             :description (:description f)
+             :input_schema (:parameters f)}))
+        defs))
+
+(defn anthropic-wire-payload
+  "Translate internal messages into `{:system str-or-nil :messages [...]}`
+   for the Anthropic Messages API: extracts `:system` messages into the
+   top-level `:system` string, converts `:tool/requests` into assistant
+   `tool_use` blocks preserving `:tool/id` (or synthesizing `toolu-N`),
+   and converts `:tool/results` into user `tool_result` blocks matching each
+   `tool_use_id`."
+  [messages]
+  (let [assign-ids (fn [reqs next-id]
+                     (reduce (fn [[ids nid] req]
+                               (if-let [explicit (:tool/id req)]
+                                 [(conj ids (str explicit)) nid]
+                                 [(conj ids (str "toolu-" nid)) (inc nid)]))
+                             [[] next-id]
+                             reqs))]
+    (loop [in (seq messages) sys-parts [] out [] pending-ids [] next-id 0]
+      (if-let [m (first in)]
+        (cond
+          (contains? #{:system "system"} (:role m))
+          (recur (next in)
+                 (cond-> sys-parts
+                   (not (str/blank? (str (:content m)))) (conj (str (:content m))))
+                 out
+                 pending-ids
+                 next-id)
+
+          (:tool/requests m)
+          (let [[ids next-id*] (assign-ids (:tool/requests m) next-id)
+                blocks (cond-> []
+                         (not (str/blank? (str (:content m))))
+                         (conj {:type "text" :text (:content m)})
+                         true
+                         (into (map (fn [req id]
+                                      {:type "tool_use"
+                                       :id id
+                                       :name (name (:tool/name req))
+                                       :input (or (:tool/args req) {})})
+                                    (:tool/requests m) ids)))]
+            (recur (next in) sys-parts
+                   (conj out {:role "assistant" :content blocks})
+                   ids next-id*))
+
+          (:tool/results m)
+          (let [blocks (vec (map-indexed
+                             (fn [idx result]
+                               {:type "tool_result"
+                                :tool_use_id (or (nth pending-ids idx nil)
+                                                 (str "toolu-orphan-" idx))
+                                :content (pr-str result)})
+                             (:tool/results m)))]
+            (recur (next in) sys-parts
+                   (conj out {:role "user" :content blocks})
+                   [] next-id))
+
+          :else
+          (recur (next in) sys-parts
+                 (conj out {:role (some-> (:role m) name) :content (:content m)})
+                 [] next-id))
+        (cond-> {:messages out}
+          (seq sys-parts) (assoc :system (str/join "\n\n" sys-parts)))))))
+
+(defmethod complete :anthropic-compatible [_ {:keys [model messages images provider/config]
+                                              :as request}]
   (let [_base-url (require-config config :base-url)
         api-key (require-config config :api-key)
+        advertised-tools (or (:provider/tools request) (tools/active-definitions nil))
+        tools-payload (anthropic-tools advertised-tools)
         post! (fn [imgs]
-                (http/post (anthropic-url config)
-                           {:headers {"x-api-key" api-key
-                                      "anthropic-version" "2023-06-01"
-                                      "content-type" "application/json"}
-                            :throw false
-                            :timeout (or (:timeout-ms config) 60000)
-                            :body (json/generate-string
-                                   {:model model
-                                    :max_tokens (or (:max-tokens config) 4096)
-                                    :messages (vision/attach-to-first-user
-                                               messages imgs :anthropic)})}))
-        first-resp (post! images)
-        first-body (json/parse-string (:body first-resp) keyword)
-        [response body vision-degraded?]
-        (if (vision-rejection? (:status first-resp) first-body images)
-          (let [r (post! nil)
-                b (json/parse-string (:body r) keyword)]
-            [r b true])
-          [first-resp first-body false])
-        status (:status response)
+                (let [wire (anthropic-wire-payload
+                            (vision/attach-to-first-user messages imgs :anthropic))
+                      payload (cond-> {:model model
+                                       :max_tokens (or (:max-tokens config) 4096)
+                                       :messages (:messages wire)}
+                                (not (str/blank? (:system wire)))
+                                (assoc :system (:system wire))
+                                (seq tools-payload)
+                                (assoc :tools tools-payload))]
+                  (http/post (anthropic-url config)
+                             {:headers {"x-api-key" api-key
+                                        "anthropic-version" "2023-06-01"
+                                        "content-type" "application/json"}
+                              :throw false
+                              :timeout (or (:timeout-ms config) 60000)
+                              :body (json/generate-string payload)})))
+        [status body vision-degraded?] (perform-with-vision-fallback post! images)
         content-blocks (:content body)]
-    (when (or (nil? status) (>= status 400))
-      (throw (ex-info (str "Provider request failed with status " status)
-                      {:status status})))
     (when (empty? content-blocks)
       (throw (ex-info "Provider response did not include content"
                       {:status status})))

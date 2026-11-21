@@ -105,3 +105,57 @@
       (finally
         (stop-server)
         (fs/delete-tree home)))))
+
+(deftest anthropic-provider-sends-system-tools-and-roundtrips-tool-results
+  (let [home (fs/create-temp-dir {:prefix "theseus-anthropic-full-wire-"})
+        reqs (atom [])
+        stop-server (server/run-server
+                     (fn [req]
+                       (let [body (json/parse-string (slurp (:body req)) keyword)
+                             n (count (swap! reqs conj body))]
+                         {:status 200
+                          :headers {"content-type" "application/json"}
+                          :body (json/generate-string
+                                 (if (= 1 n)
+                                   {:content [{:type "tool_use"
+                                               :id "toolu_xyz99"
+                                               :name "read_file"
+                                               :input {:path (str (fs/path home "note.txt"))}}]
+                                    :role "assistant"}
+                                   {:content [{:type "text"
+                                               :text "note says: hello from anthropic"}]
+                                    :role "assistant"}))}))
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
+        config-file (fs/path home "config.edn")]
+    (try
+      (fs/create-dirs (fs/path home "brain"))
+      (spit (str (fs/path home "brain" "IDENTITY.md")) "SYSTEM-MARKER-99")
+      (spit (str (fs/path home "note.txt")) "hello from anthropic")
+      (spit (str config-file)
+            (pr-str {:provider :anthropic-compatible
+                     :model "claude-3-5-sonnet-20241022"
+                     :session/id "anthropic-wire-session"
+                     :approval/mode :auto-all
+                     :providers {:anthropic-compatible
+                                 {:base-url (str "http://127.0.0.1:" port "/v1")
+                                  :api-key "test-anthropic-key"}}}))
+      (let [result (run-agent home "read the note")]
+        (is (= 0 (:exit result)) (:err result))
+        (is (= "note says: hello from anthropic\n" (:out result)))
+        (is (= 2 (count @reqs)))
+        (let [r1 (first @reqs)
+              r2 (second @reqs)]
+          (is (str/includes? (str (:system r1)) "SYSTEM-MARKER-99"))
+          (is (not-any? #(= "system" (:role %)) (:messages r1)))
+          (is (seq (:tools r1)))
+          (is (every? #(and (string? (:name %)) (map? (:input_schema %))) (:tools r1)))
+          (is (= "assistant" (get-in r2 [:messages 1 :role])))
+          (is (= "toolu_xyz99" (get-in r2 [:messages 1 :content 0 :id])))
+          (is (= "user" (get-in r2 [:messages 2 :role])))
+          (is (= "tool_result" (get-in r2 [:messages 2 :content 0 :type])))
+          (is (= "toolu_xyz99" (get-in r2 [:messages 2 :content 0 :tool_use_id])))))
+      (finally
+        (stop-server)
+        (fs/delete-tree home)))))
+

@@ -154,3 +154,50 @@
       (a2a-tool/a2a-task {:url "https://example.com" :text "x"})
       (is (= "https://example.com" (:base-url @seen)))
       (is (nil? (:token @seen))))))
+
+(deftest await-task-tolerates-transient-nil-and-fails-closed
+  (testing "survives up to 2 transient nil poll responses and completes"
+    (let [submitted {:id "t-nil-ok" :status {:state "submitted"}}
+          done {:id "t-nil-ok" :status {:state "completed"}
+                :artifacts [{:parts [{:kind "text" :text "recovered"}]}]}
+          transient-502 {:status 502 :body "bad gateway"}]
+      (with-redefs [a2a/post-json (fake-post-seq [(rpc-res 1 submitted)
+                                                  transient-502
+                                                  transient-502
+                                                  (rpc-res 2 done)])]
+        (let [r (a2a/run-task {:base-url "http://127.0.0.1:18790"
+                               :text "x" :timeout-ms 5000 :poll-ms 1})]
+          (is (:ok? r))
+          (is (= "recovered" (:text r)))))))
+  (testing "fails closed after 3 consecutive transient nil polls"
+    (let [submitted {:id "t-nil-fail" :status {:state "submitted"}}
+          transient-502 {:status 502 :body "bad gateway"}]
+      (with-redefs [a2a/post-json (fake-post-seq [(rpc-res 1 submitted)
+                                                  transient-502])]
+        (let [r (a2a/run-task {:base-url "http://127.0.0.1:18790"
+                               :text "x" :timeout-ms 5000 :poll-ms 1})]
+          (is (not (:ok? r)))
+          (is (:timed-out? r)))))))
+
+(deftest timeout-ms-validation-and-clamping
+  (testing "invalid timeout-ms values are rejected before calling run-task"
+    (let [called (atom false)]
+      (with-redefs [a2a/run-task (fn [_] (reset! called true) {:ok? true})]
+        (doseq [bad ["abc" -5 0 true 1.5]]
+          (let [r (a2a-tool/a2a-task {:url "http://127.0.0.1:18790"
+                                      :text "x"
+                                      :timeout-ms bad})]
+            (is (= :error (:status r)) (str "bad timeout: " (pr-str bad)))
+            (is (false? (:executed? r)))))
+        (is (false? @called)))))
+  (testing "valid timeout-ms parses strings/integers and clamps to [1000 600000]"
+    (let [seen (atom [])]
+      (with-redefs [a2a/run-task (fn [opts]
+                                   (swap! seen conj (:timeout-ms opts))
+                                   {:ok? true :state "completed" :text "ok" :task-id "t"})]
+        (a2a-tool/a2a-task {:url "http://127.0.0.1:18790" :text "x" :timeout-ms 500})
+        (a2a-tool/a2a-task {:url "http://127.0.0.1:18790" :text "x" :timeout-ms 9999999})
+        (a2a-tool/a2a-task {:url "http://127.0.0.1:18790" :text "x" :timeout-ms "5000"})
+        (a2a-tool/a2a-task {:url "http://127.0.0.1:18790" :text "x" :timeout_ms 2500})
+        (is (= [1000 600000 5000 2500] @seen))))))
+

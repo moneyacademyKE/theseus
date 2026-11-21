@@ -14,7 +14,9 @@
             [clojure.string :as str]))
 
 (def default-timeout-ms 180000)
+(def default-http-timeout-ms 30000)
 (def default-poll-ms 2000)
+(def max-transient-nils 3)
 
 (defn- headers [token]
   (cond-> {"Content-Type" "application/json"}
@@ -26,6 +28,7 @@
   [url body token]
   (try
     (let [resp (http/post url {:throw false
+                               :timeout default-http-timeout-ms
                                :headers (headers token)
                                :body (json/generate-string body)})]
       {:status (:status resp) :body (:body resp)})
@@ -37,7 +40,8 @@
   {:error message}. THE seam tests replace."
   [url]
   (try
-    (let [resp (http/get url {:throw false})]
+    (let [resp (http/get url {:throw false
+                              :timeout default-http-timeout-ms})]
       {:status (:status resp) :body (:body resp)})
     (catch Exception e
       {:error (or (.getMessage e) "a2a request failed")})))
@@ -115,17 +119,31 @@
 
 (defn await-task
   "Poll tasks/get until the task is terminal or the deadline passes.
-  Returns {:task task-map-or-nil :timed-out? bool}."
+  Tolerates up to max-transient-nils consecutive nil poll responses
+  before failing closed. Returns {:task task-map-or-nil :timed-out? bool}."
   [{:keys [timeout-ms poll-ms] :as opts}]
   (let [deadline (+ (System/currentTimeMillis) (or timeout-ms default-timeout-ms))
         interval-ms (or poll-ms default-poll-ms)]
-    (loop []
+    (loop [consecutive-nils 0]
       (let [task (fetch-task opts)]
         (cond
-          (nil? task) {:task nil :timed-out? true}
-          (terminal? task) {:task task :timed-out? false}
-          (>= (System/currentTimeMillis) deadline) {:task task :timed-out? true}
-          :else (do (Thread/sleep interval-ms) (recur)))))))
+          (nil? task)
+          (let [nils (inc consecutive-nils)]
+            (if (or (>= nils max-transient-nils)
+                    (>= (System/currentTimeMillis) deadline))
+              {:task nil :timed-out? true}
+              (do (Thread/sleep interval-ms)
+                  (recur nils))))
+
+          (terminal? task)
+          {:task task :timed-out? false}
+
+          (>= (System/currentTimeMillis) deadline)
+          {:task task :timed-out? true}
+
+          :else
+          (do (Thread/sleep interval-ms)
+              (recur 0)))))))
 
 (defn run-task
   "Send one text task and wait for its terminal state. Returns
