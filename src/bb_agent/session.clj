@@ -212,11 +212,28 @@
                            {:cwd (str path)
                             :updated/at (str (java.time.Instant/now))}))))
 
+(defn load-turn-range
+  "Load an inclusive slice [from-idx..to-idx] of persisted turns for session-id,
+   each annotated with its 0-based :turn/index for provenance drill-down."
+  [session-id from-idx to-idx]
+  (let [turns (vec (load-turns session-id))
+        n (count turns)
+        start (max 0 (long (or from-idx 0)))
+        end (min (dec n) (long (or to-idx (dec n))))]
+    (if (or (zero? n) (> start end))
+      []
+      (mapv (fn [idx] (assoc (nth turns idx) :turn/index idx))
+            (range start (inc end))))))
+
 (defn reset!
   "Archive the session's turn history: the file moves aside with a
-   timestamp suffix, never deleted. The next turn starts fresh."
+   timestamp suffix, never deleted. Clears any compaction checkpoint so the
+   next turn starts genuinely fresh."
   [session-id]
-  (let [f (session-file session-id)]
+  (let [f (session-file session-id)
+        ckpt (fs/path (config/home) "state" "session-compaction"
+                      (str (safe-session-id session-id) ".edn"))]
+    (fs/delete-if-exists ckpt)
     (when (fs/exists? f)
       (fs/move f (fs/path (str f ".archived-" (System/currentTimeMillis))))
       true)))

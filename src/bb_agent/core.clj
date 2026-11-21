@@ -195,34 +195,38 @@
 
 (defn- history-messages
   "Prior session turns as alternating user/assistant wire messages.
-   Bounded by :history-budget-chars (default 24000): over budget, old
-   middle turns are compacted by bb-agent.compression — head kept, the
-   most recent ~25% kept verbatim, tool payloads pruned, the middle
-   summarized through the provider chain."
-  [cfg session-id]
-  (when session-id
-    (let [pairs (->> (session/load-turns session-id)
-                     (keep (fn [{:keys [user/input assistant/final]}]
-                             (when (and (seq input) (seq final))
-                               [{:role :user :content input}
-                                {:role :assistant :content final}])))
-                     (apply concat)
-                     vec)]
-      (when (seq pairs)
-        (let [budget (or (:history-budget-chars cfg) 24000)]
-          (if (<= (compression/count-chars pairs) budget)
-            pairs
-            (compression/compress pairs
-                                  {:protect-first 0
-                                   :tail-char-budget (max 200 (quot budget 4))
-                                   :call-llm-fn (fn [prompt]
-                                                  (:content
-                                                   (complete-chain
-                                                    cfg
-                                                    {:provider (:provider cfg)
-                                                     :model (:model cfg)
-                                                     :messages [{:role :user :content prompt}]
-                                                     :provider/config (get-in cfg [:providers (:provider cfg)])})))})))))))
+   Bounded by dynamic model-aware budget (or explicit :history-budget-chars):
+   over budget, old turns are incrementally compacted via durable checkpoints
+   in bb-agent.compression so unchanged history is never re-summarized."
+  ([cfg session-id] (history-messages cfg session-id 0))
+  ([cfg session-id overhead-chars]
+   (when session-id
+     (let [indexed-turns (->> (session/load-turns session-id)
+                              (map-indexed (fn [idx t] (assoc t :turn/index idx)))
+                              (filter (fn [{:keys [user/input assistant/final]}]
+                                        (and (seq input) (seq final))))
+                              vec)
+           pairs (->> indexed-turns
+                      (mapcat (fn [{:keys [user/input assistant/final]}]
+                                [{:role :user :content input}
+                                 {:role :assistant :content final}]))
+                      vec)]
+       (when (seq pairs)
+         (let [budget (compression/history-budget-chars cfg overhead-chars)]
+           (if (<= (compression/count-chars pairs) budget)
+             pairs
+             (compression/compress-session-turns!
+              session-id
+              indexed-turns
+              {:tail-char-budget (max 200 (quot budget 4))
+               :call-llm-fn (fn [prompt]
+                              (:content
+                               (complete-chain
+                                cfg
+                                {:provider (:provider cfg)
+                                 :model (:model cfg)
+                                 :messages [{:role :user :content prompt}]
+                                 :provider/config (get-in cfg [:providers (:provider cfg)])})))}))))))))
 
 (defn- skills-system-message [skills-ctx]
   {:role :system
@@ -368,9 +372,14 @@
         ;; One registry decision per turn, from config: optional capabilities
         ;; (web_search, browser_read, a2a_task) stay dormant unless
         ;; :tools/enable-optional opts them in (owner directive 2026-11-12).
-        active-tools (tools/active-definitions cfg)]
+        active-tools (tools/active-definitions cfg)
+        overhead-chars (+ (count (str (or brain-ctx "")))
+                          (count (str (or semantic-ctx "")))
+                          (count (str (or skills-ctx "")))
+                          (reduce + 0 (map #(count (str (:memory/text % "")))
+                                           memory-matches)))]
     (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
-                                      (history-messages cfg id))
+                                      (history-messages cfg id overhead-chars))
            turn {:tool/requests []
                  :tool/results []}
            rounds-left max-rounds

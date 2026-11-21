@@ -103,3 +103,55 @@
                 "no session history means no extra messages"))
           (finally
             (fs/delete-tree home)))))))
+
+(deftest persistent-compaction-checkpoint-avoids-resummarizing-unchanged-middle
+  (let [home (fs/create-temp-dir {:prefix "theseus-hist-ckpt-"})
+        summarize-calls (atom [])
+        orig provider/complete]
+    (try
+      (with-redefs [config/home (constantly (str home))
+                    provider/complete
+                    (fn [prov req]
+                      (let [prompt (str (-> req :messages last :content))]
+                        (if (str/includes? prompt "Turns to summarize")
+                          (do
+                            (swap! summarize-calls conj prompt)
+                            {:role :assistant
+                             :content (pr-str {:summary (str "summary #" (count @summarize-calls))
+                                               :facts [(str "fact-" (count @summarize-calls))]
+                                               :decisions ["keep EDN"]
+                                               :files ["src/bb_agent/compression.clj"]
+                                               :pending []})})
+                          (orig prov req))))]
+        (doseq [i (range 6)]
+          (session/append-turn!
+           "hist-ckpt"
+           {:user/input (str "q" i " " (str/join (repeat 120 "x")))
+            :assistant/final (str "a" i " " (str/join (repeat 120 "y")))}))
+        ;; First over-budget turn (budget 1400 -> tail budget 350) keeps turn 5
+        ;; verbatim (~252 chars) and summarizes turns 0..4 once.
+        (core/run-turn! {:provider :fake :model "m" :session/id "hist-ckpt"
+                         :history-budget-chars 1400}
+                        "short follow-up 1")
+        (is (= 1 (count @summarize-calls)) "first over-budget turn summarizes once")
+        ;; Turn 5 (~252 chars) + turn 6 (~35 chars) both fit inside the 350-char tail:
+        ;; watermark does not advance -> 0 extra summarizer calls!
+        (core/run-turn! {:provider :fake :model "m" :session/id "hist-ckpt"
+                         :history-budget-chars 1400}
+                        "short follow-up 2")
+        (is (= 1 (count @summarize-calls))
+            "checkpoint reused with zero extra summarizer calls when watermark did not advance")
+        ;; Adding a large turn pushes turns 5..6 past the tail watermark:
+        ;; summarizer runs ONLY on the delta, passing previous summary!
+        (session/append-turn!
+         "hist-ckpt"
+         {:user/input (str "big " (str/join (repeat 300 "z")))
+          :assistant/final (str "big-ans " (str/join (repeat 300 "w")))})
+        (core/run-turn! {:provider :fake :model "m" :session/id "hist-ckpt"
+                         :history-budget-chars 1400}
+                        "after big turn")
+        (is (= 2 (count @summarize-calls)) "delta turn triggers exactly one incremental summary")
+        (is (str/includes? (second @summarize-calls) "summary #1")
+            "incremental summary receives prior summary context"))
+      (finally
+        (fs/delete-tree home)))))
