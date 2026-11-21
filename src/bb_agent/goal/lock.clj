@@ -15,7 +15,8 @@
     so a thief who stole our lock can't be cleaned up by us later.
   (A kernel FileChannel.tryLock was tried first -- strictly correct,
   but Babashka's sci sandbox refuses .release on sun.nio.ch classes.)"
-  (:require [clojure.java.io :as io]
+  (:require [bb-agent.atomic-io :as aio]
+            [clojure.java.io :as io]
             [clojure.string :as str]))
 
 (def ^:private pid-read-deadline-ms 500)
@@ -62,14 +63,21 @@
   [lock-path]
   (let [f    (io/file lock-path)
         _    (some-> f .getParentFile (.mkdirs))
+        my-pid (current-pid)
         won? (.createNewFile f)]           ; atomic -- exactly one winner
     (if won?
-      (do (spit f (current-pid)) true)
+      (do (spit f (str my-pid)) true)
       (let [pid (read-holder-pid f)]
         (if (and pid (process-alive? pid))
           (throw (ex-info "Lock held by a live process"
                           {:pid pid :path lock-path}))
-          (do (spit f (current-pid)) true))))))
+          (do
+            (aio/write-private-file! lock-path (str my-pid))
+            (let [holder (parse-pid (try (slurp f) (catch Exception _ "")))]
+              (if (= holder my-pid)
+                true
+                (throw (ex-info "Lock held by a live process"
+                                {:pid holder :path lock-path}))))))))))
 
 (defn release!
   "Remove the pidfile lock -- but only if it still names OUR pid (a

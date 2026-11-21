@@ -7,12 +7,11 @@
   token hashes are persisted. A restart or a password change clears
   matching sessions, so no session ever outlives the secret that minted it."
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [bb-agent.config :as config])
   (:import (java.nio.charset StandardCharsets)
-           (java.nio.file Files Paths StandardCopyOption)
-           (java.nio.file.attribute PosixFilePermissions)
            (java.security MessageDigest SecureRandom)
            (java.util Base64)
            (javax.crypto SecretKeyFactory)
@@ -45,30 +44,7 @@
   (let [md (MessageDigest/getInstance "SHA-256")]
     (str "sha256:" (hex-bytes (.digest md (.getBytes (str token) StandardCharsets/UTF_8))))))
 
-(defn- write-private-file!
-  "Write content atomically with owner-only (0600) permissions from birth."
-  [path content]
-  (let [target (.toPath (java.io.File. (str path)))
-        parent (.getParent target)]
-    (when parent (Files/createDirectories parent (into-array java.nio.file.attribute.FileAttribute [])))
-    (let [tmp-path (Paths/get (str parent) (into-array String [(str "." (.getFileName target) ".tmp." (System/nanoTime))]))
-          bytes (.getBytes (str content) StandardCharsets/UTF_8)]
-      (try
-        (let [attr (PosixFilePermissions/asFileAttribute
-                    (PosixFilePermissions/fromString "rw-------"))]
-          (Files/createFile tmp-path (into-array java.nio.file.attribute.FileAttribute [attr])))
-        (catch UnsupportedOperationException _
-          (Files/createFile tmp-path (into-array java.nio.file.attribute.FileAttribute []))))
-      (Files/write tmp-path bytes (into-array java.nio.file.OpenOption []))
-      (try
-        (Files/move tmp-path target
-                    (into-array java.nio.file.CopyOption
-                                [StandardCopyOption/REPLACE_EXISTING
-                                 StandardCopyOption/ATOMIC_MOVE]))
-        (catch Exception _
-          (Files/move tmp-path target
-                      (into-array java.nio.file.CopyOption
-                                  [StandardCopyOption/REPLACE_EXISTING])))))))
+(def ^:private write-private-file! aio/write-private-file!)
 
 ;; ---------- password files ----------
 

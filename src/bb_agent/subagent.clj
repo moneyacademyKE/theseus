@@ -6,8 +6,8 @@
   Handles are id-or-record; pending/claimed return records; capacity
   is data (can-claim? predicate + claim's enforcing 4-arity)."
   (:require [babashka.fs :as fs]
-            [bb-agent.config :as config]
-            [clojure.edn :as edn]))
+            [bb-agent.atomic-io :as aio]
+            [bb-agent.config :as config]))
 
 (defn- ->id [x]
   (if (map? x) (:subagent/id x) x))
@@ -82,24 +82,18 @@
 (defn- ledger-file []
   (fs/path (config/home) "state" "subagents.edn"))
 
-(defn- load-ledger []
-  (if (fs/regular-file? (ledger-file))
-    (edn/read-string (slurp (str (ledger-file))))
-    []))
-
-(defn- save-ledger! [ledger]
-  (fs/create-dirs (fs/parent (ledger-file)))
-  (spit (str (ledger-file)) (pr-str (vec ledger))))
-
 (defn- apply! [f & args]
-  (let [ledger' (apply f (load-ledger) args)]
-    (save-ledger! ledger')
-    ledger'))
+  (aio/update-edn! (ledger-file) []
+                   (fn [ledger]
+                     (vec (apply f (if (sequential? ledger) (vec ledger) []) args)))))
 
 (defn spawn! [id prompt]
-  (let [[ledger _record] (spawn (load-ledger) (->id id) prompt)]
-    (save-ledger! ledger)
-    ledger))
+  (aio/update-edn! (ledger-file) []
+                   (fn [ledger]
+                     (let [[ledger' _record]
+                           (spawn (if (sequential? ledger) (vec ledger) [])
+                                  (->id id) prompt)]
+                       (vec ledger')))))
 
 (defn claim! [id assignee t]
   (apply! claim (->id id) assignee t))

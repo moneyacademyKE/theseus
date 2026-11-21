@@ -1,12 +1,10 @@
 (ns bb-agent.session
   (:refer-clojure :exclude [reset!])
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
             [clojure.edn :as edn]
-            [clojure.string :as str])
-  (:import (java.nio.charset StandardCharsets)
-           (java.nio.file FileAlreadyExistsException Files Paths StandardCopyOption)
-           (java.nio.file.attribute PosixFilePermissions)))
+            [clojure.string :as str]))
 
 (defn safe-session-id [session-id]
   (-> (or session-id "default")
@@ -23,44 +21,8 @@
 (defn metadata-dir []
   (fs/path (config/home) "state" "session-metadata"))
 
-(defn- ensure-private-file!
-  "Create path with owner-only (0600) permissions if it does not yet exist."
-  [path]
-  (let [p (.toPath (java.io.File. (str path)))]
-    (when-not (Files/exists p (into-array java.nio.file.LinkOption []))
-      (try
-        (let [attr (PosixFilePermissions/asFileAttribute
-                    (PosixFilePermissions/fromString "rw-------"))]
-          (Files/createFile p (into-array java.nio.file.attribute.FileAttribute [attr])))
-        (catch FileAlreadyExistsException _ nil)
-        (catch UnsupportedOperationException _
-          (try (Files/createFile p (into-array java.nio.file.attribute.FileAttribute []))
-               (catch FileAlreadyExistsException _ nil)))))))
-
-(defn- write-private-file!
-  "Atomically write content with owner-only (0600) permissions from birth."
-  [path content]
-  (let [target (.toPath (java.io.File. (str path)))
-        parent (.getParent target)]
-    (when parent (Files/createDirectories parent (into-array java.nio.file.attribute.FileAttribute [])))
-    (let [tmp (Paths/get (str parent) (into-array String [(str "." (.getFileName target) ".tmp." (System/nanoTime))]))
-          bytes (.getBytes (str content) StandardCharsets/UTF_8)]
-      (try
-        (let [attr (PosixFilePermissions/asFileAttribute
-                    (PosixFilePermissions/fromString "rw-------"))]
-          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute [attr])))
-        (catch UnsupportedOperationException _
-          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute []))))
-      (Files/write tmp bytes (into-array java.nio.file.OpenOption []))
-      (try
-        (Files/move tmp target
-                    (into-array java.nio.file.CopyOption
-                                [StandardCopyOption/REPLACE_EXISTING
-                                 StandardCopyOption/ATOMIC_MOVE]))
-        (catch Exception _
-          (Files/move tmp target
-                      (into-array java.nio.file.CopyOption
-                                  [StandardCopyOption/REPLACE_EXISTING])))))))
+(def ^:private ensure-private-file! aio/ensure-private-file!)
+(def ^:private write-private-file! aio/write-private-file!)
 
 (defn load-turns [session-id]
   (let [path (session-file session-id)]

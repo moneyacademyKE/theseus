@@ -4,7 +4,7 @@
    An edit changes history; it does not authorize a second execution. Notes
    are consumed when the next ordinary message for the same session runs."
   (:require [babashka.fs :as fs]
-            [clojure.edn :as edn]
+            [bb-agent.atomic-io :as aio]
             [clojure.string :as str]))
 
 (def ^:private max-note-chars 2000)
@@ -33,41 +33,35 @@
     (str "[Telegram edited message from " sender
          " #" message-id "]: " (bounded text))))
 
+(defn- append-note! [home session-id note]
+  (when (seq (str/trim (str note)))
+    (let [path (note-file home session-id)]
+      (aio/atomic-mutate-edn!
+       path []
+       (fn [notes]
+         (let [current (if (sequential? notes) (vec notes) [])
+               updated (vec (take-last max-notes (conj current note)))]
+           {:state' updated :result note}))))))
+
 (defn add!
   "Append one bounded edit note for a session. Empty edits are ignored."
   [home session-id message]
-  (let [note (format-note message)
-        path (note-file home session-id)]
-    (when (seq (str/trim note))
-      (fs/create-dirs (fs/parent path))
-      (let [notes (if (fs/regular-file? path)
-                    (edn/read-string (slurp (str path)))
-                    [])
-            updated (conj (vec notes) note)]
-        (spit (str path) (pr-str (vec (take-last max-notes updated))))
-        note))))
+  (append-note! home session-id (format-note message)))
 
 (defn add-raw!
   "Append one bounded pre-formatted context note (reactions and other
    non-edit signals) for a session. Empty notes are ignored."
   [home session-id note]
-  (let [note (bounded (str note))
-        path (note-file home session-id)]
-    (when (seq (str/trim note))
-      (fs/create-dirs (fs/parent path))
-      (let [notes (if (fs/regular-file? path)
-                    (edn/read-string (slurp (str path)))
-                    [])
-            updated (conj (vec notes) note)]
-        (spit (str path) (pr-str (vec (take-last max-notes updated))))
-        note))))
+  (append-note! home session-id (bounded (str note))))
 
 (defn take!
   "Return and clear pending edit notes for a session."
   [home session-id]
   (let [path (note-file home session-id)]
     (if (fs/regular-file? path)
-      (let [notes (vec (edn/read-string (slurp (str path))))]
-        (spit (str path) "[]")
-        notes)
+      (aio/atomic-mutate-edn!
+       path []
+       (fn [notes]
+         (let [current (if (sequential? notes) (vec notes) [])]
+           {:state' [] :result current})))
       [])))

@@ -1,14 +1,9 @@
 (ns bb-agent.approval
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
-            [clojure.edn :as edn]
-            [clojure.string :as str])
-  (:import (java.nio.channels FileChannel)
-           (java.nio.charset StandardCharsets)
-           (java.nio.file Files Paths StandardCopyOption StandardOpenOption)
-           (java.nio.file.attribute PosixFilePermissions)))
+            [clojure.string :as str]))
 
-(def ^:private io-lock (Object.))
 (def ^:private empty-state {:pending {} :decisions {} :approve-rest #{}})
 
 (defn approvals-file []
@@ -17,72 +12,17 @@
 (defn- lock-file [path]
   (fs/path (fs/parent path) "approvals.edn.lock"))
 
-(defn- read-state-unlocked [path]
-  (if (fs/regular-file? path)
-    (try (or (edn/read-string (slurp (str path))) empty-state)
-         (catch Exception _ empty-state))
-    empty-state))
-
-(defn- write-private-file!
-  "Atomically write content with owner-only (0600) permissions from birth."
-  [path content]
-  (let [target (.toPath (java.io.File. (str path)))
-        parent (.getParent target)]
-    (when parent
-      (Files/createDirectories parent (into-array java.nio.file.attribute.FileAttribute [])))
-    (let [tmp (Paths/get (str parent)
-                         (into-array String [(str "." (.getFileName target)
-                                                  ".tmp." (System/nanoTime))]))
-          bytes (.getBytes (str content) StandardCharsets/UTF_8)]
-      (try
-        (try
-          (let [attr (PosixFilePermissions/asFileAttribute
-                      (PosixFilePermissions/fromString "rw-------"))]
-            (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute [attr])))
-          (catch UnsupportedOperationException _
-            (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute []))))
-        (Files/write tmp bytes (into-array java.nio.file.OpenOption []))
-        (try
-          (Files/move tmp target
-                      (into-array java.nio.file.CopyOption
-                                  [StandardCopyOption/REPLACE_EXISTING
-                                   StandardCopyOption/ATOMIC_MOVE]))
-          (catch Exception _
-            (Files/move tmp target
-                        (into-array java.nio.file.CopyOption
-                                    [StandardCopyOption/REPLACE_EXISTING]))))
-        (finally
-          (try (Files/deleteIfExists tmp)
-               (catch Exception _ nil)))))))
-
-(defn- with-approvals-lock [f]
-  (locking io-lock
-    (let [path (approvals-file)
-          parent (fs/parent path)]
-      (fs/create-dirs parent)
-      (with-open [ch (FileChannel/open
-                      (.toPath (java.io.File. (str (lock-file path))))
-                      (into-array java.nio.file.OpenOption
-                                  [StandardOpenOption/CREATE
-                                   StandardOpenOption/READ
-                                   StandardOpenOption/WRITE]))
-                  _lock (.lock ch)]
-        (f path)))))
-
 (defn- atomic-mutate-state!
-  "Apply (f state) -> {:state state' :result r} under both the JVM lock and
-   the companion FileChannel lock, writing atomically only when :state changed."
+  "Apply (f state) -> {:state' state' :result r} under both the JVM lock and
+   the companion FileChannel lock, writing atomically only when :state' changed."
   [f]
-  (with-approvals-lock
-    (fn [path]
-      (let [state (read-state-unlocked path)
-            {:keys [state' result]} (f state)]
-        (when (some? state')
-          (write-private-file! path (pr-str state')))
-        result))))
+  (let [path (approvals-file)]
+    (aio/atomic-mutate-edn! path (lock-file path) empty-state f)))
 
 (defn load-state []
-  (with-approvals-lock read-state-unlocked))
+  (let [path (approvals-file)]
+    (aio/with-file-lock (lock-file path)
+      #(aio/read-edn-safe path empty-state))))
 
 (defn save-state! [state]
   (atomic-mutate-state! (fn [_] {:state' state :result state})))

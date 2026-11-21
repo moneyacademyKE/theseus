@@ -5,13 +5,12 @@
   message/send to a durable web job; tasks/get is a projection of that same
   job. No second conversation engine, queue, or persistence format."
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
             [bb-agent.web-http :as http]
             [bb-agent.web-turn :as turn]
             [clojure.string :as str])
-  (:import (java.nio.charset StandardCharsets)
-           (java.nio.file Files Paths StandardCopyOption)
-           (java.nio.file.attribute PosixFilePermissions)
+  (:import (java.nio.file.attribute PosixFilePermissions)
            (java.security SecureRandom)))
 
 (defn- token-file []
@@ -28,28 +27,7 @@
      path (PosixFilePermissions/fromString "rw-------"))
     (catch Exception _ nil)))
 
-(defn- write-private-token! [path value]
-  (let [target (.toPath (java.io.File. (str path)))
-        parent (.getParent target)]
-    (when parent (Files/createDirectories parent (into-array java.nio.file.attribute.FileAttribute [])))
-    (let [tmp (Paths/get (str parent) (into-array String [(str "." (.getFileName target) ".tmp." (System/nanoTime))]))
-          bytes (.getBytes (str value) StandardCharsets/UTF_8)]
-      (try
-        (let [attr (PosixFilePermissions/asFileAttribute
-                    (PosixFilePermissions/fromString "rw-------"))]
-          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute [attr])))
-        (catch UnsupportedOperationException _
-          (Files/createFile tmp (into-array java.nio.file.attribute.FileAttribute []))))
-      (Files/write tmp bytes (into-array java.nio.file.OpenOption []))
-      (try
-        (Files/move tmp target
-                    (into-array java.nio.file.CopyOption
-                                [StandardCopyOption/REPLACE_EXISTING
-                                 StandardCopyOption/ATOMIC_MOVE]))
-        (catch Exception _
-          (Files/move tmp target
-                      (into-array java.nio.file.CopyOption
-                                  [StandardCopyOption/REPLACE_EXISTING])))))))
+(def ^:private write-private-token! aio/write-private-file!)
 
 (defn- token []
   (let [path (token-file)]

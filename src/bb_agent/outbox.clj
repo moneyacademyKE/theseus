@@ -20,6 +20,7 @@
    caller (the poller supplies delivery/post-api), so the outbox never
    depends on the delivery layer and stays trivially testable."
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
             [clojure.edn :as edn]
             [clojure.string :as str]))
@@ -45,7 +46,7 @@
                        :created/at (str (java.time.Instant/now))}
                       record)]
     (fs/create-dirs (root-for cfg))
-    (spit (file-for cfg id) (pr-str record))
+    (aio/write-private-file! (file-for cfg id) (pr-str record))
     id))
 
 (defn ack!
@@ -89,8 +90,8 @@
   (let [f (file-for cfg id)
         record (edn/read-string (slurp f))
         attempts (inc (long (or (:attempts record) 0)))]
-    (spit f (pr-str (assoc record :attempts attempts
-                                  :last-attempt/at (str (java.time.Instant/now)))))
+    (aio/write-private-file! f (pr-str (assoc record :attempts attempts
+                                              :last-attempt/at (str (java.time.Instant/now)))))
     attempts))
 
 (defn- dead!
@@ -99,7 +100,7 @@
   [cfg file record reason]
   (let [dead-dir (str (root-for cfg) "/dead")]
     (fs/create-dirs dead-dir)
-    (fs/move file (str dead-dir "/" (:id record) ".edn"))
+    (fs/move file (str dead-dir "/" (:id record) ".edn") {:replace-existing true})
     (println (str "OUTBOX DEAD-LETTER: " (:method record)
                   " to chat " (get-in record [:routing :chat-id])
                   " — " reason " — kept in "
@@ -111,8 +112,9 @@
    hand — no re-read, so the ack/delete race below cannot lose the count."
   [file record]
   (let [attempts (inc (long (or (:attempts record) 0)))]
-    (spit (str file) (pr-str (assoc record :attempts attempts
-                                           :last-attempt/at (str (java.time.Instant/now)))))
+    (aio/write-private-file! (str file)
+                             (pr-str (assoc record :attempts attempts
+                                            :last-attempt/at (str (java.time.Instant/now)))))
     attempts))
 
 (defn drain!

@@ -5,6 +5,7 @@
    no behavior change. Update consumption lives in bb-agent.telegram-intake."
   (:require [babashka.fs :as fs]
             [babashka.http-client :as http]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.bot-commands :as bot-commands]
             [bb-agent.config :as config]
             [bb-agent.digest :as digest]
@@ -182,6 +183,8 @@
          (catch Exception _ nil))
     {:updates @processed :conflict? conflict?}))
 
+(declare release-instance-lock!)
+
 (defn- install-shutdown-hook!
   "SIGTERM (launchd kickstart, system stop) used to amputate the poller
    mid-cycle: in-flight sends died and the getUpdates request stayed held,
@@ -203,6 +206,7 @@
         (while (and (:in-cycle? @lifecycle)
                     (< (System/currentTimeMillis) deadline))
           (Thread/sleep 50)))
+      (release-instance-lock!)
       (println (str "poller: graceful shutdown (in-flight-cycle="
                     (boolean (:in-cycle? @lifecycle)) ") @ "
                     (java.time.Instant/now)))
@@ -212,22 +216,42 @@
 (defn- instance-lock-path []
   (str (fs/path (config/home) "state" "poller.pid")))
 
+(defn- instance-mutex-path []
+  (str (fs/path (config/home) "state" ".poller.pid.lock")))
+
+(defn release-instance-lock!
+  "Remove state/poller.pid if it still names this process's PID."
+  []
+  (let [path (instance-lock-path)
+        my-pid (.pid (java.lang.ProcessHandle/current))]
+    (try
+      (aio/with-file-lock (instance-mutex-path)
+        (fn []
+          (when (fs/regular-file? path)
+            (let [pid (parse-long (str/trim (slurp path)))]
+              (when (= pid my-pid)
+                (fs/delete-if-exists path))))))
+      (catch Exception _ nil))))
+
 (defn acquire-instance-lock!
   "The poller is a singleton: two live pollers fight over getUpdates and
    both lose — 409 wars, orphaned deliveries, the v1.0.0-cut orphan race.
-   bk-8ba2: the lock is a PID file (state/poller.pid). A live foreign PID
+   bk-8ba2: the lock is a PID file (state/poller.pid), serialized via a
+   companion lock file so concurrent startups never race. A live foreign PID
    refuses the boot; a stale file (dead PID) is taken over. Returns true
    when this process holds the lock after the call."
   []
   (let [path (instance-lock-path)
         my-pid (.pid (java.lang.ProcessHandle/current))]
-    (if (and (fs/exists? path)
-             (let [pid (parse-long (str/trim (slurp path)))]
-               (and pid (not= pid my-pid) (goal-registry/pid-alive? pid))))
-      false
-      (do (fs/create-dirs (fs/parent path))
-          (spit path (str my-pid))
-          true))))
+    (aio/with-file-lock (instance-mutex-path)
+      (fn []
+        (if (and (fs/exists? path)
+                 (let [pid (try (parse-long (str/trim (slurp path)))
+                                (catch Exception _ nil))]
+                   (and pid (not= pid my-pid) (goal-registry/pid-alive? pid))))
+          false
+          (do (aio/write-private-file! path (str my-pid))
+              true))))))
 
 (defn run-poll-cycles!
   "The poll-loop skeleton with its body injected, so the lifecycle is
