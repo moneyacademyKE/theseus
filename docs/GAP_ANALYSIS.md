@@ -512,18 +512,19 @@ A follow-up sweep at `14d5fcb` closed 15 additional security, concurrency, durab
 
 ## 27. Hierarchical Context Compaction & Persistent Checkpoints (2026-11-22)
 
-Six zero-dependency context compaction upgrades adapted from inspecting `koladilip/hierarchical-context-ai-agent` landed in `33eebb6` + ADR `0004` (`docs/babashka-rewrite/adr/0004-hierarchical-context-compaction.md`):
+Six zero-dependency context compaction upgrades (plus four follow-up wiring fixes in `cee0903`) adapted from inspecting `koladilip/hierarchical-context-ai-agent` landed in `33eebb6` + `cee0903` + ADR `0004` (`docs/babashka-rewrite/adr/0004-hierarchical-context-compaction.md`):
 
-- **Persistent rolling checkpoints (`state/session-compaction/<id>.edn`):** `compression/compress-session-turns!` tracks `:last-summarized-turn`, folds at most 3 tiers (`fold-tiers`), reuses persisted summaries with zero LLM calls when the verbatim tail watermark hasn't advanced, summarizes only delta turns with `previous-summary` when it does, discards stale checkpoints if a session shrinks, and clears on `session/reset!`. Allowlisted in `state_hygiene.clj`.
+- **Persistent rolling checkpoints (`state/session-compaction/<id>.edn`):** `compression/compress-session-turns!` tracks `:last-summarized-turn`, folds at most 3 tiers (`fold-tiers`, re-compressing `ancient` via `call-llm-fn` whenever merged older tiers exceed `2400` chars), reuses persisted summaries with zero LLM calls when the verbatim tail watermark hasn't advanced, summarizes only delta turns with `previous-summary` when it does, discards stale checkpoints if a session shrinks, and clears on `session/reset!`. Allowlisted in `state_hygiene.clj`.
 - **Structured memory ledger:** `summarize-middle` requests an EDN map `{:summary ... :facts [...] :decisions [...] :files [...] :pending [...]}` with safe plain-prose fallback (`parse-summary-response`), merged additively via `merge-structured-memory` keeping the newest bounded tail (12 items/field).
-- **Turn-range provenance & verbatim drill-down:** Compacted tiers stamp `[Turns A-B]` matching 0-based indices on disk; `session/load-turn-range` loads inclusive verbatim slices annotated with `:turn/index`.
-- **1-line deterministic tool breadcrumbs:** `prune-old-tool-results` condenses older tool messages to `[tool pruned: <name> <status> (<N> chars): <preview>]` and drops `:tool/results`.
+- **Turn-range provenance & callable verbatim drill-down:** Compacted tiers stamp `[Turns A-B]` matching 0-based indices on disk and advertise `read_session_turns(from, to)` — an auto-safe, session-scoped tool backed by `session/load-turn-range` (max 10 turns / 20k chars, `:session/id` injected from `cfg`).
+- **Idempotent 1-line deterministic tool breadcrumbs & live mid-turn pruning:** `prune-old-tool-results` condenses older tool messages to `[tool pruned: <name> <status> (<N> chars): <preview>]` (idempotently, dropping `:tool/results`) and runs live inside `core.clj`'s multi-round tool loop whenever messages exceed `live-budget`.
+- **In-turn read-only tool cache:** `core.clj` caches `:ok` results for `read_file`/`search`/`git_status`/`document_read`/`read_session_turns` within a turn (below `loop-guard` nudge threshold) and invalidates the cache on any mutating tool.
 - **Model-aware dynamic budget & unified token estimate:** Unified `chars-per-token = 4` across `brain.clj` and `compression.clj`; `history-budget-chars` scales from a pure model-window table (25% share capped at `96000`) minus actual injected brain/memory/semantic/skills overhead, floored at `8000`, while honoring explicit `:history-budget-chars`.
 - **Deterministic retention verification:** Pure set-diff `compression/retention-report` checks fact/entity retention across foldovers.
 
 ### Verified receipts (2026-11-22)
 
-- `bb test`: `49` Clojure test blocks totaling `942` tests / `4507` assertions (`0 failures, 0 errors`), plus `11/11` Node JS tests (`0 fail, 0 skipped`) and `bb verify:rewrite-docs` (`EXIT=0`).
+- `bb test`: `49` Clojure test blocks totaling `946` tests / `4523` assertions (`0 failures, 0 errors`), plus `11/11` Node JS tests (`0 fail, 0 skipped`) and `bb verify:rewrite-docs` (`EXIT=0`).
 - `bb lint`: `0 errors, 0 warnings` (`EXIT=0`).
 
 **Rich Hickey certification:** summaries became immutable values keyed by turn watermark instead of an every-turn tax, structured facts ride alongside prose without fragile JSON ceremonies, and the truth stays verbatim on disk under `[Turns A-B]` coordinates.
