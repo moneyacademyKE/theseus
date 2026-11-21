@@ -369,3 +369,84 @@
       (finally
         (reset! br-atom saved)))))
 
+(deftest live-tool-loop-prunes-old-tool-results-when-over-budget
+  (with-temp-home
+    (fn []
+      (let [requests (atom [])
+            rounds (atom 0)
+            fat-out (apply str (repeat 200 "z"))]
+        (with-redefs [provider/complete
+                      (fn [_provider request]
+                        (swap! requests conj (:messages request))
+                        (let [r (swap! rounds inc)]
+                          (if (<= r 6)
+                            {:content nil
+                             :tool/requests [{:tool/name "search"
+                                              :approval/policy :auto-all
+                                              :tool/args {:path "a.txt" :query (str "q-" r)}}]}
+                            {:content "done"})))
+                      tool/handle-tool-request
+                      (fn [req _cfg]
+                        {:tool/name (:tool/name req)
+                         :status :ok
+                         :output (str "hit-" (get-in req [:tool/args :query]) " " fat-out)})]
+          (let [turn (core/run-turn! {:provider :fake
+                                      :model "m"
+                                      :session/id "live-prune-test"
+                                      :history-budget-chars 500
+                                      :max-tool-rounds 10
+                                      :react-ack false}
+                                     "search repeatedly")
+                last-req (last @requests)
+                tool-msgs (filterv #(= :tool (:role %)) last-req)]
+            (is (= "done" (:assistant/final turn)))
+            (is (= 6 (count tool-msgs)))
+            (is (str/starts-with? (:content (first tool-msgs)) "[tool pruned:")
+                "oldest tool output is condensed to a 1-line breadcrumb mid-turn")
+            (is (str/includes? (:content (last tool-msgs)) "hit-q-6")
+                "most recent tool output stays verbatim")))))))
+
+(deftest read-only-tool-cache-reuses-results-and-invalidates-on-write
+  (with-temp-home
+    (fn []
+      (let [handler-calls (atom [])
+            rounds (atom 0)]
+        (with-redefs [provider/complete
+                      (fn [_provider _request]
+                        (case (swap! rounds inc)
+                          1 {:content nil
+                             :tool/requests [{:tool/name "read_file"
+                                              :approval/policy :auto-all
+                                              :tool/args {:path "demo.txt"}}]}
+                          2 {:content nil
+                             :tool/requests [{:tool/name "read_file"
+                                              :approval/policy :auto-all
+                                              :tool/args {:path "demo.txt"}}]}
+                          3 {:content nil
+                             :tool/requests [{:tool/name "write_file"
+                                              :approval/policy :auto-all
+                                              :tool/args {:path "demo.txt" :content "updated"}}]}
+                          4 {:content nil
+                             :tool/requests [{:tool/name "read_file"
+                                              :approval/policy :auto-all
+                                              :tool/args {:path "demo.txt"}}]}
+                          {:content "done"}))
+                      tool/handle-tool-request
+                      (fn [req _cfg]
+                        (swap! handler-calls conj (:tool/name req))
+                        (if (= "write_file" (:tool/name req))
+                          {:tool/name "write_file" :status :ok :bytes 7}
+                          {:tool/name "read_file" :status :ok :content (str "v-" (count @handler-calls))}))]
+          (let [turn (core/run-turn! {:provider :fake
+                                      :model "m"
+                                      :session/id "read-cache-test"
+                                      :loop-guard-threshold 6
+                                      :loop-guard-nudge-threshold 5
+                                      :max-tool-rounds 10
+                                      :react-ack false}
+                                     "read, read, write, read")]
+            (is (= "done" (:assistant/final turn)))
+            (is (= ["read_file" "write_file" "read_file"] @handler-calls)
+                "second read served from cache; write invalidates cache so third read executes")
+            (is (true? (:cached? (second (:tool/results turn)))))))))))
+

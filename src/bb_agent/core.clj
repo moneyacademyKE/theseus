@@ -341,6 +341,11 @@
        "Phantom text-call " streak " of " threshold
        " — after that, text like this is accepted as the final answer."))
 
+(def ^:private cacheable-read-tools
+  #{"read_file" "search" "git_status" "document_read" "read_session_turns"})
+
+(def ^:private live-tool-keep-recent 4)
+
 (defn run-turn! [cfg prompt]
   (let [cfg (model/effective-config cfg)
         cfg (vision-chain-cfg cfg)
@@ -377,13 +382,15 @@
                           (count (str (or semantic-ctx "")))
                           (count (str (or skills-ctx "")))
                           (reduce + 0 (map #(count (str (:memory/text % "")))
-                                           memory-matches)))]
+                                           memory-matches)))
+        live-budget (compression/history-budget-chars cfg overhead-chars)]
     (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
                                       (history-messages cfg id overhead-chars))
            turn {:tool/requests []
                  :tool/results []}
            rounds-left max-rounds
            seen-calls {}
+           read-cache {}
            final-nudge-used? false
            reasoning-streak 0
            phantom-streak 0]
@@ -397,6 +404,9 @@
                                  (not final-nudge-used?))
                         (checkpoint-nudge-message consumed max-rounds))
             messages (cond-> messages nudge-msg (conj {:role :user :content nudge-msg}))
+            messages (if (> (compression/count-chars messages) live-budget)
+                       (compression/prune-old-tool-results messages live-tool-keep-recent)
+                       messages)
             request {:provider provider
                      :model model
                      :messages messages
@@ -425,40 +435,54 @@
                        (:usage response))
           (let [;; One event before each call and one after its outcome — the
                 ;; channel flips ⚙️→✅/❌ live inside a single flow message.
-                tool-results (when (seq tool-requests)
-                               (mapv (fn [req]
-                                       (let [k [(:tool/name req) (canonical-args (:tool/args req))]]
-                                         (if (and (pos? (get seen-calls k 0))
-                                                  (>= (get seen-calls k 0) (dec nudge-threshold)))
-                                           ;; Repeat below the kill line: skip
-                                           ;; execution, feed the warning as the
-                                           ;; tool result. pos? guard: only a call
-                                           ;; that already EXECUTED can be nudged —
-                                           ;; a first occurrence always runs.
-                                           (do (safe-emit cfg {:status :tool/call
-                                                               :tool (:tool/name req)
-                                                               :args (:tool/args req)})
-                                               (safe-emit cfg {:status :tool/done
-                                                               :tool (:tool/name req)
-                                                               :args {:ok? false
-                                                                      :loop-guard :nudged}})
-                                               {:tool/name (:tool/name req)
-                                                :status :error
-                                                :executed? false
-                                                :loop-guard :nudged
-                                                :error/message (loop-guard-nudge-message
-                                                                (:tool/name req)
-                                                                (inc (get seen-calls k 0))
-                                                                threshold)})
-                                           (do (safe-emit cfg {:status :tool/call
-                                                               :tool (:tool/name req)
-                                                               :args (:tool/args req)})
-                                               (let [result (tool/handle-tool-request req cfg)]
-                                                 (safe-emit cfg {:status :tool/done
-                                                                 :tool (:tool/name req)
-                                                                 :args {:ok? (= :ok (:status result))}})
-                                                 result)))))
-                                     tool-requests))
+                ;; Read-only tool results are cached within the turn and
+                ;; invalidated whenever any mutating tool runs.
+                {:keys [results cache]}
+                (if (seq tool-requests)
+                  (reduce
+                   (fn [{:keys [results cache]} req]
+                     (let [tname (:tool/name req)
+                           k [tname (canonical-args (:tool/args req))]
+                           cacheable? (contains? cacheable-read-tools tname)]
+                       (cond
+                         (and (pos? (get seen-calls k 0))
+                              (>= (get seen-calls k 0) (dec nudge-threshold)))
+                         (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
+                             (safe-emit cfg {:status :tool/done :tool tname :args {:ok? false :loop-guard :nudged}})
+                             {:results (conj results
+                                             {:tool/name tname
+                                              :status :error
+                                              :executed? false
+                                              :loop-guard :nudged
+                                              :error/message (loop-guard-nudge-message
+                                                              tname
+                                                              (inc (get seen-calls k 0))
+                                                              threshold)})
+                              :cache cache})
+
+                         (and cacheable? (contains? cache k))
+                         (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
+                             (safe-emit cfg {:status :tool/done :tool tname :args {:ok? true :cached? true}})
+                             {:results (conj results (assoc (get cache k) :cached? true))
+                              :cache cache})
+
+                         :else
+                         (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
+                             (let [result (tool/handle-tool-request req cfg)]
+                               (safe-emit cfg {:status :tool/done
+                                               :tool tname
+                                               :args {:ok? (= :ok (:status result))}})
+                               {:results (conj results result)
+                                :cache (cond
+                                         (and cacheable? (= :ok (:status result)))
+                                         (assoc cache k result)
+                                         (not cacheable?) {}
+                                         :else cache)})))))
+                   {:results [] :cache read-cache}
+                   tool-requests)
+                  {:results nil :cache read-cache})
+                tool-results results
+                read-cache* cache
                 turn* (cond-> (append-tool-round turn response (or tool-results []))
                         (:fallback/tried response)
                         (assoc :fallback/tried (:fallback/tried response))
@@ -483,6 +507,7 @@
                          turn*
                          (if extend? nudge-final-rounds rounds-next)
                          seen-calls*
+                         read-cache*
                          (or extend? final-nudge-used?)
                          0
                          0)))
@@ -500,6 +525,7 @@
                            turn*
                            (dec rounds-left)
                            seen-calls*
+                           read-cache*
                            final-nudge-used?
                            0
                            pstreak)
@@ -517,6 +543,7 @@
                            turn*
                            (dec rounds-left)
                            seen-calls*
+                           read-cache*
                            final-nudge-used?
                            streak
                            phantom-streak)

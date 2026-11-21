@@ -3,6 +3,7 @@
             [bb-agent.compression :as compression]
             [bb-agent.config :as config]
             [bb-agent.session :as session]
+            [bb-agent.tool]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
@@ -156,5 +157,59 @@
         (let [slice (session/load-turn-range "drill-1" 1 3)]
           (is (= [1 2 3] (mapv :turn/index slice)))
           (is (= ["q-1" "q-2" "q-3"] (mapv :user/input slice)))))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest fold-tiers-recompresses-oversize-ancient-tier
+  (let [home (fs/create-temp-dir {:prefix "theseus-ancient-fold-"})
+        llm-calls (atom [])
+        big-summary (apply str (repeat 1500 "s"))]
+    (try
+      (with-redefs [config/home (constantly (str home))]
+        (compression/save-checkpoint!
+         "ancient-1"
+         {:last-summarized-turn 5
+          :tiers [{:from 0 :to 1 :text big-summary}
+                  {:from 2 :to 3 :text big-summary}
+                  {:from 4 :to 5 :text big-summary}]
+          :memory compression/empty-structured-memory})
+        (let [indexed (mapv (fn [i]
+                              {:turn/index i
+                               :user/input (str "u-" i " " (apply str (repeat 120 "x")))
+                               :assistant/final (str "a-" i " " (apply str (repeat 120 "y")))})
+                            (range 9))
+              out (compression/compress-session-turns!
+                   "ancient-1" indexed
+                   {:tail-char-budget 300
+                    :call-llm-fn (fn [prompt]
+                                   (swap! llm-calls conj prompt)
+                                   (if (str/includes? prompt "Condense these older summary tiers")
+                                     "condensed ancient summary"
+                                     "new delta summary"))})
+              cp (compression/load-checkpoint "ancient-1")]
+          (is (= 2 (count @llm-calls)) "delta summary + ancient tier re-compression")
+          (is (= 3 (count (:tiers cp))))
+          (is (= "condensed ancient summary" (:text (first (:tiers cp)))))
+          (is (str/includes? (:content (first out)) "read_session_turns"))))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest read-session-turns-tool-is-auto-safe-and-session-scoped
+  (let [home (fs/create-temp-dir {:prefix "theseus-read-turns-tool-"})]
+    (try
+      (with-redefs [config/home (constantly (str home))]
+        (dotimes [i 4]
+          (session/append-turn! "sess-tool" {:user/input (str "question-" i)
+                                             :assistant/final (str "answer-" i)}))
+        (let [res (bb-agent.tool/handle-tool-request
+                   {:tool/name "read_session_turns"
+                    :approval/policy :auto-safe
+                    :tool/args {:from 1 :to 2}}
+                   {:session/id "sess-tool"})]
+          (is (= :ok (:status res)))
+          (is (str/includes? (:output res) "[Turn 1]"))
+          (is (str/includes? (:output res) "question-1"))
+          (is (str/includes? (:output res) "answer-2"))
+          (is (not (str/includes? (:output res) "question-0")))))
       (finally
         (fs/delete-tree home)))))

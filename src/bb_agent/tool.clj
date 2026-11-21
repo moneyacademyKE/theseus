@@ -82,6 +82,8 @@
                    (and (string? (get cfg :web/job-id))
                         (= "web_send_file" (:tool/name request)))
                    (assoc-in [:tool/args :web-job-id] (get cfg :web/job-id))
+                   (= "read_session_turns" (:tool/name request))
+                   (assoc-in [:tool/args :session/id] (:session/id cfg))
                    (and (map? (:telegram/send-context cfg))
                         (= "launch_goal" (:tool/name request)))
                    (assoc-in [:tool/args :goal/send-context]

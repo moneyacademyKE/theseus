@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [bb-agent.tool.common :as common]
             [bb-agent.knowledge :as knowledge]
+            [bb-agent.session :as session]
             [bb-agent.tool.path :as path]
             [clojure.string :as str]))
 
@@ -154,7 +155,49 @@
                                     :query query
                                     :matches matches})))))
 
+(def ^:private max-session-turns-slice 10)
+(def ^:private max-session-turns-chars 20000)
+
+(defn- read-session-turns! [{:keys [from to] :session/keys [id]}]
+  (let [from-n (cond (integer? from) (long from)
+                     (string? from) (parse-long (str/trim from))
+                     :else nil)
+        to-n (cond (integer? to) (long to)
+                   (string? to) (parse-long (str/trim to))
+                   :else nil)]
+    (cond
+      (str/blank? (str (or id "")))
+      (common/error-result "read_session_turns"
+                           "read_session_turns requires an active session"
+                           {:executed? false})
+
+      (or (nil? from-n) (nil? to-n) (neg? from-n) (< to-n from-n))
+      (common/error-result "read_session_turns"
+                           "from and to must be non-negative integers with from <= to"
+                           {:executed? false})
+
+      :else
+      (let [capped-to (min to-n (+ from-n (dec max-session-turns-slice)))
+            turns (session/load-turn-range id from-n capped-to)
+            rendered (str/join
+                      "\n\n"
+                      (map (fn [{:keys [turn/index user/input assistant/final]}]
+                             (str "[Turn " index "]\n"
+                                  "User: " (or input "") "\n"
+                                  "Assistant: " (or final "")))
+                           turns))
+            output (if (> (count rendered) max-session-turns-chars)
+                     (str (subs rendered 0 (- max-session-turns-chars 14))
+                          "\n[truncated]")
+                     rendered)]
+        (common/ok-result "read_session_turns"
+                          {:from from-n
+                           :to capped-to
+                           :count (count turns)
+                           :output output})))))
+
 (def handlers
   {"read_file" read-file!
    "write_file" write-file!
-   "search" search!})
+   "search" search!
+   "read_session_turns" read-session-turns!})

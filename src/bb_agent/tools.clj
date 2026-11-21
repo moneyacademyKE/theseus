@@ -109,6 +109,15 @@
       :required ["url" "text"]}}}
    {:type "function"
     :function
+    {:name "read_session_turns"
+     :description "Read a verbatim inclusive range of earlier turns [from..to] from the current session on disk (use the [Turns A-B] provenance tags in compacted summaries to drill down). Max 10 turns per call."
+     :parameters
+     {:type "object"
+      :properties {"from" {:type "integer" :description "0-based starting turn index (inclusive)"}
+                   "to" {:type "integer" :description "0-based ending turn index (inclusive)"}}
+      :required ["from" "to"]}}}
+   {:type "function"
+    :function
     {:name "launch_goal"
      :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
       :parameters

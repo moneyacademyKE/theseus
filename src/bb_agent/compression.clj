@@ -25,6 +25,7 @@
 (def max-default-history-chars 96000)
 (def default-max-structured-items 12)
 (def max-tiers 3)
+(def max-ancient-chars 2400)
 
 (def ^:private model-token-prefixes
   [["gemini-2" 256000]
@@ -108,9 +109,14 @@
            (when (seq preview) (str ": " preview))
            "]"))))
 
+(defn- already-pruned? [msg]
+  (and (nil? (:tool/results msg))
+       (str/starts-with? (str (or (:content msg) "")) "[tool pruned")))
+
 (defn prune-old-tool-results
   "Condense all but the `keep-recent` most recent tool messages into
-   deterministic 1-line breadcrumbs and drop heavy :tool/results payloads."
+   deterministic 1-line breadcrumbs and drop heavy :tool/results payloads.
+   Idempotent: already-pruned breadcrumbs are left untouched."
   [messages keep-recent]
   (let [tool-indices (keep-indexed (fn [idx msg] (when (= (:role msg) :tool) idx))
                                    messages)
@@ -118,7 +124,8 @@
                          (drop-last keep-recent tool-indices)
                          []))]
     (mapv (fn [idx msg]
-            (if (contains? prune-set idx)
+            (if (and (contains? prune-set idx)
+                     (not (already-pruned? msg)))
               (-> msg
                   (dissoc :tool/results)
                   (assoc :content (tool-breadcrumb msg)))
@@ -245,7 +252,7 @@
     {:role :user
      :content (str "[SYSTEM: CONTEXT COMPACTION]\n"
                    "History summarized to save context. Original goal and latest turns preserved.\n"
-                   "Full verbatim turns remain on disk (session/load-turn-range).\n\n"
+                   "Use read_session_turns(from, to) to inspect verbatim turns on disk.\n\n"
                    "SUMMARY OF PREVIOUS WORK:\n"
                    (str/join "\n\n" tier-blocks)
                    (when mem-block (str "\n\n" mem-block)))}))
@@ -326,14 +333,32 @@
             kept-start
             (recur (dec idx) (+ acc c) idx)))))))
 
-(defn- fold-tiers [tiers]
+(defn- condense-ancient-tiers [t0 t1 call-llm-fn]
+  (let [combined (str (:text t0) "\n" (:text t1))]
+    (if (or (<= (count combined) max-ancient-chars) (nil? call-llm-fn))
+      combined
+      (let [prompt (str "Condense these older summary tiers [Turns "
+                        (:from t0) "-" (:to t1) "] into one concise summary "
+                        "(under 1600 chars) preserving key facts, decisions, and file paths:\n\n"
+                        "[Turns " (:from t0) "-" (:to t0) "]\n" (:text t0) "\n\n"
+                        "[Turns " (:from t1) "-" (:to t1) "]\n" (:text t1))
+            condensed (try
+                        (let [raw (call-llm-fn prompt)
+                              parsed (parse-summary-response raw)]
+                          (when-not (str/blank? (:summary parsed))
+                            (:summary parsed)))
+                        (catch Exception _ nil))]
+        (or condensed
+            (str (subs combined 0 (- max-ancient-chars 14)) "\n[truncated]"))))))
+
+(defn- fold-tiers [tiers call-llm-fn]
   (if (<= (count tiers) max-tiers)
     (vec tiers)
     (let [[t0 t1 & more] tiers
           merged {:from (:from t0)
                   :to (:to t1)
-                  :text (str (:text t0) "\n" (:text t1))}]
-      (recur (into [merged] more)))))
+                  :text (condense-ancient-tiers t0 t1 call-llm-fn)}]
+      (recur (into [merged] more) call-llm-fn))))
 
 (defn compress-session-turns!
   "Incrementally compact persisted session turns using a durable EDN checkpoint.
@@ -365,7 +390,7 @@
                         new-tier {:from (:turn/index (first delta-turns))
                                   :to (:turn/index (peek delta-turns))
                                   :text (:summary parsed)}
-                        tiers' (fold-tiers (conj (vec (:tiers cp)) new-tier))
+                        tiers' (fold-tiers (conj (vec (:tiers cp)) new-tier) call-llm-fn)
                         mem' (merge-structured-memory (or (:memory cp) empty-structured-memory)
                                                       parsed)
                         next-cp {:last-summarized-turn (:turn/index (peek delta-turns))
