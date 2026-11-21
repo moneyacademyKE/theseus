@@ -28,10 +28,6 @@
 
 (def owner-id 1608111860)
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (defn- dm-update []
   [{:update_id 1
     :message {:message_id 42
@@ -45,7 +41,6 @@
    given, is written to approval-baseline.edn. Returns {:calls [...]}."
   [provider-impl rules-content]
   (let [home (fs/create-temp-dir {:prefix "theseus-flow-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -71,7 +66,8 @@
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string
                        {:ok true :result {:message_id 90}})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
@@ -123,9 +119,6 @@
         {:keys [calls]} (run-flow-poll provider-impl allow-shell)
         sends (bodies calls "/sendMessage")
         edits (bodies calls "/editMessageText")
-        flow-sends (filter (fn [s] (str/includes? (or (:text s) "")
-                                                    "<blockquote expandable"))
-                           sends)
         final-send (last sends)
         settled (last edits)]
     (testing "the flow is one growing message: one send, then edits"

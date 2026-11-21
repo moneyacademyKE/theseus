@@ -6,7 +6,6 @@
    limits are enforced in the delivery seam before any network call."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-upload :as upload]
             [bb-agent.tool.common :as common]
             [clojure.string :as str]))

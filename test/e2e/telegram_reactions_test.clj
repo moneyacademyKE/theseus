@@ -11,10 +11,6 @@
             [clojure.test :refer [deftest is testing]]
             [org.httpkit.server :as server]))
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (def owner-id 1608111860)
 
 (defn- dm-message [update-id message-id text]
@@ -35,7 +31,6 @@
 
 (defn- run-poll [updates]
   (let [home (fs/create-temp-dir {:prefix "theseus-reactions-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -54,7 +49,8 @@
                 :body (json/generate-string {:ok true :result {:message_id 91}})}
                {:status 200 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok true :result true})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake

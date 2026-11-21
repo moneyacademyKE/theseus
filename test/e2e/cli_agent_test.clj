@@ -21,10 +21,6 @@
                   :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (deftest fake-provider-persists-session-turn
   (let [home (fs/create-temp-dir {:prefix "theseus-e2e-"})
         result (run-agent home "say pong")
@@ -47,7 +43,6 @@
 
 (deftest openai-compatible-provider-persists-session-turn
   (let [home (fs/create-temp-dir {:prefix "theseus-http-e2e-"})
-        port (free-port)
         captured (promise)
         stop-server (server/run-server
                      (fn [req]
@@ -59,7 +54,8 @@
                                                       :content "pong-http"}}]
                                  :usage {:prompt_tokens 11
                                          :completion_tokens 7}})})
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions" "http-provider.edn")]
     (try
@@ -97,13 +93,13 @@
 
 (deftest openai-compatible-provider-renders-clear-errors
   (let [home (fs/create-temp-dir {:prefix "theseus-http-error-e2e-"})
-        port (free-port)
         stop-server (server/run-server
                      (fn [_req]
                        {:status 500
                         :headers {"content-type" "application/json"}
                         :body (json/generate-string {:error {:message "boom"}})})
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")]
     (try
       (fs/create-dirs home)
@@ -123,7 +119,6 @@
 
 (deftest openai-compatible-provider-parses-tool-calls
   (let [home (fs/create-temp-dir {:prefix "theseus-http-tools-e2e-"})
-        port (free-port)
         calls (atom 0)
         stop-server (server/run-server
                      (fn [_req]
@@ -141,7 +136,8 @@
                                                                {:path (str (fs/path home "note.txt"))})}}]}}]}
                                    {:choices [{:message {:role "assistant"
                                                          :content "read complete"}}]}))}))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions" "http-tools.edn")]
     (try
@@ -168,7 +164,6 @@
 
 (deftest openai-compatible-provider-continues-when-text-accompanies-tool-calls
   (let [home (fs/create-temp-dir {:prefix "theseus-http-mixed-tools-e2e-"})
-        port (free-port)
         calls (atom 0)
         stop-server (server/run-server
                      (fn [_req]
@@ -187,7 +182,8 @@
                                                                {:path (str (fs/path home "note.txt"))})}}]}}]}
                                    {:choices [{:message {:role "assistant"
                                                          :content "read complete after tool"}}]}))}))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions" "http-mixed-tools.edn")]
     (try

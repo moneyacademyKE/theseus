@@ -2,7 +2,7 @@
   "Command-menu (setMyCommands) builder tests — pure payload logic, no network."
   (:require [bb-agent.bot-commands :as bot-commands]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is]]))
 
 (deftest telegram-command-name-converts-to-menu-valid
   (is (= "deep_research" (bot-commands/telegram-command-name "deep-research")))

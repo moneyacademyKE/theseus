@@ -1,4 +1,5 @@
 (ns e2e.skill-research-cli-test
+  (:refer-clojure :exclude [run!])
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [bb-agent.skill-research :as research]

@@ -13,17 +13,13 @@
 (def ^:private image-bytes "JPEGBYTES")
 (def ^:private expected-b64 "SlBFR0JZVEVT")
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (defn- temp-image [home]
   (let [path (str (fs/path home "probe.jpg"))]
     (spit path image-bytes)
     {:path path :mime-type "image/jpeg"}))
 
 (defn- completion-server
-  [port bodies]
+  [bodies]
   (server/run-server
    (fn [req]
      (let [body (json/parse-string (slurp (:body req)) keyword)]
@@ -40,15 +36,15 @@
          {:status 404
           :headers {"content-type" "application/json"}
           :body (json/generate-string {:ok false})})))
-   {:port port}))
+   {:port 0 :ip "127.0.0.1"}))
 
 (defn- scripted-server
-  [port handler]
+  [handler]
   (server/run-server
    (fn [req]
      (let [body (json/parse-string (slurp (:body req)) keyword)]
        (handler (:uri req) body)))
-   {:port port}))
+   {:port 0 :ip "127.0.0.1"}))
 
 (defn- vision-rejecting-handler
   "400 on multimodal blocks, 200 on plain text; records every body."
@@ -68,9 +64,9 @@
 
 (deftest openai-compatible-carries-images-as-data-urls
   (let [home (fs/create-temp-dir {:prefix "theseus-vision-openai-"})
-        port (free-port)
         bodies (atom [])
-        stop-server (completion-server port bodies)
+        stop-server (completion-server bodies)
+        port (:local-port (meta stop-server))
         image (temp-image home)]
     (try
       (let [_ (provider/complete
@@ -93,9 +89,9 @@
 
 (deftest anthropic-compatible-carries-images-as-base64-blocks
   (let [home (fs/create-temp-dir {:prefix "theseus-vision-anthropic-"})
-        port (free-port)
         bodies (atom [])
-        stop-server (completion-server port bodies)
+        stop-server (completion-server bodies)
+        port (:local-port (meta stop-server))
         image (temp-image home)]
     (try
       (let [_ (provider/complete
@@ -119,9 +115,9 @@
 
 (deftest no-images-leaves-the-wire-unchanged
   (let [home (fs/create-temp-dir {:prefix "theseus-vision-plain-"})
-        port (free-port)
         bodies (atom [])
-        stop-server (completion-server port bodies)]
+        stop-server (completion-server bodies)
+        port (:local-port (meta stop-server))]
     (try
       (provider/complete
        :openai-compatible
@@ -137,9 +133,9 @@
 
 (deftest missing-image-file-throws-honestly
   (let [home (fs/create-temp-dir {:prefix "theseus-vision-missing-"})
-        port (free-port)
         bodies (atom [])
-        stop-server (completion-server port bodies)
+        stop-server (completion-server bodies)
+        port (:local-port (meta stop-server))
         raised? (try
                   (provider/complete
                    :openai-compatible
@@ -160,10 +156,10 @@
 
 (deftest openai-vision-rejection-falls-back-to-text-once
   (let [home (fs/create-temp-dir {:prefix "theseus-vision-openai-fb-"})
-        port (free-port)
         bodies (atom [])
-        stop-server (scripted-server port (vision-rejecting-handler
-                                           bodies [:messages 1 :content]))
+        stop-server (scripted-server (vision-rejecting-handler
+                                      bodies [:messages 1 :content]))
+        port (:local-port (meta stop-server))
         image (temp-image home)]
     (try
       (let [result (provider/complete
@@ -185,15 +181,15 @@
 
 (deftest openai-generic-400-still-fails-with-images
   (let [home (fs/create-temp-dir {:prefix "theseus-vision-openai-400-"})
-        port (free-port)
         bodies (atom [])
         stop-server
         (scripted-server
-         port (fn [_uri _body]
-                (swap! bodies conj ::called)
-                {:status 400
-                 :headers {"content-type" "application/json"}
-                 :body (json/generate-string {:error {:message "invalid api key"}})}))
+         (fn [_uri _body]
+           (swap! bodies conj ::called)
+           {:status 400
+            :headers {"content-type" "application/json"}
+            :body (json/generate-string {:error {:message "invalid api key"}})}))
+        port (:local-port (meta stop-server))
         image (temp-image home)]
     (try
       (let [raised? (try
@@ -214,10 +210,10 @@
 
 (deftest anthropic-vision-rejection-falls-back-to-text-once
   (let [home (fs/create-temp-dir {:prefix "theseus-vision-anthropic-fb-"})
-        port (free-port)
         bodies (atom [])
-        stop-server (scripted-server port (vision-rejecting-handler
-                                           bodies [:messages 0 :content]))
+        stop-server (scripted-server (vision-rejecting-handler
+                                      bodies [:messages 0 :content]))
+        port (:local-port (meta stop-server))
         image (temp-image home)]
     (try
       (let [result (provider/complete

@@ -62,7 +62,7 @@
    delivery failure data."
   ([cfg chat-id path kind] (send-file! cfg chat-id path kind {}))
   ([cfg chat-id path kind
-    {:keys [caption thread-id max-bytes transport sleep-fn]
+    {:keys [caption thread-id max-bytes]
      :or {max-bytes (get kind-caps kind)}
      :as opts}]
    (when-not (contains? kind-caps kind)

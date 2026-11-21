@@ -7,21 +7,9 @@
 
 (defmulti complete (fn [provider _request] provider))
 
-(defn- final-tool-message [messages]
-  (some->> messages
-           reverse
-           (filter #(= :tool (:role %)))
-           first))
-
-(defn- parse-tool-results [messages]
-  (some-> (final-tool-message messages) :tool/results))
-
-(defn- memory-match-texts [request]
-  (mapv :memory/text (:memory/matches request)))
-
+;; Test double. Implementation lives in bb-agent.provider-fake, loaded on
+;; first use — test support never ships in the hot require graph.
 (defmethod complete :fake [_ request]
-  "Test double. Implementation lives in bb-agent.provider-fake, loaded on
-   first use — test support never ships in the hot require graph."
   (require 'bb-agent.provider-fake)
   ((resolve 'bb-agent.provider-fake/complete-fake) request))
 

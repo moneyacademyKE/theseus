@@ -8,6 +8,7 @@
 
   State machine (per SPEC):
     OBSERVE -> DECIDE -> { DONE | HALT | ACT -> REOBSERVE -> DECIDE }"
+  (:refer-clojure :exclude [run!])
   (:require [bb-agent.goal.config :as config]
             [bb-agent.goal.predicates :as predicates]
             [bb-agent.goal.observe :as observe]

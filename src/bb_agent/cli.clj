@@ -397,7 +397,7 @@
                                 " skipped"
                                 ;; A gate with no input reads as a gate that
                                 ;; passed, so say which one this was.
-                                (when g
+                                (when (map? g)
                                   (str " | id-gate: "
                                        (if (:id-gate-armed g) "armed" "UNARMED")
                                        " (" (:repo-blocks g) " repo block(s), "

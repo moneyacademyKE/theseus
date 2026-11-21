@@ -1,6 +1,6 @@
 (ns e2e.provider-wire-test
   (:require [bb-agent.provider :as provider]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is]]))
 
 (deftest plain-messages-pass-through
   (is (= [{"role" "system" "content" "sys"}

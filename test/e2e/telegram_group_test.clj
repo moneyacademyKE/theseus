@@ -9,7 +9,7 @@
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is]]
             [org.httpkit.server :as server]))
 
 (def group-id -1003995594829)
@@ -22,10 +22,6 @@
                   :continue true
                   :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
-
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
 
 (defn- bot-info []
   {:id bot-id :username "eileenslybot" :is_bot true})
@@ -185,7 +181,6 @@
 
 (deftest topic-scoped-approval-replies-stay-in-their-topic
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-topic-approval-"})
-        port (free-port)
         calls (atom [])
         topic 707
         session-id (str "telegram-" group-id "-topic-" topic)
@@ -211,7 +206,8 @@
                {:status 200 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok true})}
                {:status 404 :body (json/generate-string {:ok false})})))
-         {:port port})
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         approvals-file (fs/path home "state" "approvals.edn")]
     (try
@@ -248,7 +244,6 @@
 
 (deftest polling-isolates-topics-and-preserves-thread-on-replies
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-group-"})
-        port (free-port)
         calls (atom [])
         updates [{:update_id 1
                   :message (group-message {:message-id 11
@@ -303,7 +298,8 @@
                {:status 404
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok false})})))
-         {:port port})
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-a (fs/path home "state" "sessions"
                            (str "telegram-" group-id "-topic-101.edn"))

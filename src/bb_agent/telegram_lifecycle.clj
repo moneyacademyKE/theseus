@@ -84,9 +84,8 @@
           {:updates (or (:result body) []) :conflict? false})
       (do (report-poll-error! body)
           {:updates []
-           :conflict? (boolean
-                       (str/includes? (str/lower-case (str (:description body)))
-                                      "conflict"))}))))
+           :conflict? (str/includes? (str/lower-case (str (:description body)))
+                                     "conflict")}))))
 
 (defn- mark-done!
   "Per-unit durability ledger, written AFTER the unit dispatches (audit H1).

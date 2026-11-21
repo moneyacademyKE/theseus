@@ -1,6 +1,7 @@
 (ns bb-agent.autonomy-test
   (:require [babashka.fs :as fs]
             [bb-agent.autonomy :as au]
+            [bb-agent.config]
             [clojure.test :refer [deftest is testing]]))
 
 (defn- ev [kind at]

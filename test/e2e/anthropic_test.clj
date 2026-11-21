@@ -14,13 +14,8 @@
             :extra-env {"THESEUS_HOME" (str home)}}
            "bb" "agent" prompt))
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (deftest anthropic-provider-persists-session-turn
   (let [home (fs/create-temp-dir {:prefix "theseus-anthropic-e2e-"})
-        port (free-port)
         captured (promise)
         stop-server (server/run-server
                      (fn [req]
@@ -31,7 +26,8 @@
                                {:content [{:type "text"
                                            :text "pong-anthropic"}]
                                 :role "assistant"})})
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions" "anthropic-session.edn")]
     (try
@@ -67,7 +63,6 @@
 
 (deftest anthropic-provider-parses-tool-use
   (let [home (fs/create-temp-dir {:prefix "theseus-anthropic-tool-e2e-"})
-        port (free-port)
         calls (atom 0)
         stop-server (server/run-server
                      (fn [_req]
@@ -83,7 +78,8 @@
                                    {:content [{:type "text"
                                                :text "read complete"}]
                                     :role "assistant"}))}))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions" "anthropic-tool-session.edn")]
     (try

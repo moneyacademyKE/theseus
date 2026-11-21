@@ -11,10 +11,6 @@
             [clojure.test :refer [deftest is testing]]
             [org.httpkit.server :as server]))
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (defn- bot-info []
   {:id 8511646577 :username "eileenslybot" :is_bot true})
 
@@ -31,7 +27,6 @@
 (defn- run-media-only-poll
   [updates]
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-media-only-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -57,7 +52,8 @@
                 :body (json/generate-string {:ok true :result {:message_id 90}})}
                {:status 404 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok false})})))
-         {:port port})
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")]
     (try
       (spit (str config-file)

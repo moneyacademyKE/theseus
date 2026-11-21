@@ -336,7 +336,7 @@
        "Phantom text-call " streak " of " threshold
        " — after that, text like this is accepted as the final answer."))
 
-(defn run-turn! [{:keys [provider model session/id] :as cfg} prompt]
+(defn run-turn! [cfg prompt]
   (let [cfg (model/effective-config cfg)
         cfg (vision-chain-cfg cfg)
         max-rounds (or (:max-tool-rounds cfg) default-max-tool-rounds)

@@ -2,8 +2,7 @@
   "Pins the default goal methodology (owner directive 2026-09-07, conf: high):
    the canon file exists, carries the method's load-bearing rules, and the
    author-prompt names it so the method survives even an unread reference."
-  (:require [bb-agent.config :as config]
-            [bb-agent.goal-bridge :as bridge]
+  (:require [bb-agent.goal-bridge :as bridge]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 

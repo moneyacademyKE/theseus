@@ -8,7 +8,8 @@
 
   Exits 0 if the goal was fulfilled, 1 on halt (stall/integrity/max-iters),
   2 on usage error. The `status`, `pause`, `resume`, and `stop` subcommands
-  are operator commands and exit 0 when the request is recorded/read.")
+  are operator commands and exit 0 when the request is recorded/read."
+  (:refer-clojure :exclude [run!]))
 
 (require '[bb-agent.goal.config :as config]
          '[bb-agent.goal.control :as control]

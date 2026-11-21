@@ -7,9 +7,9 @@
             [babashka.process :as p]
             [bb-agent.config :as config]
             [bb-agent.session :as session]
-            [clojure.edn :as edn]
+            [clojure.set]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is]]))
 
 (defn- with-home
   [f]
@@ -94,7 +94,7 @@
   "The lock must not regress the redaction seam: persistence stays the
    place where secrets go to die."
   (with-home
-    (fn [home]
+    (fn [_home]
       (session/append-turn! "t4" {:user/input "token 12345678:AAAAAAAAAAabcdefghjklmno"})
       (let [raw (slurp (str (session/session-file "t4")))]
         (is (str/includes? raw "<REDACTED-SECRET>"))

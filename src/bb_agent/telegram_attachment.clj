@@ -173,7 +173,7 @@
          persisted (atom [])
          skipped (atom 0)]
      (doseq [msg messages]
-       (if-let [att (attachment msg)]
+       (when-let [att (attachment msg)]
          (let [fsize (or (:file-size att) 0)]
            (if (> (+ @accum-bytes fsize) turn-max)
              (swap! skipped inc)

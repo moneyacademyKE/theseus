@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'test/**'
       - 'web/**'
+      - '.clj-kondo/**'
       - 'bb.edn'
       - '.github/workflows/tests.yml'
   pull_request:
@@ -15,6 +16,7 @@ on:
       - 'src/**'
       - 'test/**'
       - 'web/**'
+      - '.clj-kondo/**'
       - 'bb.edn'
       - '.github/workflows/tests.yml'
   workflow_dispatch:
@@ -50,6 +52,11 @@ jobs:
           done
           [ "$ok" = 1 ] || { echo "FATAL: babashka install failed 3x"; exit 1; }
           bb --version
+
+      - name: Install system packages (pdftotext)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils
 
       - name: Cache the go-sqlite3 pod
         # The release CDN's 504 bursts outlast every retry round (two
@@ -103,6 +110,9 @@ jobs:
             sleep 30
           done
           [ "$ok" = 1 ] || { echo "FATAL: kondo install failed after 3 rounds"; exit 1; }
+
+      - name: Lint (clj-kondo)
+        run: bb lint
 
       - name: Run e2e test suite
         run: bb test:e2e:all

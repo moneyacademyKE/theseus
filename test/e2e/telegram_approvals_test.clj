@@ -18,10 +18,6 @@
 (def approval-id "a1b2c3d4-0000-4000-8000-000000000001")
 (def session-id (str "telegram-" group-id "-topic-" topic-id))
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (defn- bot-info []
   {:id 8511646577 :username "eileenslybot" :is_bot true})
 
@@ -102,7 +98,6 @@
 
 (deftest approval-prompts-carry-inline-buttons
   (let [home (fs/create-temp-dir {:prefix "theseus-approvals-prompt-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -117,7 +112,8 @@
                {:status 404
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok false})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (with-redefs [config/home (fn [] (str home))]
         (approval-ui/send-approval-request!
@@ -156,7 +152,6 @@
 
 (deftest approval-buttons-are-config-gated
   (let [home (fs/create-temp-dir {:prefix "theseus-approvals-gate-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -166,7 +161,8 @@
              {:status 200
               :headers {"content-type" "application/json"}
               :body (json/generate-string {:ok true :result {:message_id 91}})}))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (with-redefs [config/home (fn [] (str home))]
         (approval-ui/send-approval-request!
@@ -191,7 +187,6 @@
 
 (deftest callback-queries-resolve-pending-approvals
   (let [home (fs/create-temp-dir {:prefix "theseus-approvals-e2e-"})
-        port (free-port)
         calls (atom [])
         callback (fn [update-id query-id clicker data]
                    {:update_id update-id
@@ -226,7 +221,8 @@
                {:status 404
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok false})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (fs/create-dirs (fs/path home "state"))
       (spit (str (fs/path home "state" "approvals.edn"))
@@ -283,7 +279,6 @@
 
 (deftest unknown-and-expired-callbacks-answer-honestly
   (let [home (fs/create-temp-dir {:prefix "theseus-approvals-expired-"})
-        port (free-port)
         calls (atom [])
         callback (fn [update-id query-id clicker data]
                    {:update_id update-id
@@ -314,7 +309,8 @@
                {:status 404
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok false})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
@@ -342,8 +338,7 @@
         (fs/delete-tree home)))))
 
 (deftest delivery-callback-helpers-ride-the-json-ladder
-  (let [port (free-port)
-        calls (atom [])
+  (let [calls (atom [])
         stop-server
         (server/run-server
          (fn [req]
@@ -352,7 +347,8 @@
              {:status 200
               :headers {"content-type" "application/json"}
               :body (json/generate-string {:ok true :result true})}))
-         {:port port})
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         cfg {:token "TESTTOKEN" :base-url (str "http://127.0.0.1:" port)}]
     (try
       (delivery/answer-callback-query! cfg "CBQ-1" "Denied pending tool")

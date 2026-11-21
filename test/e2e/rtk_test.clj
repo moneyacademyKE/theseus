@@ -4,7 +4,7 @@
             [bb-agent.rtk :as rtk]
             [bb-agent.tool :as tool]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is]]))
 
 (def ^:private ansi-sample "\u001B[31mred\u001B[0m plain")
 
@@ -51,7 +51,7 @@
   (let [home (temp-home!)
         rules-edn "[{:name \"user-rule\" :cmd #\"^user-cmd\\b\"}]"]
     (spit (str (fs/path home "rtk-filters.edn")) rules-edn)
-    (with-redefs [config/home (constantly (str home))]
+    (with-redefs [config/home (constantly home)]
       (let [names (set (map :name (rtk/rules)))]
         (is (contains? names "user-rule"))
         (is (contains? names "ps"))))))
@@ -61,7 +61,7 @@
         rules-edn "[{:name \"noisy\" :cmd #\"^printf\\b\"
                      :drop-lines [#\"^DROPME\"] :max-lines 2}]"]
     (spit (str (fs/path home "rtk-filters.edn")) rules-edn)
-    (with-redefs [config/home (constantly (str home))]
+    (with-redefs [config/home (constantly home)]
       (let [result (tool/handle-tool-request
                     {:tool/name "shell"
                      :approval/policy :auto-all
@@ -78,7 +78,7 @@
         rules-edn "[{:name \"noisy\" :cmd #\"^printf\\b\"
                      :drop-lines [#\"^DROPME\"] :max-lines 2}]"]
     (spit (str (fs/path home "rtk-filters.edn")) rules-edn)
-    (with-redefs [config/home (constantly (str home))]
+    (with-redefs [config/home (constantly home)]
       (let [result (tool/handle-tool-request
                     {:tool/name "shell"
                      :approval/policy :auto-all
@@ -90,7 +90,7 @@
 
 (deftest shell-e2e-untouched-when-no-rule-matches
   (let [home (temp-home!)]
-    (with-redefs [config/home (constantly (str home))]
+    (with-redefs [config/home (constantly home)]
       (let [result (tool/handle-tool-request
                     {:tool/name "shell"
                      :approval/policy :auto-all

@@ -4,6 +4,7 @@
    promotes Unreleased to a dated section, bumps version.clj, commits and
    tags. Pushing is a separate, explicit `git push` — cutting a release is
    reversible, publishing one isn't."
+  (:refer-clojure :exclude [run!])
   (:require [babashka.process :as p]
             [clojure.java.io :as io]
             [clojure.string :as str]))

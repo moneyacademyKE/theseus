@@ -7,7 +7,6 @@
             [bb-agent.goal.progress :as progress]
             [bb-agent.goal.registry :as registry]
             [bb-agent.model :as model]
-            [bb-agent.provider :as provider]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]

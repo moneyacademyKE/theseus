@@ -54,7 +54,6 @@
             [bb-agent.brief-universe :as universe]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
-            [bb-agent.outbox :as outbox]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-upload :as upload]
             [cheshire.core :as json]
@@ -62,7 +61,6 @@
 
 (def ^:private chat-id "-1003995594829") ; Sly Theseus group
 (def ^:private thread-id 239)             ; ai-stock-briefs topic
-(def ^:private max-chunk 3800)            ; Telegram limit is 4096
 (def lock-stale-minutes 60) ; backstop only — a dead pid releases the lock at once
 (def generation-timeout-ms 900000) ; per pass, at the wire; the old top-level 600s never left the config
 (def ^:private universe-stale-ms (* 24 60 60 1000)) ; membership drifts slowly — a day is plenty
@@ -540,27 +538,6 @@
     (str/join "\n\n" parts)))
 
 
-
-(defn- deliver!
-  "Enqueue every chunk to the durable outbox, then drain immediately so the
-   message goes out now; the poller's per-cycle drain is the backstop.
-   Returns the drain result map {:sent :deferred :dead :poison}."
-  [telegram-cfg chunks]
-  (doseq [chunk chunks]
-    (outbox/enqueue!
-     {:outbox-root (outbox/root-for telegram-cfg)}
-     {:method "sendMessage"
-      :params {:chat_id chat-id :message_thread_id thread-id :text chunk}
-      :routing {:chat-id chat-id :thread-id thread-id}
-      :kind :ai-stock-brief}))
-  (outbox/drain!
-   telegram-cfg
-   (fn [record]
-     (delivery/post-api telegram-cfg (:method record)
-                        {:headers {"content-type" "application/json"}
-                         :body (json/generate-string (:params record))}
-                        (:routing record)
-                        delivery/default-runtime))))
 
 ;; ---------- run ----------
 

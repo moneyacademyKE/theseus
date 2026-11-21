@@ -203,7 +203,7 @@
   ([cfg schedule-id] (run-schedule! cfg schedule-id (str (java.time.Instant/now))))
   ([cfg schedule-id at]
    (if-let [schedule (find-schedule schedule-id)]
-     (if-let [cmd (:schedule/command schedule)]
+     (if (:schedule/command schedule)
        (run-command-lane! cfg schedule schedule-id at)
        (let [turn (core/run-turn! (merge cfg
                                          (select-keys schedule [:cwd :provider :model])

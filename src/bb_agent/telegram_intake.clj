@@ -128,7 +128,7 @@
   "Answer a chat command without an LLM turn. Public: shared verbatim
   with the web turn lane (bb-agent.web-turn) — one implementation of
   /new /usage /model /goals /skills, two channels."
-  [cmd session-id text chat-id thread-id]
+  [cmd session-id text _chat-id _thread-id]
   (case cmd
     ;; :goal-request/:build-goal are intercepted in the dispatch before this
     ;; runs (V1a: detached authoring, no flow wrapper needed) — deliberately

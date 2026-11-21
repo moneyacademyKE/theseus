@@ -64,10 +64,10 @@
                   (swap! state (fn [s] (-> s (update :calls inc)
                                            (assoc :last-tool tool)))))
           try-edit! (fn []
-                      (let [{:keys [calls last-edit-ms]} @state
+                      (let [s @state
                             now (System/currentTimeMillis)]
-                        (when (should-edit? @state now deps)
-                          (edit! message-id (render @state now))
+                        (when (should-edit? s now deps)
+                          (edit! message-id (render s now))
                           ;; set AFTER the edit succeeds — a failed edit
                           ;; retries on the next emit instead of going dark
                           (swap! state assoc :last-edit-ms now))))]

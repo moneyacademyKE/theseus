@@ -203,7 +203,7 @@
   "Answer a callback query so the clicker's spinner stops. The text is the
    truthful receipt shown as a toast. Rides the bounded ladder."
   ([cfg callback-query-id text] (answer-callback-query! cfg callback-query-id text {}))
-  ([cfg callback-query-id text {:keys [transport sleep-fn] :as opts}]
+  ([cfg callback-query-id text opts]
    (post-api cfg "answerCallbackQuery"
              {:headers {"content-type" "application/json"}
               :body (json/generate-string
@@ -215,7 +215,7 @@
   "Replace a sent message's text and drop its inline keyboard, so a decided
    approval can never be clicked twice. Rides the bounded ladder."
   ([cfg chat-id message-id text] (edit-message-text! cfg chat-id message-id text {}))
-  ([cfg chat-id message-id text {:keys [transport sleep-fn parse-mode] :as opts}]
+  ([cfg chat-id message-id text {:keys [parse-mode] :as opts}]
    (post-api cfg "editMessageText"
              {:headers {"content-type" "application/json"}
               :body (json/generate-string
@@ -237,7 +237,7 @@
          delivery-opts (apply dissoc opts (keys runtime))]
      (send-html! cfg chat-id html delivery-opts runtime)))
   ([cfg chat-id html
-    {:keys [thread-id reply-to-message-id] :as opts}
+    {:keys [reply-to-message-id] :as opts}
     {:keys [split-fn] :or {split-fn tr/split-message} :as runtime}]
    (let [runtime (dissoc (merge default-runtime runtime) :split-fn)]
      (loop [[chunk & more] (split-fn html)

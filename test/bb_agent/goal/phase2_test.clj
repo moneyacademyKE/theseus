@@ -3,6 +3,7 @@
   loop just enough to prove escalation decisions are not accidentally treated
   as ordinary acts."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string]
             [bb-agent.goal.core :as core]
             [babashka.fs :as fs]))
 

@@ -1,6 +1,7 @@
 (ns bb-agent.goal.phase7-harness-test
   "Phase 7 -- harness orchestration tests."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string]
             [bb-agent.goal.config :as config]
             [bb-agent.goal.core :as core]
             [bb-agent.goal.harness :as harness]

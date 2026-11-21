@@ -1,7 +1,6 @@
 (ns bb-agent.goal.phase4-hotreload-test
   "Phase 4b -- hot-reload / config-swap tests."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.edn :as edn]
             [clojure.string :as str]
             [bb-agent.goal.config :as config]
             [bb-agent.goal.core :as core]

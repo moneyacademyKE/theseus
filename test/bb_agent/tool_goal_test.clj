@@ -11,7 +11,7 @@
             [bb-agent.tool :as tool]
             [bb-agent.tools :as tools]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is]]))
 
 (defn- with-temp-home [f]
   (let [home (str (fs/create-temp-dir {:prefix "tool-goal-"}))]

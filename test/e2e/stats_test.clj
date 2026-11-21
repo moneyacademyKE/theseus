@@ -2,7 +2,6 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
             [clojure.edn :as edn]
-            [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [bb-agent.usage :as usage]))
 

@@ -83,16 +83,13 @@
   (let [original (or (:full-name item) (:full_name item))]
     (try
       (let [result (research/normalize-candidate (github-metadata item))
-            candidate (if (map? (:candidate result)) (:candidate result) result)
             rejected? (or (not (map? result))
-                          (#{:rejected :quarantined :invalid} (:status result))
-                          (false? (:accepted? result))
-                          (false? (:valid? result)))]
+                          (#{:rejected :quarantined :invalid} (:status result)))]
         (if rejected?
           {:rejection {:status :rejected
                        :full-name original
                        :reasons (reasons-of result "malformed candidate")}}
-          {:candidate candidate}))
+          {:candidate result}))
       (catch Exception e
         {:rejection {:status :rejected
                      :full-name original

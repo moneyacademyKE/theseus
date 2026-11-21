@@ -1,6 +1,6 @@
 (ns bb-agent.goal.phase6-operator-test
   "Phase 6 -- operator UX tests."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is]]
             [clojure.string :as str]
             [bb-agent.goal.status :as status]))
 

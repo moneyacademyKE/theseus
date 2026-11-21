@@ -15,13 +15,8 @@
                   :extra-env {"THESEUS_HOME" (str home)}}
          "bb" args))
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (deftest telegram-polling-reuses-core-turn-loop
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-e2e-"})
-        port (free-port)
         calls (atom [])
         stop-server (server/run-server
                      (fn [req]
@@ -57,7 +52,8 @@
                            {:status 404
                             :headers {"content-type" "application/json"}
                             :body (json/generate-string {:ok false})})))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions" "telegram-4242.edn")
         offset-file (fs/path home "state" "telegram-offset.edn")]
@@ -90,7 +86,6 @@
 
 (deftest telegram-approval-replies-do-not-run-agent-turns
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-approval-"})
-        port (free-port)
         calls (atom [])
         stop-server (server/run-server
                      (fn [req]
@@ -118,7 +113,8 @@
                          {:status 404
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok false})}))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions" "telegram-4242.edn")]
     (try
@@ -140,7 +136,6 @@
 
 (deftest telegram-approval-reply-resolves-pending-request
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-resolve-"})
-        port (free-port)
         calls (atom [])
         stop-server (server/run-server
                      (fn [req]
@@ -167,7 +162,8 @@
                          {:status 404
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok false})}))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         approvals-file (fs/path home "state" "approvals.edn")]
     (try
@@ -198,7 +194,6 @@
 
 (deftest telegram-denies-chats-outside-allowlist
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-deny-"})
-        port (free-port)
         calls (atom [])
         stop-server (server/run-server
                      (fn [req]
@@ -220,7 +215,8 @@
                          {:status 404
                           :headers {"content-type" "application/json"}
                           :body (json/generate-string {:ok false})}))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")]
     (try
       (spit (str config-file)
@@ -248,7 +244,6 @@
    outbound calls as parsed bodies."
   [reaction-status]
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-presence-"})
-        port (free-port)
         calls (atom [])
         stop-server (server/run-server
                      (fn [req]
@@ -299,7 +294,8 @@
                            {:status 404
                             :headers {"content-type" "application/json"}
                             :body (json/generate-string {:ok false})})))
-                     {:port port})]
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake
@@ -338,7 +334,6 @@
 
 (deftest get-updates-conflict-is-surfaced-not-fatal
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-conflict-"})
-        port (free-port)
         calls (atom [])
         stop-server (server/run-server
                      (fn [req]
@@ -366,7 +361,8 @@
                            {:status 404
                             :headers {"content-type" "application/json"}
                             :body (json/generate-string {:ok false})})))
-                     {:port port})
+                     {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")]
     (try
       (spit (str config-file)

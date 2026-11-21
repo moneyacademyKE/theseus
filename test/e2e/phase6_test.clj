@@ -5,9 +5,10 @@
             [bb-agent.core :as core]
             [bb-agent.memory :as memory]
             [bb-agent.tool :as tool]
+            [bb-agent.tool.process]
             [bb-agent.ui :as ui]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing use-fixtures]]))
+            [clojure.test :refer [deftest is use-fixtures]]))
 
 (defn- temp-home []
   (str (fs/create-temp-dir {:prefix "bb-agent-phase6-"})))

@@ -5,7 +5,8 @@
             [bb-agent.goal.core :as core]
             [bb-agent.goal.decision :as decision]
             [bb-agent.goal.status :as status]
-            [babashka.fs :as fs]))
+            [babashka.fs :as fs]
+            [clojure.string]))
 
 (deftest usage-normalizes-advisory-result-metadata
   (testing "missing and malformed usage is zero"

@@ -1,5 +1,5 @@
 (ns bb-agent.goal.lock-test
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [clojure.test :refer [deftest is use-fixtures]]
             [clojure.java.io :as io]
             [bb-agent.goal.lock :as lock])
   (:import (java.nio.file Files)))

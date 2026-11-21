@@ -76,7 +76,7 @@
 
   `:attempts` counts calls actually made; breaker-open short-circuits
   before the first call, so it reports 0."
-  [{:keys [breaker breaker-key max-attempts] :as opts} thunk]
+  [opts thunk]
   (let [{:keys [breaker breaker-key max-attempts] :as opts} (merge (defaults) opts)]
     (letfn [(now-secs [] (quot (long ((:clock opts))) 1000))]
     (loop [attempt 1 br breaker]

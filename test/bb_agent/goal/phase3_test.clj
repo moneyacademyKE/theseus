@@ -13,7 +13,6 @@
   name the blocker in under 2 minutes' -- is the spirit of the bundle tests."
   (:require [clojure.test :as t :refer [deftest is testing]]
             [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.string :as str]
             [bb-agent.goal.config :as config]
             [bb-agent.goal.predicates :as predicates]

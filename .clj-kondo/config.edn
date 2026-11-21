@@ -1,23 +1,4 @@
 ;; clj-kondo project config.
-;; Async macros bind their channel symbol. Legacy style diagnostics are kept
-;; non-blocking while error-level analysis remains active for the release gate.
+;; Async macros bind their channel symbol.
 {:config-in-call {org.httpkit.server/with-channel
-                  {:linters {:unresolved-symbol {:exclude [ch]}}}}
- :linters {:condition-always-true {:level :off}
-           :inline-def {:level :off}
-           :missing-else {:level :off}
-           :missing-else-branch {:level :off}
-           :misplaced-docstring {:level :off}
-           :namespace-name-mismatch {:level :off}
-           :redundant-boolean {:level :off}
-           :redundant-call {:level :off}
-           :redundant-do {:level :off}
-           :redundant-let {:level :off}
-           :redundant-str-call {:level :off}
-           :redefined-var {:level :off}
-           :refer-clojure {:level :off}
-           :unresolved-namespace {:level :off}
-           :unused-binding {:level :off}
-           :unused-namespace {:level :off}
-           :unused-private-var {:level :off}
-           :unused-referred-var {:level :off}}}
+                  {:linters {:unresolved-symbol {:exclude [ch]}}}}}

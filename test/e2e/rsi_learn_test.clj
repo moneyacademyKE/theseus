@@ -1,6 +1,7 @@
 (ns e2e.rsi-learn-test
   (:require [babashka.fs :as fs]
             [babashka.process :refer [sh]]
+            [bb-agent.config]
             [bb-agent.rsi-learn :as learn]
             [clojure.edn :as edn]
             [clojure.string :as str]

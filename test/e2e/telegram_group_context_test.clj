@@ -8,12 +8,8 @@
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is]]
             [org.httpkit.server :as server]))
-
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
 
 (defn- bot-info []
   {:id 8511646577 :username "eileenslybot" :is_bot true})
@@ -57,7 +53,6 @@
   ([updates] (run-poll updates {}))
   ([updates {:keys [respond-to] :or {respond-to :mention}}]
   (let [home (fs/create-temp-dir {:prefix "theseus-gctx-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -76,7 +71,8 @@
                 :body (json/generate-string {:ok true :result {:message_id 90}})}
                {:status 200 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok true :result true})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake

@@ -8,7 +8,6 @@
   (:require [clojure.test :refer [deftest is testing]]
             [bb-agent.goal.notify :as notify]
             [bb-agent.goal.core :as core]
-            [bb-agent.goal.log :as log]
             [babashka.fs :as fs]))
 
 ;; ---------- build-message (pure) ----------

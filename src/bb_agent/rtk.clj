@@ -8,6 +8,7 @@
    <home>/rtk-filters.edn (EDN vector, same shape). Compaction is gated by
    config: {:rtk {:enabled true}} — default off, and results carry :rtk
    stats so the savings stay measurable."
+  (:refer-clojure :exclude [apply])
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [clojure.string :as str]))

@@ -1,7 +1,6 @@
 (ns e2e.telegram-send-file-test
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-upload :as upload]
             [bb-agent.tool :as tool]
             [bb-agent.tools :as tools]
@@ -146,13 +145,8 @@
       (is (empty? @calls))
       (fs/delete-tree home))))
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (deftest telegram-send-file-tool-is-wired-to-the-session
   (let [home (fs/create-temp-dir {:prefix "theseus-send-tool-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -167,7 +161,8 @@
                {:status 404
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok false :description "nope"})})))
-         {:port port})
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         workdir (fs/path home "work")
         _ (fs/create-dirs workdir)
         report (fs/path workdir "report.txt")

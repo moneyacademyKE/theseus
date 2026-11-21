@@ -17,6 +17,7 @@
    empty set and the gate has never had an input. A gate whose input is empty
    reads as a gate that passed: the eighth false-clean this lane has met."
   (:require [babashka.fs :as fs]
+            [bb-agent.config]
             [bb-agent.rsi-learn :as learn]
             [clojure.test :refer [deftest is]]))
 

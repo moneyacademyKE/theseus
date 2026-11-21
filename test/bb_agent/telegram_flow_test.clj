@@ -7,11 +7,12 @@
 
 (def sent (atom []))
 
-(defn fake-transport! [f]
+(defn fake-transport!
   "Runs f with the Telegram transport faked: sends return message-id 4242,
    edits are recorded, typing is a no-op. The redefs must wrap f itself —
    a helper that redefs and returns would expire the bindings before the
    code under test runs."
+  [f]
   (reset! sent [])
   (with-redefs [delivery/send-message!
                 (fn [_cfg _chat text _opts]

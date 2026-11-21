@@ -20,22 +20,6 @@
             [bb-agent.goal.taxonomy :as taxonomy]
             [bb-agent.goal.control :as control]))
 
-(defn- safe-slurp
-  "Read a file's contents, nil if absent."
-  [path]
-  (let [f (io/file path)]
-    (when (.exists f) (slurp f))))
-
-(defn- tail-lines
-  "Return the last `n` non-blank lines of `text`, as a vector."
-  [text n]
-  (->> (str/split-lines text)
-       (remove str/blank?)
-       reverse
-       (take n)
-       reverse
-       vec))
-
 (defn operator-facts
   "Pure extraction of the fields an operator needs most. The function is
   intentionally tolerant of older iteration records: absent fields stay nil
@@ -98,7 +82,7 @@
                                        (when (:exit it) (str " exit=" (:exit it))))))
                            (str/join "\n")))
         lines (cond-> []
-                 true            (conj (str "─── Goal Runner Status ───"))
+                 true            (conj "─── Goal Runner Status ───")
                  true            (conj (str "Config: " name))
                  (:config-path facts)
                  (conj (str "Config path: " (:config-path facts)))

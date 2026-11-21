@@ -1,6 +1,7 @@
 (ns e2e.tool-advertisement-test
   (:require [babashka.fs :as fs]
             [babashka.http-client :as http]
+            [bb-agent.config]
             [cheshire.core :as json]
             [clojure.test :refer [deftest is testing]]
             [bb-agent.tools :as tools]

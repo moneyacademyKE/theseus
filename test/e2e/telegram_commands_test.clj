@@ -4,18 +4,12 @@
    turn."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
-            [bb-agent.session :as session]
             [bb-agent.telegram-lifecycle :as telegram]
-            [bb-agent.usage :as usage]
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [org.httpkit.server :as server]))
-
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
 
 (def owner-id 1608111860)
 
@@ -30,7 +24,6 @@
   ([updates] (run-poll updates nil))
   ([updates setup-fn]
    (let [home (fs/create-temp-dir {:prefix "theseus-cmd-"})
-         port (free-port)
          calls (atom [])
          stop-server
          (server/run-server
@@ -49,7 +42,8 @@
                  :body (json/generate-string {:ok true :result {:message_id 90}})}
                 {:status 200 :headers {"content-type" "application/json"}
                  :body (json/generate-string {:ok true :result true})})))
-          {:port port})]
+          {:port 0 :ip "127.0.0.1"})
+         port (:local-port (meta stop-server))]
      (try
        (spit (str (fs/path home "config.edn"))
              (pr-str {:provider :fake

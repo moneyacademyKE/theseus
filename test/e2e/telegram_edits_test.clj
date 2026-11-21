@@ -14,10 +14,6 @@
 
 (def owner-id 1608111860)
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (defn- msg [id text]
   {:message_id id
    :from {:id owner-id :is_bot false :first_name "moe"}
@@ -30,7 +26,6 @@
    round 3 drains. Returns {:calls [...] :answers [...]}."
   [provider-impl {:keys [edit]}]
   (let [home (fs/create-temp-dir {:prefix "theseus-edits-"})
-        port (free-port)
         calls (atom [])
         get-updates-count (atom 0)
         stop-server
@@ -57,7 +52,8 @@
                {:status 200 :headers {"content-type" "application/json"}
                 :body (json/generate-string
                        {:ok true :result {:message_id 90}})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake

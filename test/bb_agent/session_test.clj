@@ -1,7 +1,7 @@
 (ns bb-agent.session-test
   (:require [bb-agent.config :as config]
             [bb-agent.session :as session]
-            [clojure.java.io :as io]
+            [clojure.string]
             [clojure.test :refer [deftest is use-fixtures]])
   (:import (java.nio.file Files)))
 

@@ -24,10 +24,6 @@
 
 (def owner-id 1608111860)
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (defn- dm-update [text]
   [{:update_id 1
     :message {:message_id 42
@@ -43,7 +39,6 @@
    Returns {:result poll-result :calls [ordered calls]}."
   [provider-impl telegram-overrides rules-content]
   (let [home (fs/create-temp-dir {:prefix "theseus-turn-status-"})
-        port (free-port)
         calls (atom [])
         stop-server
         (server/run-server
@@ -69,7 +64,8 @@
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string
                        {:ok true :result {:message_id 90}})})))
-         {:port port})]
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))]
     (try
       (spit (str (fs/path home "config.edn"))
             (pr-str {:provider :fake

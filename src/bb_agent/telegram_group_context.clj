@@ -26,7 +26,7 @@
   "Append one observed group message {:message-id :from :text} to the
    topic's rolling buffer (chat-level when thread-id is nil), trimming to
    `size` (default 30). No-op for DMs or empty text."
-  [chat-id {:keys [message-id from text] :as entry} & {:keys [size thread-id] :or {size default-size}}]
+  [chat-id {:keys [message-id from text]} & {:keys [size thread-id] :or {size default-size}}]
   (when (and (neg? (long chat-id)) (not (str/blank? (str text))))
     (let [f (buffer-file chat-id thread-id)
           existing (if (fs/exists? f)

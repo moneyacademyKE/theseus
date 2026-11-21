@@ -155,7 +155,7 @@
           ws   (.getParentFile tmp)]
       (spit tmp (pr-str {:name "ok" :observers [] :goal :ready?
                          :progress :ready? :act {:sh "true"} :workdir (.getPath ws)}))
-      (is (config/load-config (.getPath tmp)))
+      (is (map? (config/load-config (.getPath tmp))))
       (.delete tmp))))
 
 (deftest load-config-anchors-relative-paths

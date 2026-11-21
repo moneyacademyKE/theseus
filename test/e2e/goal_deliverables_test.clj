@@ -16,7 +16,6 @@
   (testing "fulfilled run.log + declared deliverables → sendDocument hits
             the API for real files; missing declarations are skipped"
     (let [home (str (fs/create-temp-dir {:prefix "theseus-v2-"}))
-          port (with-open [s (java.net.ServerSocket. 0)] (.getLocalPort s))
           calls (atom [])
           stop (server/run-server
                 (fn [req]
@@ -28,7 +27,8 @@
                              :result (if (str/includes? (:uri req) "sendDocument")
                                        {:document {:file_name "report.html"}}
                                        {:message_id 90})})}))
-                {:port port})
+                {:port 0 :ip "127.0.0.1"})
+          port (:local-port (meta stop))
           ws (str home "/goals/ship-it")
           _ (fs/create-dirs (str ws "/logs"))
           _ (spit (str ws "/run.log") "GOAL FULFILLED\nworld {:builds 1}\n")

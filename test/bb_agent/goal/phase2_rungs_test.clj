@@ -14,12 +14,6 @@
             [bb-agent.goal.core :as core]
             [babashka.fs :as fs]))
 
-(defn- shq
-  "Quietly run a command in `dir`; non-zero exits surface via :continue."
-  [dir & args]
-  (apply babashka.process/sh
-         {:out :string :err :string :dir dir :continue true} args))
-
 (deftest run-climbs-ladder-with-observable-rung-effects
   (testing "reseed -> reframe -> escalate-model each perturb observably, then halt"
     (let [dir (str (fs/create-temp-dir))

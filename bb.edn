@@ -1,8 +1,7 @@
 {:paths ["src" "test"]
  :deps {com.github.kbosompem/bb-excel {:mvn/version "0.1.1"}}
  :pods {org.babashka/go-sqlite3 {:path "../.pods/pod-babashka-go-sqlite3"}
-        org.babashka/buddy {:version "0.3.4"}
-        org.babashka/fswatcher {:version "0.0.7"}}
+        org.babashka/buddy {:version "0.3.4"}}
  :tasks
  {agent {:doc "Run one agent turn. Usage: bb agent \"say pong\""
          :requires ([bb-agent.cli :as cli])
@@ -11,14 +10,18 @@
            :requires ([bb-agent.goal.main :as goal-main])
            :task (apply goal-main/-main *command-line-args*)}
      lint {:doc "clj-kondo static analysis over src AND test. Usage: bb lint <file-or-dir>... (default: both trees)"
-           :task (let [bin (or (System/getenv "KONDO_BIN") "../.tools/bin/clj-kondo")
+           :requires ([babashka.fs :as fs])
+           :task (let [bin (or (System/getenv "KONDO_BIN")
+                               (when (.exists (java.io.File. "../.tools/bin/clj-kondo"))
+                                 "../.tools/bin/clj-kondo")
+                               (some-> (fs/which "clj-kondo") str))
                        targets (if (seq *command-line-args*) *command-line-args* ["src" "test"])]
-                   (when-not (.exists (java.io.File. bin))
-                     (println "clj-kondo binary missing:" bin)
+                   (when-not (and bin (.exists (java.io.File. bin)))
+                     (println "clj-kondo binary missing:" (or bin "<not found>"))
                      (System/exit 2))
                    (let [args (concat (mapcat (fn [target] ["--lint" target]) targets)
-                                      ["--fail-level" "error"])
-                         result (apply shell bin args)]
+                                      ["--fail-level" "warning"])
+                         result (apply shell {:continue true} bin args)]
                      (System/exit (:exit result))))}
      preflight {:doc "Content guard for files leaving the repo. Usage: bb preflight [--strict] <file>..."
                  :requires ([bb-agent.preflight :as pf])
@@ -557,7 +560,10 @@
                     :extra-paths ["test"]
                     :requires ([clojure.test :as t]
                                [e2e.tool-advertisement-test])
-                    :task (do (t/run-tests 'e2e.tool-advertisement-test))},
+                    :task (let [{:keys [fail error]}
+                                (t/run-tests 'e2e.tool-advertisement-test)]
+                            (when (pos? (+ fail error))
+                              (System/exit 1)))},
    test:e2e:telegram-rich {:doc "Run telegram rich-text e2e tests."
                     :extra-paths ["test"]
                     :requires ([clojure.test :as t]
@@ -682,5 +688,7 @@
                                 (t/run-tests (quote e2e.boot-load-test))]
                              (when (pos? (+ fail error))
                                (System/exit 1)))}
+   test:web:js {:doc "Run web deck JavaScript unit tests."
+                :task (shell "node" "--test" "test/web/paging.test.mjs" "test/web/shell.test.mjs")}
    test:e2e:all {:doc "Run all implemented e2e tests and rewrite doc checks."
-                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:web test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:rtk test:e2e:rsi test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:skill test:e2e:loop-guard test:e2e:telegram-commands test:e2e:telegram-edits test:e2e:skill-research test:e2e:provider-wire test:e2e:provider-timeout test:e2e:vision test:e2e:history test:e2e:session-redaction test:e2e:session-persistence test:e2e:goal-bridge-recovery test:e2e:goal-deliverables test:e2e:state-hygiene test:e2e:telegram-state test:e2e:ops-stats test:bb-agent test:e2e:store test:e2e:kondo test:e2e:boot-load verify:rewrite-docs]}}}
+                  :depends [test:e2e:cli-agent test:e2e:tools test:e2e:web test:e2e:memory test:e2e:semantic-memory test:e2e:model-switching test:e2e:anthropic test:e2e:config test:e2e:doctor test:e2e:scheduler test:e2e:telegram test:e2e:phase6 test:e2e:compression test:e2e:resilience test:e2e:retry test:e2e:subagent test:e2e:cron-edge test:e2e:cron-schedule test:e2e:fallback test:e2e:stats test:e2e:brain test:e2e:rtk test:e2e:rsi test:e2e:rsi-learn test:e2e:tool-advertisement test:e2e:telegram-rich test:e2e:telegram-guard test:e2e:telegram-group test:e2e:telegram-reactions test:e2e:skill test:e2e:loop-guard test:e2e:telegram-commands test:e2e:skill-research test:e2e:provider-wire test:e2e:provider-timeout test:e2e:vision test:e2e:history test:e2e:session-redaction test:e2e:session-persistence test:e2e:goal-bridge-recovery test:e2e:goal-deliverables test:e2e:state-hygiene test:e2e:telegram-state test:e2e:ops-stats test:goal test:bb-agent test:e2e:store test:e2e:kondo test:e2e:boot-load test:web:js verify:rewrite-docs]}}}

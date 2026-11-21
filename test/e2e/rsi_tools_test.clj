@@ -6,6 +6,7 @@
   mirrors e2e.rsi-test: temp home via config/home redef."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [bb-agent.config]
             [bb-agent.rsi :as rsi]
             [bb-agent.tool :as tool]
             [bb-agent.usage :as usage]

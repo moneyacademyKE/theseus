@@ -11,12 +11,12 @@
 (defn- with-slow-server
   "Serve one OpenAI-shaped completion after delay-ms; run f with the port."
   [delay-ms f]
-  (let [reply (fn [req]
+  (let [reply (fn [_req]
                 (Thread/sleep (long delay-ms))
                 {:status 200
                  :headers {"content-type" "application/json"}
                  :body completion-body})
-        stop (server/run-server reply {:port 0})]
+        stop (server/run-server reply {:port 0 :ip "127.0.0.1"})]
     (try
       (f (:local-port (meta stop)))
       (finally (stop)))))

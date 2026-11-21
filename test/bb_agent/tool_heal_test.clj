@@ -24,12 +24,11 @@
   every event's provider (`:openai-compatible`) has no entry in
   `usage/default-pricing` — 773 zeros summed into a confident dollar figure."
   (:require [babashka.fs :as fs]
-            [bb-agent.config :as config]
             [bb-agent.tool :as tool]
             [bb-agent.tool.common :as common]
             [bb-agent.tools :as tools]
             [bb-agent.usage :as usage]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is]]))
 
 (defn- temp-file!
   "A fresh file holding ORIG, so an append and an overwrite are distinguishable."

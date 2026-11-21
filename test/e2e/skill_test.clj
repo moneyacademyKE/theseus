@@ -6,6 +6,7 @@
             [clojure.test :refer [deftest is testing]]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
+            [bb-agent.provider]
             [bb-agent.skill :as skill]))
 
 (defn- shell! [home & args]

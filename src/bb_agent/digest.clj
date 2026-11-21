@@ -9,8 +9,7 @@
             [bb-agent.outbox :as outbox]
             [bb-agent.stats :as stats]
             [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.java.io :as io]))
 
 (def ^:private digest-file
   (delay (io/file (config/home) "state" "digest.edn")))
@@ -27,7 +26,7 @@
 (defn due?
   "Digest fires at/after 08:00 local, once per calendar day. Pure."
   [{:keys [today hour]} {:keys [last]}]
-  (boolean (and (not= today last) (>= (long hour) 8))))
+  (and (not= today last) (>= (long hour) 8)))
 
 (defn render
   "The digest body from stats/summary — the same facts `bb stats` prints,
@@ -48,9 +47,10 @@
        (when (pos? (:goal/active goals 0))
          (str " · " (:goal/active goals) " active"))))
 
-(defn maybe-digest! [telegram-cfg now]
+(defn maybe-digest!
   "Send today's digest if due. now = map {:today \"2026-09-10\" :hour 9}
    (injectable for tests). Returns the queued id or nil."
+  [telegram-cfg now]
   (let [stamp (read-stamp)]
     (when (due? now stamp)
       (let [chat-id (get-in telegram-cfg [:notify :chat-id])

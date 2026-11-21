@@ -153,5 +153,5 @@
 
 (deftest recover-without-active-run-is-noop
   (with-home
-    (fn [home]
+    (fn [_home]
       (is (empty? (gb/recover-interrupted!)) "no active.edn, no announcements"))))

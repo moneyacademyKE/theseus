@@ -1,10 +1,11 @@
 (ns e2e.rsi-test
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [bb-agent.config]
             [bb-agent.rsi :as rsi]
             [bb-agent.usage :as usage]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is]]))
 
 (defn- temp-home! []
   (let [dir (str (fs/create-temp-dir))]
@@ -21,8 +22,8 @@
 (deftest event-carries-ok-and-roundtrips
   (let [home (temp-home!)]
     (with-redefs [bb-agent.config/home (constantly home)]
-      (let [ev (usage/append-event! (usage/event (assoc base-event :ok true)))
-            loaded (usage/load-events)]
+      (usage/append-event! (usage/event (assoc base-event :ok true)))
+      (let [loaded (usage/load-events)]
         (is (true? (:ok (last loaded))))
         (is (true? (:ok (first loaded))))
         (is (= :test-provider (:provider (first loaded))))))))

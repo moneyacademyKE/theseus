@@ -476,7 +476,7 @@ Do NOT run the goal. Write files only.")
         (pr-str {:name name :home (str (config/home))
                  :chat-id chat-id :thread-id thread-id :pid runner-pid}))
   (let [wpid (spawn-detached! (str (fs/cwd))
-                              (str "bb scripts/goal_watch.bb " (str ws "/watch-args.edn"))
+                              (str "bb scripts/goal_watch.bb " ws "/watch-args.edn")
                               (str ws "/watch.log"))]
     (spit (watcher-pid-file ws) (str wpid))
     wpid))
@@ -563,9 +563,10 @@ Do NOT run the goal. Write files only.")
 (defn- queue-file []
   (io/file (config/home) "state" "goal-queue.edn"))
 
-(defn read-queue []
+(defn read-queue
   "The queue FIFO, oldest first. Missing/corrupt file = empty — the queue
    never blocks launches on its own bookkeeping."
+  []
   (or (try (edn/read-string (slurp (queue-file)))
            (catch Exception _ nil))
       []))
@@ -600,8 +601,7 @@ Do NOT run the goal. Write files only.")
           (pr-str {:name name :spec spec :home (str (config/home))
                    :chat-id chat-id :thread-id thread-id}))
     (let [pid (spawn-detached! (str (fs/cwd))
-                               (str "bb scripts/goal_launch.bb "
-                                    (str ws "/launch-args.edn"))
+                               (str "bb scripts/goal_launch.bb " ws "/launch-args.edn")
                                (str ws "/launch.log"))]
       ;; STAMP the authoring pid. It was discarded here, which is why a goal
       ;; that died DURING authoring was invisible to every boundary:

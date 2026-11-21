@@ -19,7 +19,6 @@
             [bb-agent.schedule :as schedule]
             [bb-agent.web :as web]
             [bb-agent.web-auth :as auth]
-            [bb-agent.web-data :as data]
             [bb-agent.web-lane :as lane]
             [bb-agent.tool :as tool]
             [bb-agent.goal-bridge :as goal-bridge]
@@ -111,7 +110,7 @@
   (let [home (fixture-home!)]
     (auth/reset-sessions!)
     (with-redefs [config/home (fn [] (str home))]
-      (let [{:keys [token expires] :as res} (body-json (do-login deck-pass))]
+      (let [{:keys [token expires]} (body-json (do-login deck-pass))]
         (testing "login answers a 64-hex token with a future expiry"
           (is (= 200 (:status (do-login deck-pass) ) ))
           (is (re-matches #"[0-9a-f]{64}" (str token)))
@@ -913,17 +912,14 @@
             delete-route (fn [id]
                            (web/app (req (str "/api/schedule/" id)
                                          {:request-method :delete
-                                          :headers {"authorization" (str "Bearer " token)}})))
-            schedules (fn []
-                        (body-json (web/app (req "/api/schedules"
-                                                 {:headers {"authorization" (str "Bearer " token)}}))))]
+                                          :headers {"authorization" (str "Bearer " token)}})))]
         (testing "create: same registry the daemon reads"
           (is (= 200 (:status (post-route {:id "web-sched" :prompt "say hi" :cron "*/5 * * * *"}))))
           (is (= "web-sched" (:schedule/id (body-json (post-route {:id "web-sched" :prompt "say hi" :cron "*/5 * * * *"})))))
           (let [entry (schedule/find-schedule "web-sched")]
             (is (= "say hi" (:schedule/prompt entry)))
             (is (= "*/5 * * * *" (:schedule/cron entry))))
-          (is (schedule/find-schedule "web-sched"))
+          (is (schedule/find-schedule "web-sched")))
         (testing "validation: bad id, empty prompt, impossible cron refuse"
           (is (= 400 (:status (post-route {:id "no spaces!" :prompt "x"}))))
           (is (= 400 (:status (post-route {:id "ok-id" :prompt "   "}))))
@@ -934,8 +930,7 @@
         (testing "no auth → 401"
           (is (= 401 (:status (web/app (req "/api/schedule"
                                             {:request-method :post
-                                             :body (java.io.StringReader. "{}")})))))))))
-)
+                                             :body (java.io.StringReader. "{}")}))))))))))
 
 (deftest read-only-role-reads-but-never-writes
   (let [home (fixture-home!)]
@@ -986,12 +981,12 @@
           (is (= 401 (:status (web/app (req "/api/status"
                                             {:headers {"authorization" (str "Bearer " t1)}})))))
           (is (= 200 (:status (web/app (req "/api/status"
-                                            {:headers {"authorization" (str "Bearer " t2)}}))))))
+                                            {:headers {"authorization" (str "Bearer " t2)}})))))))
       (testing "durable: a restart (load-sessions!) keeps the browser logged in"
         (let [t (:token (body-json (do-login deck-pass)))]
           (auth/load-sessions!)
           (is (= 200 (:status (web/app (req "/api/status"
-                                            {:headers {"authorization" (str "Bearer " t)}}))))))
+                                            {:headers {"authorization" (str "Bearer " t)}})))))))
       (testing "rotation: old secret dies, new token works, wrong current refuses"
         (let [t-old (:token (body-json (do-login deck-pass)))
               res (web/app (req "/api/password"
@@ -1020,8 +1015,7 @@
                                                                    :new "x2"}))}))]
             (is (= 400 (:status wrong))))
           ;; restore the fixture password for any later tests
-          (auth/set-password! deck-pass)))))))
-))
+          (auth/set-password! deck-pass))))))
 
 (deftest cross-process-rotation-revokes-live-sessions
   (testing "scripts/set_web_password.bb in a REAL second process revokes

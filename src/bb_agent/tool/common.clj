@@ -42,6 +42,7 @@
    bypasses it, and `core.clj`'s loop-guard key is computed from pre-heal args
    (a `\"false\"` call and a `false` call key differently — cosmetic, and fixing
    it would mean healing before the turn loop reads the request)."
+   (:refer-clojure :exclude [bounded-count])
   (:require [bb-agent.tools :as tools]
             [clojure.string :as str]
             [clojure.edn :as edn]))

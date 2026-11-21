@@ -13,10 +13,6 @@
 (def owner-id 1608111860)
 (def topic-id 4721)
 
-(defn- free-port []
-  (with-open [socket (java.net.ServerSocket. 0)]
-    (.getLocalPort socket)))
-
 (defn- bot-info []
   {:id 8511646577 :username "eileenslybot" :is_bot true})
 
@@ -41,7 +37,6 @@
 
 (deftest authorized-topic-attachment-is-persisted-and-denied-one-is-not-fetched
   (let [home (fs/create-temp-dir {:prefix "theseus-telegram-attachment-"})
-        port (free-port)
         calls (atom [])
         updates [{:update_id 1
                   :message (document-message 11 owner-id "AUTHORIZED"
@@ -86,7 +81,8 @@
                {:status 404
                 :headers {"content-type" "application/json"}
                 :body (json/generate-string {:ok false})})))
-         {:port port})
+         {:port 0 :ip "127.0.0.1"})
+        port (:local-port (meta stop-server))
         config-file (fs/path home "config.edn")
         session-file (fs/path home "state" "sessions"
                               (str "telegram-" group-id "-topic-" topic-id ".edn"))]

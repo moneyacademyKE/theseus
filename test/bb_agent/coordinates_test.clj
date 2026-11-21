@@ -430,7 +430,7 @@
         (is (str/includes? out "a cite to another repository's file is a URL")
             "names the convention the row violates, with file:line — rotless's coverage net")
         (is (not (str/includes? out "DANGLING    brain/knowledge/upstream.md -> INSTRUCTIONS.md"))
-            "the old false verdict is gone"))))
+            "the old false verdict is gone")))))
 
 (deftest claim-cite-reads-the-symbol-beside-the-coordinate-test
   (testing "the house shape `path:LINE` — `symbol` is data, extractable without a file read"
@@ -463,7 +463,7 @@
           (is (str/includes? out "UNSUPPORTED"))
           (is (str/includes? out "no-such-symbol-anywhere"))
           (is (= 0 (c/-main [(str r "/brain") "--index" r]))
-              "report-only: exit 0, the same refusal claudemy's fail-closed variant got on 10-14")))))))
+              "report-only: exit 0, the same refusal claudemy's fail-closed variant got on 10-14"))))))
 
 ;; ---------- 2026-11-05: 31 claim findings, and no way to tell drift from a lie ----------
 ;; `bb coords` on the live corpus printed 31 `CLAIM NOT ON THAT LINE` rows and

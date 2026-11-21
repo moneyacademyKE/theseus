@@ -59,7 +59,7 @@
 (deftest log-cap-truncates-keeping-whole-line-tail
   (let [dir (fs/create-dirs "/tmp/bk-e6ff-big")
         f (fs/path dir "big.log")
-        content (write-lines! f 4000) ;; ~256 KB
+        _content (write-lines! f 4000) ;; ~256 KB
         max-bytes 100000
         keep-bytes 50000
         report (log-cap/cap-log! f max-bytes keep-bytes)

@@ -74,16 +74,16 @@
 
 (deftest breaker-and-classifier-compose
   (testing "the ported pattern as data: classify, then trip only on retryable failures"
-    (let [br (cb/breaker 2 60)]
-      (let [br' (-> br
-                    (as-> b (if (ec/retryable? (ec/classify "503 unavailable"))
-                              (cb/record-failure b :gpt 1000)
-                              b))
-                    (as-> b (if (ec/retryable? (ec/classify "401 key rejected"))
-                              (cb/record-failure b :gpt 1001)
-                              b)))]
-        (is (= [true br'] (cb/check br' :gpt 1002))
-            "auth failure did not count; breaker still closed")))))
+    (let [br (cb/breaker 2 60)
+          br' (-> br
+                  (as-> b (if (ec/retryable? (ec/classify "503 unavailable"))
+                            (cb/record-failure b :gpt 1000)
+                            b))
+                  (as-> b (if (ec/retryable? (ec/classify "401 key rejected"))
+                            (cb/record-failure b :gpt 1001)
+                            b)))]
+      (is (= [true br'] (cb/check br' :gpt 1002))
+          "auth failure did not count; breaker still closed"))))
 
 (deftest classifier-recognizes-spaced-timeout-wording
   (testing "'timed out' is the same failure as 'timeout' — it is the wording
