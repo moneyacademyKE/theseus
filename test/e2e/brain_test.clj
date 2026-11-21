@@ -126,3 +126,26 @@
 
 (deftest brain-context-cost-cli-exits-2-on-a-missing-path
   (is (= 2 (brain/-main ["/tmp/no-such-brain-dir-8f3a1c"]))))
+
+(deftest brain-context-cost-tracks-ledgers-separately-and-handles-ledger-only-dir
+  (let [home (fs/create-temp-dir {:prefix "theseus-brain-ledgers-"})
+        bdir (str (fs/path home "brain"))]
+    (try
+      (fs/create-dirs bdir)
+      (spit (str (fs/path bdir "00-soul.md")) "identity-text")
+      (spit (str (fs/path bdir "improvements.md")) (apply str (repeat 10000 "I")))
+      (spit (str (fs/path bdir "wins.md")) (apply str (repeat 5000 "W")))
+      (let [c (brain/context-cost bdir)]
+        (is (= :ok (:status c)))
+        (is (= (count "identity-text") (:identity-chars c)))
+        (is (= 15000 (:ledger-chars c)))
+        (is (= 2 (count (:ledgers c))))
+        (is (= (count (brain/load-brain-context bdir)) (:injected-chars c)))
+        (is (< (:injected-chars c) 2000)))
+      (fs/delete (fs/path bdir "00-soul.md"))
+      (let [report (brain/context-cost-report bdir)]
+        (is (str/includes? report "improvements.md"))
+        (is (str/includes? report "ledgers")))
+      (finally
+        (fs/delete-tree home)))))
+

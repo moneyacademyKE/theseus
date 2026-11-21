@@ -49,3 +49,28 @@
     (spit (str (fs/path d "00-soul.md")) "soul-text")
     (is (= (brain/load-brain d)
            (brain/load-brain-context d)))))
+
+(deftest append-only-ledgers-indexed-not-injected
+  (let [d (tmp-brain)]
+    (spit (str (fs/path d "00-soul.md")) "soul-identity")
+    (spit (str (fs/path d "improvements.md")) (apply str "IMP-BODY\n" (repeat 5000 "abcdefghi\n")))
+    (spit (str (fs/path d "wins.md")) (apply str "WIN-BODY\n" (repeat 2000 "123456789\n")))
+    (spit (str (fs/path d "knowledge" "30-jobs.md")) "Owns: jobs")
+    (let [body (brain/load-brain d)
+          ctx (brain/load-brain-context d)
+          ledgers (brain/ledger-index d)]
+      (is (str/includes? body "soul-identity"))
+      (is (not (str/includes? body "IMP-BODY")))
+      (is (not (str/includes? body "WIN-BODY")))
+      (is (= 2 (count ledgers)))
+      (is (str/includes? (first ledgers) "improvements.md"))
+      (is (str/includes? (second ledgers) "wins.md"))
+      (is (str/includes? ctx "soul-identity"))
+      (is (str/includes? ctx "## Ledgers"))
+      (is (str/includes? ctx "improvements.md"))
+      (is (str/includes? ctx "wins.md"))
+      (is (str/includes? ctx "30-jobs.md"))
+      (is (not (str/includes? ctx "IMP-BODY")))
+      (is (not (str/includes? ctx "WIN-BODY")))
+      (is (< (count ctx) 2000)))))
+
