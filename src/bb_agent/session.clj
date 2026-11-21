@@ -162,10 +162,15 @@
 (defn save-turns! [session-id turns]
   (atomic-mutate-session! session-id (constantly (vec turns))))
 
+(defn- read-metadata-file [path]
+  (when (fs/regular-file? path)
+    (try
+      (let [v (edn/read-string (slurp (str path)))]
+        (when (map? v) v))
+      (catch Exception _ nil))))
+
 (defn load-metadata [session-id]
-  (let [path (metadata-file session-id)]
-    (when (fs/regular-file? path)
-      (edn/read-string (slurp (str path))))))
+  (read-metadata-file (metadata-file session-id)))
 
 (defn save-metadata! [session-id metadata]
   (let [path (metadata-file session-id)]
@@ -188,8 +193,9 @@
   (let [dir (metadata-dir)]
     (if (fs/directory? dir)
       (->> (fs/list-dir dir)
-           (filter fs/regular-file?)
-           (map #(edn/read-string (slurp (str %))))
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (str (fs/file-name %)) ".edn")))
+           (keep read-metadata-file)
            (sort-by (comp str :updated/at))
            reverse
            vec)

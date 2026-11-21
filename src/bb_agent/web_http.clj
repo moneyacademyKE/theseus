@@ -1,7 +1,8 @@
 (ns bb-agent.web-http
   "Shared HTTP plumbing for the web deck: response envelopes, auth
   extraction, bounded body/query parsing, and the guarded handler wrapper."
-  (:require [bb-agent.web-auth :as auth]
+  (:require [bb-agent.session :as session]
+            [bb-agent.web-auth :as auth]
             [cheshire.core :as json]
             [clojure.string :as str]))
 
@@ -128,7 +129,7 @@
       (json-res 200 (handler))
       (catch Exception e
         (json-res (or (get (ex-data e) :status) 500)
-                  {:error (str (.getMessage e))})))))
+                  {:error (session/redact-secrets (str (.getMessage e)))})))))
 
 (defn guarded-owner
   "guarded's write-side sibling: 401 anonymous, 403 read-only sessions,
@@ -142,4 +143,4 @@
         (json-res 200 (handler))
         (catch Exception e
           (json-res (or (get (ex-data e) :status) 500)
-                    {:error (str (.getMessage e))}))))))
+                    {:error (session/redact-secrets (str (.getMessage e)))}))))))

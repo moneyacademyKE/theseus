@@ -10,11 +10,11 @@
    (1-32 chars). Skill names with hyphens (deep-research) are registered
    as deep_research; resolve-skill maps them back so the router accepts
    both spellings. Descriptions truncate at 256; the list caps at 100."
-  (:require [bb-agent.config :as config]
+  (:require [babashka.http-client :as http]
+            [bb-agent.config :as config]
             [bb-agent.skill :as skill]
             [cheshire.core :as json]
-            [clojure.string :as str]
-            [org.httpkit.client :as http]))
+            [clojure.string :as str]))
 
 (def native-commands
   "The chat-command router's native surface, in menu order."
@@ -95,6 +95,8 @@
          (take max-commands)
          vec)))
 
+(def ^:private default-timeout-ms 15000)
+
 (defn register!
   "POST setMyCommands for the default and all_group_chats scopes (the
    default scope alone does not show the menu inside groups). Returns
@@ -103,10 +105,16 @@
   (let [base (str/replace (or (:base-url telegram-cfg) "https://api.telegram.org") #"/+$" "")
         url (str base "/bot" (:token telegram-cfg) "/setMyCommands")
         post (fn [scope]
-               (let [resp @(http/post url {:headers {"content-type" "application/json"}
-                                           :body (json/generate-string
-                                                  {:commands commands :scope {:type scope}})})]
-                 (json/parse-string (:body resp) true)))]
+               (let [resp (http/post url {:headers {"content-type" "application/json"}
+                                          :throw false
+                                          :timeout (or (:timeout-ms telegram-cfg) default-timeout-ms)
+                                          :body (json/generate-string
+                                                 {:commands commands :scope {:type scope}})})]
+                 (or (try (json/parse-string (:body resp) true)
+                          (catch Exception _ nil))
+                     {:ok false
+                      :error_code (:status resp)
+                      :description (str "non-JSON response (HTTP " (:status resp) ")")}))) ]
     {:default (post "default") :all_group_chats (post "all_group_chats")}))
 
 (defn register-safely!

@@ -1,6 +1,7 @@
 (ns bb-agent.hot-reload-test
   (:require [bb-agent.hot-reload :as reload]
             [babashka.fs :as fs]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]))
 
 (deftest snapshot-detects-create-and-change
@@ -27,3 +28,14 @@
   (let [effect (reload/impact ["/home/theseus/theseus/ops/launchd/com.theseus.web.plist"])]
     (is (empty? (:restart effect)))
     (is (= 1 (count (:manual-plists effect))))))
+
+(deftest snapshot-ignores-bak-and-hidden-files
+  (let [root (fs/create-temp-dir {:prefix "reload-bak-"})]
+    (try
+      (spit (str (fs/path root "live.clj")) "ok")
+      (spit (str (fs/path root "live.clj.bak-20261121")) "bak")
+      (spit (str (fs/path root ".hidden.clj")) "hidden")
+      (let [snap (reload/snapshot [root])]
+        (is (= 1 (count snap)))
+        (is (str/ends-with? (first (keys snap)) "live.clj")))
+      (finally (fs/delete-tree root)))))

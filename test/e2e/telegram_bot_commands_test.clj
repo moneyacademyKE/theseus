@@ -1,6 +1,7 @@
 (ns e2e.telegram-bot-commands-test
   "Command-menu (setMyCommands) builder tests — pure payload logic, no network."
-  (:require [bb-agent.bot-commands :as bot-commands]
+  (:require [babashka.http-client]
+            [bb-agent.bot-commands :as bot-commands]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]))
 
@@ -75,3 +76,14 @@
         "native descriptions are never truncated")
     (is (some #(clojure.string/ends-with? (:description %) "…") cmds)
         "over-budget skill descriptions truncate with an ellipsis marker")))
+
+(deftest register-uses-bounded-http-timeout-and-survives-non-json
+  (let [seen (atom [])]
+    (with-redefs [babashka.http-client/post
+                  (fn [url opts]
+                    (swap! seen conj {:url url :timeout (:timeout opts) :throw (:throw opts)})
+                    {:status 502 :body "<html>Bad Gateway</html>"})]
+      (let [res (bot-commands/register! {:token "T"} [{:command "new" :description "d"}])]
+        (is (= 2 (count @seen)))
+        (is (every? #(and (pos-int? (:timeout %)) (false? (:throw %))) @seen))
+        (is (false? (get-in res [:default :ok])))))))

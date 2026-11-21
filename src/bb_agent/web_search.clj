@@ -57,30 +57,54 @@
                 id)]
     {:id id :title title :body (str/join "\n\n" texts)}))
 
+(def ^:private index-lock (Object.))
+
+(defn- with-search-conn [db f]
+  (let [conn (sqlite/get-connection db)]
+    (try
+      (f conn)
+      (finally
+        (sqlite/close-connection conn)))))
+
+(defn- refresh-unlocked! [db]
+  (fs/create-dirs (fs/parent (index-file)))
+  (with-search-conn db
+    (fn [conn]
+      (sqlite/execute! conn ["PRAGMA busy_timeout = 5000"])
+      (sqlite/execute! conn ["create virtual table if not exists sessions_fts using fts5(id unindexed, title, body)"])
+      (sqlite/execute! conn ["create table if not exists indexed (id text primary key, mtime integer)"])
+      (let [known (into {} (map (fn [r] [(str (:id r)) (:mtime r)])
+                                (sqlite/query conn ["select id, mtime from indexed"])))
+            files (session-files)
+            file-ids (set (map #(str (:id %)) files))
+            stale (filter (fn [f] (not= (get known (str (:id f)))
+                                        (:mtime f))) files)
+            gone  (remove (fn [[id _]] (contains? file-ids (str id))) known)]
+        (when (or (seq gone) (seq stale))
+          (sqlite/execute! conn ["BEGIN IMMEDIATE"])
+          (try
+            (doseq [[id _mtime] gone]
+              (sqlite/execute! conn ["delete from sessions_fts where id = ?" (str id)])
+              (sqlite/execute! conn ["delete from indexed where id = ?" (str id)]))
+            (doseq [f stale]
+              (let [{:keys [id title body]} (session-row f)]
+                (sqlite/execute! conn ["delete from sessions_fts where id = ?" id])
+                (sqlite/execute! conn ["insert into sessions_fts (id, title, body) values (?,?,?)" id title body])
+                (sqlite/execute! conn ["insert or replace into indexed (id, mtime) values (?,?)" id (:mtime f)])))
+            (sqlite/execute! conn ["COMMIT"])
+            (catch Exception e
+              (try (sqlite/execute! conn ["ROLLBACK"]) (catch Exception _ nil))
+              (throw e))))
+        (count stale)))))
+
 (defn refresh!
   "Bring the index up to date with the session files: index new files,
   re-index files whose mtime moved, drop rows whose file vanished.
+  Serialized and transactional via one go-sqlite3 connection.
   Returns the number of (re)indexed sessions."
   []
-  (let [db (str (index-file))]
-    (fs/create-dirs (fs/parent (index-file)))
-    (sqlite/execute! db ["create virtual table if not exists sessions_fts using fts5(id unindexed, title, body)"])
-    (sqlite/execute! db ["create table if not exists indexed (id text primary key, mtime integer)"])
-    (let [known (into {} (map (fn [r] [(str (:id r)) (:mtime r)])
-                              (sqlite/query db ["select id, mtime from indexed"])))
-          files (session-files)
-          stale (filter (fn [f] (not= (get known (str (:id f)))
-                                      (:mtime f))) files)
-          gone  (remove (fn [[id _]] (some #(= (str (:id %)) (str id)) files)) known)]
-      (doseq [[id _mtime] gone]
-        (sqlite/execute! db ["delete from sessions_fts where id = ?" (str id)])
-        (sqlite/execute! db ["delete from indexed where id = ?" (str id)]))
-      (doseq [f stale]
-        (let [{:keys [id title body]} (session-row f)]
-          (sqlite/execute! db ["delete from sessions_fts where id = ?" id])
-          (sqlite/execute! db ["insert into sessions_fts (id, title, body) values (?,?,?)" id title body])
-          (sqlite/execute! db ["insert or replace into indexed (id, mtime) values (?,?)" id (:mtime f)])))
-      (count stale))))
+  (locking index-lock
+    (refresh-unlocked! (str (index-file)))))
 
 (defn- sanitize-query
   "FTS5 has its own query grammar (quotes, colons, AND/OR/NOT, hyphens);
@@ -101,9 +125,12 @@
    (let [match (sanitize-query q)]
      (if (str/blank? match)
        []
-       (let [db (str (index-file))]
-         (refresh!)
-         (mapv (fn [row]
-                 (into {} (map (fn [[k v]] [(keyword k) v]) row)))
-               (sqlite/query db ["select id, title, snippet(sessions_fts, 2, char(1), char(2), '…', 12) as snippet from sessions_fts where sessions_fts match ? order by rank limit ?"
-                                 match (long (or limit 30))])))))))
+       (locking index-lock
+         (let [db (str (index-file))]
+           (refresh-unlocked! db)
+           (with-search-conn db
+             (fn [conn]
+               (mapv (fn [row]
+                       (into {} (map (fn [[k v]] [(keyword k) v]) row)))
+                     (sqlite/query conn ["select id, title, snippet(sessions_fts, 2, char(1), char(2), '…', 12) as snippet from sessions_fts where sessions_fts match ? order by rank limit ?"
+                                         match (long (or limit 30))]))))))))))

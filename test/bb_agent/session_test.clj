@@ -1,6 +1,7 @@
 (ns bb-agent.session-test
   (:require [bb-agent.config :as config]
             [bb-agent.session :as session]
+            [clojure.java.io]
             [clojure.string]
             [clojure.test :refer [deftest is use-fixtures]])
   (:import (java.nio.file Files)))
@@ -39,3 +40,13 @@
 (deftest cap-handles-empty-and-missing-results
   (session/append-turn! "s3" {:session/id "s3" :assistant/final "no tools"})
   (is (= 1 (count (session/load-turns "s3"))) "a turn without results persists fine"))
+
+(deftest list-metadata-ignores-stray-and-corrupt-files
+  (session/touch-metadata! "good-session" {:provider :fake :model "m"})
+  (let [dir (session/metadata-dir)]
+    (spit (str (clojure.java.io/file (str dir) ".DS_Store")) "binary junk")
+    (spit (str (clojure.java.io/file (str dir) "broken.edn")) "{unterminated")
+    (let [rows (session/list-metadata)]
+      (is (= 1 (count rows)))
+      (is (= "good-session" (:session/id (first rows)))))
+    (is (nil? (session/load-metadata "broken")))))

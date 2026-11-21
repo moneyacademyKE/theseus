@@ -12,11 +12,20 @@
   {:web "com.theseus.web"
    :telegram "com.theseus.telegram"})
 
+(defn- ignored-file? [^java.io.File file]
+  (let [fname (.getName file)]
+    (or (str/starts-with? fname ".")
+        (str/includes? fname ".bak-"))))
+
 (defn- regular-files [root]
   (if (fs/directory? root)
     (->> (file-seq (fs/file root))
-         (filter #(.isFile ^java.io.File %)))
-    (if (fs/regular-file? root) [(fs/file root)] [])))
+         (filter #(and (.isFile ^java.io.File %)
+                       (not (ignored-file? %)))))
+    (if (and (fs/regular-file? root)
+             (not (ignored-file? (fs/file root))))
+      [(fs/file root)]
+      [])))
 
 (defn snapshot
   "Return a path→mtime snapshot for roots. Missing roots are represented by
@@ -45,22 +54,22 @@
                      (str/includes? % "/skills/"))
         plist? #(str/includes? % "/ops/launchd/")]
     {:paths (vec paths)
-     :restart (cond-> #{ }
+     :restart (cond-> #{}
                 (or (some source? paths) (some config? paths))
                 (conj :web :telegram)
                 (some web? paths) (conj :web))
      :manual-plists (vec (filter plist? paths))}))
 
-(defn- uid []
-  (str/trim (:out (process/shell {:out :string} "id" "-u"))))
+(def ^:private cached-uid
+  (delay (str/trim (:out (process/shell {:out :string} "id" "-u")))))
 
 (defn kick! [label]
   (let [result (process/shell {:out :string :err :string :continue true}
                               "launchctl" "kickstart" "-k"
-                              (str "gui/" (uid) "/" label))]
+                              (str "gui/" @cached-uid "/" label))]
     (when-not (zero? (:exit result))
       (throw (ex-info "launchctl kickstart failed" {:label label
-                                                      :result result})))
+                                                    :result result})))
     label))
 
 (defn apply-impact! [effect]
@@ -68,13 +77,26 @@
     (kick! (get service-labels service)))
   effect)
 
-(defn- roots [home]
-  [(fs/path home "theseus" "src")
-   (fs/path home "theseus" "scripts")
-   (fs/path home "theseus" "web")
-   (fs/path home "theseus" "skills")
-   (fs/path home "config.edn")
-   (fs/path home "theseus" "ops" "launchd")])
+(defn- resolve-repo-root [home]
+  (let [env-repo (System/getenv "THESEUS_REPO")
+        nested (fs/path home "theseus")]
+    (cond
+      (and (seq env-repo) (fs/directory? env-repo)) (fs/path env-repo)
+      (fs/directory? (fs/path nested "src")) nested
+      (fs/directory? (fs/path (fs/cwd) "src")) (fs/cwd)
+      :else nested)))
+
+(defn roots
+  "Resolve watched roots from home + repo root (THESEUS_REPO -> <home>/theseus -> cwd)."
+  ([home] (roots home (resolve-repo-root home)))
+  ([home repo-root]
+   [(fs/path repo-root "src")
+    (fs/path repo-root "scripts")
+    (fs/path repo-root "web")
+    (fs/path repo-root "skills")
+    (fs/path home "skills")
+    (fs/path home "config.edn")
+    (fs/path repo-root "ops" "launchd")]))
 
 (defn run-once!
   [state home]
@@ -91,13 +113,23 @@
   (let [home (or (System/getenv "THESEUS_HOME")
                  (str (fs/path (System/getProperty "user.home") "theseus")))
         interval (Long/parseLong (or (first args) "1000"))
+        debounce-ms (max 250 (min 1000 (quot interval 2)))
         state (atom (snapshot (roots home)))]
     (println (str "theseus hot reload enabled; interval-ms=" interval))
     (flush)
     (loop []
       (Thread/sleep interval)
       (try
-        (run-once! state home)
+        (let [after (snapshot (roots home))
+              changed (changed-paths @state after)]
+          (when (seq changed)
+            ;; Settle burst saves before kicking launchd.
+            (Thread/sleep debounce-ms)
+            (let [settled (snapshot (roots home))
+                  effect (impact (changed-paths @state settled))]
+              (reset! state settled)
+              (when (seq (:restart effect))
+                (apply-impact! effect)))))
         (catch Exception e
           (binding [*out* *err*]
             (println (str "hot reload error: " (.getMessage e)))

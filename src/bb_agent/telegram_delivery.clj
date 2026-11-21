@@ -16,8 +16,13 @@
 (def max-attempts 3)
 (def max-inline-wait-ms 30000)
 
+(def default-timeout-ms 15000)
+
 (def default-runtime
-  {:transport (fn [url request] (http/post url (assoc request :throw false)))
+  {:transport (fn [url request]
+                (http/post url (merge {:timeout default-timeout-ms}
+                                      request
+                                      {:throw false})))
    :sleep-fn (fn [ms] (Thread/sleep (long ms)))})
 
 (defn- safe-long

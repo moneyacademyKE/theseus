@@ -15,6 +15,7 @@
             [bb-agent.goal.registry :as goal-registry]
             [bb-agent.log-cap :as log-cap]
             [bb-agent.outbox :as outbox]
+            [bb-agent.session :as session]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-group-context :as gctx]
@@ -36,7 +37,11 @@
   (let [response (http/get (api-url cfg method)
                            (assoc opts :throw false
                                   :timeout (or (:timeout-ms cfg) 15000)))]
-    (json/parse-string (:body response) keyword)))
+    (or (try (json/parse-string (:body response) keyword)
+             (catch Exception _ nil))
+        {:ok false
+         :error_code (:status response)
+         :description (str "non-JSON response (HTTP " (:status response) ")")})))
 
 (defn- api-get! [cfg method opts]
   ;; api-get that THROWS on non-ok bodies — for callers that must not
@@ -276,12 +281,13 @@
                      (catch Exception e
                        (let [n (inc failures)]
                          (when (or (= n 1) (zero? (mod n 30)))
-                           (println (str "telegram poll error #" n " ["
-                                         (.getName (.getClass e)) "] "
-                                         (.getMessage e)
-                                         (when-let [d (ex-data e)]
-                                           (str " data " (pr-str d)))
-                                         " @ " (java.time.Instant/now)))
+                           (println (session/redact-secrets
+                                     (str "telegram poll error #" n " ["
+                                          (.getName (.getClass e)) "] "
+                                          (.getMessage e)
+                                          (when-let [d (ex-data e)]
+                                            (str " data " (pr-str d)))
+                                          " @ " (java.time.Instant/now))))
                            (flush)))
                        ::failed))]
         (swap! lifecycle assoc :in-cycle? false)

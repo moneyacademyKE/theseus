@@ -57,6 +57,15 @@
 (deftest parse-empty-body
   (is (= [] (net-search/parse-results "<html><body>challenge page</body></html>"))))
 
+(deftest parse-survives-out-of-range-numeric-html-entities
+  (let [html (str "<div class=\"result-wrapper\"><div class=\"result-content\">"
+                  "<a href=\"https://example.org/babashka\">"
+                  "<div class=\"title\" title=\"Babashka &#9999999; &#xFFFFFFFF; &#999999999999;\">"
+                  "Babashka &#9999999; &#xFFFFFFFF; &#999999999999;</div></a></div>")
+        results (net-search/parse-results html)]
+    (is (= 1 (count results)))
+    (is (str/includes? (:title (first results)) "Babashka"))))
+
 (deftest search-fails-closed-on-transport
   (with-redefs [net-search/fetch (constantly {:status 503 :body "unavailable"})]
     (let [{:keys [status executed?]} (net-search/search {:query "anything"})]

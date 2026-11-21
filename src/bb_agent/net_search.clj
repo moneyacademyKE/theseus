@@ -47,19 +47,25 @@
     (catch Exception e
       {:status -1 :error (or (ex-message e) (.getName (class e)))})))
 
+(defn- safe-code-point [raw digits radix]
+  (try
+    (let [cp (Integer/parseInt digits radix)]
+      (if (Character/isValidCodePoint cp)
+        (String/valueOf (Character/toChars cp))
+        raw))
+    (catch Exception _ raw)))
+
 (defn- decode-entities
   "The handful of entities Brave actually emits in titles/snippets.
-  Numeric refs are decoded by code point; unknown named entities are
-  left alone — a wrong guess would corrupt the text, an honest
+  Numeric refs are decoded by code point; unknown or out-of-range entities
+  are left alone — a wrong guess would corrupt the text, an honest
   pass-through cannot."
   [s]
   (-> (str (or s ""))
-      (str/replace #"&#(\d+);" (fn [[_ code]]
-                                 (String/valueOf (Character/toChars
-                                                   (Integer/parseInt code)))))
-      (str/replace #"&#x([0-9a-fA-F]+);" (fn [[_ hex]]
-                                            (String/valueOf (Character/toChars
-                                                             (Integer/parseInt hex 16)))))
+      (str/replace #"&#(\d+);" (fn [[raw code]]
+                                 (safe-code-point raw code 10)))
+      (str/replace #"&#x([0-9a-fA-F]+);" (fn [[raw hex]]
+                                           (safe-code-point raw hex 16)))
       (str/replace "&amp;" "&")
       (str/replace "&lt;" "<")
       (str/replace "&gt;" ">")

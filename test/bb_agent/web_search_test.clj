@@ -75,3 +75,12 @@
   (is (= 1 (count (ws/search "-bridge"))))
   (is (empty? (ws/search "---"))))
 
+(deftest concurrent-searches-stay-consistent-under-refresh
+  (dotimes [i 10]
+    (seed-session! (str "conc-" i) [{:user/input (str "commonword item-" i)
+                                     :assistant/final "reply"
+                                     :source :web :turn/ok true}]))
+  (let [futs (mapv (fn [_] (future (ws/search "commonword"))) (range 8))
+        results (mapv deref futs)]
+    (is (every? #(= 10 (count %)) results))))
+
