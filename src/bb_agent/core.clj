@@ -8,6 +8,7 @@
             [bb-agent.provider :as provider]
             [bb-agent.redact :as redact]
             [bb-agent.retry :as retry]
+            [bb-agent.saver-mode :as saver]
             [bb-agent.security :as sec]
             [bb-agent.semantic-memory :as semantic-memory]
             [bb-agent.session :as session]
@@ -352,6 +353,8 @@
   (redact/register-config-secrets! cfg)
   (let [cfg (model/effective-config cfg)
         cfg (vision-chain-cfg cfg)
+        saver-state (saver/evaluate cfg)
+        cfg (saver/apply-cfg cfg saver-state)
         max-rounds (or (:max-tool-rounds cfg) default-max-tool-rounds)
         nudge-interval (:nudge-interval cfg)
         nudge-final-rounds (or (:nudge-final-rounds cfg) default-nudge-final-rounds)
@@ -386,15 +389,20 @@
                           (count (str (or skills-ctx "")))
                           (reduce + 0 (map #(count (str (:memory/text % "")))
                                            memory-matches)))
-        live-budget (compression/history-budget-chars cfg overhead-chars)]
-    (loop [messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
-                                      (history-messages cfg id overhead-chars))
+        live-budget (compression/history-budget-chars cfg overhead-chars)
+        base-messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
+                                        (history-messages cfg id overhead-chars))
+        init-messages (if (:saver/active? cfg)
+                        (into [{:role :system :content saver/system-hint}] base-messages)
+                        base-messages)]
+    (loop [messages init-messages
            turn {:tool/requests []
                  :tool/results []}
            rounds-left max-rounds
            seen-calls {}
            read-cache {}
            exposure (sec/note-input-urls (or (:security/exposure cfg) sec/empty-exposure) prompt)
+           discovered-tools (set (:tools/discovered cfg))
            final-nudge-used? false
            reasoning-streak 0
            phantom-streak 0]
@@ -411,12 +419,17 @@
             messages (if (> (compression/count-chars messages) live-budget)
                        (compression/prune-old-tool-results messages live-tool-keep-recent)
                        messages)
+            round-cfg (cond-> cfg
+                        (seq discovered-tools) (assoc :tools/discovered discovered-tools))
+            round-tools (if (seq discovered-tools)
+                          (tools/active-definitions round-cfg)
+                          active-tools)
             request {:provider provider
                      :model model
                      :messages messages
                      :memory/matches memory-matches
                      :provider/config (get-in cfg [:providers provider])
-                     :provider/tools active-tools}
+                     :provider/tools round-tools}
             request (cond-> request (seq user-images) (assoc :images user-images))
             response (complete-chain cfg request)
             tool-requests (:tool/requests response)
@@ -474,7 +487,7 @@
 
                          :else
                          (do (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
-                             (let [result (tool/handle-tool-request req (assoc cfg :security/exposure exp))
+                             (let [result (tool/handle-tool-request req (assoc round-cfg :security/exposure exp))
                                    [exp* _scan] (sec/note-exposure exp tname result)]
                                (safe-emit cfg {:status :tool/done
                                                :tool tname
@@ -492,6 +505,12 @@
                 tool-results results
                 read-cache* cache
                 exposure* exp
+                discovered-tools* (reduce (fn [acc r]
+                                            (if (seq (:discovered r))
+                                              (into acc (:discovered r))
+                                              acc))
+                                          discovered-tools
+                                          (or tool-results []))
                 turn* (cond-> (append-tool-round turn response (or tool-results []))
                         (:fallback/tried response)
                         (assoc :fallback/tried (:fallback/tried response))
@@ -518,6 +537,7 @@
                          seen-calls*
                          read-cache*
                          exposure*
+                         discovered-tools*
                          (or extend? final-nudge-used?)
                          0
                          0)))
@@ -537,6 +557,7 @@
                            seen-calls*
                            read-cache*
                            exposure*
+                           discovered-tools*
                            final-nudge-used?
                            0
                            pstreak)
@@ -556,6 +577,7 @@
                            seen-calls*
                            read-cache*
                            exposure*
+                           discovered-tools*
                            final-nudge-used?
                            streak
                            phantom-streak)

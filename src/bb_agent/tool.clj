@@ -14,7 +14,8 @@
             [bb-agent.tool.process :as process]
             [bb-agent.tool.telegram :as telegram]
             [bb-agent.tool.web :as web]
-            [bb-agent.usage :as usage]))
+            [bb-agent.usage :as usage]
+            [clojure.string]))
 
 (def normalize-request common/normalize-request)
 (def approval-decision common/approval-decision)
@@ -50,6 +51,19 @@
                                {:exception/type (str (class e))
                                 :executed? false})))
       (common/error-result name (str "Unknown tool: " name) {}))))
+
+(defn- run-discover-tools [args cfg]
+  (let [q (or (:query args) (get args "query") "")
+        matches (tools/search-deferred-tools cfg q)
+        names (mapv #(get-in % [:function :name]) matches)
+        summary (if (seq matches)
+                  (str "Discovered tools (now unlocked for subsequent rounds): "
+                       (clojure.string/join ", " names))
+                  (str "No deferred tools matched query: " q))]
+    (common/ok-result "discover_tools"
+                      {:query q
+                       :discovered names
+                       :output summary})))
 
 (defn handle-tool-request
   "Route one request through optional-capability and approval gates.
@@ -102,6 +116,14 @@
          taint-decision (when-let [exp (:security/exposure cfg)]
                           (sec/taint-gate-decision exp (:tool/name request) (:tool/args request) cfg))
          raw-result (cond
+                      (= "discover_tools" (:tool/name request))
+                      (case approval-decision*
+                        :approved (run-discover-tools (:tool/args request) cfg)
+                        :ask (if (and approver (= :approved (approver request)))
+                               (run-discover-tools (:tool/args request) cfg)
+                               (deny-result request))
+                        :denied (deny-result request))
+
                       (tools/dormant? cfg (:tool/name request))
                       ;; Optional capability the owner never opted into: refuse
                       ;; BEFORE execution. A tool absent from the prompt must not

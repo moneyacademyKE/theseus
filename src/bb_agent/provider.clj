@@ -261,6 +261,26 @@
         (cond-> {:messages out}
           (seq sys-parts) (assoc :system (str/join "\n\n" sys-parts)))))))
 
+(defn- with-cache-marker [msg]
+  (let [c (:content msg)]
+    (cond
+      (string? c)
+      (assoc msg :content [{:type "text" :text c :cache_control {:type "ephemeral"}}])
+
+      (and (vector? c) (seq c) (map? (peek c)))
+      (assoc msg :content (conj (pop c) (assoc (peek c) :cache_control {:type "ephemeral"})))
+
+      :else msg)))
+
+(defn- mark-anthropic-cache-messages [msgs]
+  (let [n (count msgs)]
+    (if (<= n 1)
+      msgs
+      (let [mark-start (max 0 (- n 2))]
+        (vec (map-indexed (fn [idx m]
+                            (if (>= idx mark-start) (with-cache-marker m) m))
+                          msgs))))))
+
 (defmethod complete :anthropic-compatible [_ {:keys [model messages images provider/config]
                                               :as request}]
   (let [_base-url (require-config config :base-url)
@@ -272,9 +292,11 @@
                             (vision/attach-to-first-user messages imgs :anthropic))
                       payload (cond-> {:model model
                                        :max_tokens (or (:max-tokens config) 4096)
-                                       :messages (:messages wire)}
+                                       :messages (mark-anthropic-cache-messages (:messages wire))}
                                 (not (str/blank? (:system wire)))
-                                (assoc :system (:system wire))
+                                (assoc :system [{:type "text"
+                                                 :text (:system wire)
+                                                 :cache_control {:type "ephemeral"}}])
                                 (seq tools-payload)
                                 (assoc :tools tools-payload))]
                   (http/post (anthropic-url config)

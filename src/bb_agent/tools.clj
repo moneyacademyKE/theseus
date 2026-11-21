@@ -2,7 +2,8 @@
   "Tool definitions advertised to LLM providers (OpenAI function-calling
   format). One source of truth: the provider sends these verbatim, the
   handlers in bb-agent.tool.* execute them, and policy predicates see the
-  same names.")
+  same names."
+  (:require [clojure.string]))
 
 (def definitions
   [{:type "function"
@@ -144,23 +145,73 @@
        (map (fn [x] (if (keyword? x) (name x) (str x))))
        set))
 
-(defn active-definitions
-  "The tool list a turn advertises: `definitions` with dormant optional tools
-   removed. nil/absent cfg means default-off — the registry a fresh deployment
-   sees, exactly the pre-capability set."
+(def discover-tools-definition
+  {:type "function"
+   :function
+   {:name "discover_tools"
+    :description "Search deferred optional tools by keyword and unlock their full schemas for subsequent rounds in this turn."
+    :parameters
+    {:type "object"
+     :properties {"query" {:type "string" :description "Keyword(s) describing the capability you need"}}
+     :required ["query"]}}})
+
+(defn- discovered-set [cfg]
+  (->> (get cfg :tools/discovered)
+       (filter identity)
+       (map (fn [x] (if (keyword? x) (name x) (str x))))
+       set))
+
+(defn deferred-definitions
+  "Optional tools that cfg opted into, deferred behind discover_tools."
   [cfg]
   (let [enabled (enabled-set cfg)]
-    (into []
-          (remove (fn [d]
-                    (let [n (get-in d [:function :name])]
-                      (and (optional-tools n)
-                           (not (contains? enabled n))))))
-          definitions)))
+    (filterv (fn [d]
+               (let [n (get-in d [:function :name])]
+                 (and (optional-tools n) (contains? enabled n))))
+             definitions)))
+
+(defn search-deferred-tools
+  "Match deferred tool definitions by keyword tokens in name/description."
+  [cfg query]
+  (let [terms (->> (clojure.string/split (clojure.string/lower-case (str (or query "")))
+                                         #"[^a-z0-9_]+")
+                   (remove clojure.string/blank?)
+                   vec)
+        candidates (deferred-definitions cfg)]
+    (if (empty? terms)
+      candidates
+      (filterv (fn [d]
+                 (let [hay (clojure.string/lower-case
+                            (str (get-in d [:function :name]) " "
+                                 (get-in d [:function :description])))]
+                   (some #(clojure.string/includes? hay %) terms)))
+               candidates))))
+
+(defn active-definitions
+  "The tool list a turn advertises: `definitions` with dormant optional tools
+   removed. When :tools/defer-optional is true, opted-in optional tools stay
+   hidden behind discover_tools until unlocked in :tools/discovered."
+  [cfg]
+  (let [enabled (enabled-set cfg)
+        defer? (boolean (:tools/defer-optional cfg))
+        discovered (discovered-set cfg)
+        base (into []
+                   (remove (fn [d]
+                             (let [n (get-in d [:function :name])]
+                               (and (optional-tools n)
+                                    (or (not (contains? enabled n))
+                                        (and defer? (not (contains? discovered n))))))))
+                   definitions)]
+    (if (and defer? (seq (deferred-definitions cfg)))
+      (conj base discover-tools-definition)
+      base)))
 
 (defn dormant?
-  "True when `name` is an optional tool cfg has NOT opted into. The dispatch
-   gate refuses these: an unadvertised tool must not execute just because a
-   model hallucinated its name."
+  "True when `name` is an optional tool cfg has NOT opted into (or is still
+   deferred and not yet discovered). Refused at dispatch before execution."
   [cfg name]
-  (boolean (and (optional-tools name)
-                (not (contains? (enabled-set cfg) name)))))
+  (boolean
+   (and (optional-tools name)
+        (or (not (contains? (enabled-set cfg) name))
+            (and (:tools/defer-optional cfg)
+                 (not (contains? (discovered-set cfg) name)))))))
