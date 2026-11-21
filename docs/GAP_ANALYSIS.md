@@ -478,3 +478,32 @@ An audit of `main` (`v1.3.1`, `b95ecfe`) uncovered six systemic defect classes h
 - `bash -n script/build-binary.sh`: `EXIT=0`.
 
 **Rich Hickey certification:** each fix untangles an accidental knot — wildcard sockets from loopback tests, append-only history from per-turn identity, SQL syntax from values, and silent linter suppressions from honest gates — replacing hopeful conventions with small, explicit values and fail-closed seams.
+
+---
+
+## 26. Audit Wave 2: Shared Atomic I/O, Security Boundaries & Runtime Hardening (2026-11-22)
+
+A follow-up sweep at `14d5fcb` closed 15 additional security, concurrency, durability, and runtime defects in three Red/Green TDD commits (`c729c4b`–`e98b5f6`) plus ADR `0003` (`docs/babashka-rewrite/adr/0003-audit-wave2-atomic-io-and-runtime-hardening.md`).
+
+### Scope & commits landed on `main`
+
+- **`c729c4b` (`fix(storage): add shared atomic-io, harden config/outbox/notes/subagent/pid locks`):** Extracted `src/bb_agent/atomic_io.clj` (`ensure-private-file!`, born-`0600` `write-private-file!`, `ReentrantLock` + companion `FileChannel` `with-file-lock`, `read-edn-safe`, `atomic-mutate-edn!`, `update-edn!`) and migrated `approval.clj`, `session.clj`, `web_auth.clj`, `web_a2a.clj`, `config.clj`, `outbox.clj` (including `{:replace-existing true}` on `dead/`), `telegram_notes.clj`, `subagent.clj`, `telegram_lifecycle.clj` (`poller.pid` lock + shutdown cleanup), and `goal/lock.clj`. Registered `bb-agent.atomic-io-test` in `bb.edn` and allowlisted `subagents.edn.lock` in `state_hygiene.clj`.
+- **`5bb49f7` (`fix(security): block secret write_file, disable rtk read-eval, bound notify/a2a/browser inputs`):** Added `protected-write-path?` in `tool/path.clj` (all secret paths plus `~/.ssh/authorized_keys` and `~/.ssh/config`) enforced in `tool/file.clj` `write_file!`; closed live `#=(...)` read-eval execution in `rtk.clj`; bounded `notify_listen.clj` bodies at 64KB (`413`), rejected non-POST (`405`), and used explicit `"UTF-8"` HMAC bytes; validated `Host`/`X-Forwarded-Proto` and mtime-cached `a2a-token` in `web_a2a.clj`; blocked loopback/link-local/RFC1918/CGNAT HTTPS targets in `browser_tool.clj` (native-image-safe); and disabled redirects (`:follow-redirects :never`) + enforced 2MB response cap in `a2a_client.clj`.
+- **`e98b5f6` (`fix(runtime): bound telegram HTTP timeouts, transact web search SQLite, guard metadata/entities, harden hot-reload`):** Added `15s` timeouts to `telegram_delivery.clj` and `bot_commands.clj` (migrated from `org.httpkit.client` to `babashka.http-client`); serialized and transacted `web_search.clj` SQLite refresh/search under `BEGIN IMMEDIATE` (fixing a live concurrent `pod-babashka-go-sqlite3` deadlock); guarded `session.clj` `list-metadata`/`load-metadata` against stray/corrupt files; guarded non-JSON Telegram responses, redacted logged `ex-data` and `web_http.clj` 500 messages; guarded `net_search.clj` `decode-entities` with `Character/isValidCodePoint`; and hardened `hot_reload.clj` repo/skills root resolution, `.bak-*`/dotfile filtering, cached `uid`, and save-burst debouncing.
+
+### Learnings & patterns
+
+- **GraalVM native-image reflection trap on `Inet4Address`:** Calling `(.isAnyLocalAddress addr)` on a `java.net.Inet4Address` throws `MissingReflectionRegistrationError` (`Error`, not `Exception`) inside Babashka's native image. Inspect `(.getHostAddress addr)` with pure lexical IP range checks instead.
+- **`pod-babashka-go-sqlite3` concurrent refresh deadlock:** Un-serialized concurrent `sqlite/execute!` loops across threads can wedge the SQLite pod indefinitely; serialize index refresh + query behind one JVM lock and a single `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` connection.
+- **Never call bare `read-string` on user-editable config:** Even when regex literals (`#"..."`) are needed, explicitly reject `#=` and bind `*read-eval* false` before validating rule data shapes.
+
+### Verified receipts (2026-11-22)
+
+- `bb lint`: `0 errors, 0 warnings` (`EXIT=0`).
+- `bb test-roster`: `121 file(s) on disk | 121 named by a run-tests call | 121 required`, `never-run: 0`, `ghost: 0`, `unparsed: 0` (`EXIT=0`).
+- `bb test`: `49` Clojure test blocks totaling `938` tests / `4481` assertions (`0 failures, 0 errors`), plus `11/11` Node JS web tests (`0 fail, 0 skipped`) and `bb verify:rewrite-docs` (`EXIT=0`).
+- `bb context-cost`: `7835 chars always injected per turn (~1958 tokens)` (`EXIT=0`).
+- `bb scripts/check_web_graph.bb`: `15 files, 0 missing exports, 0 unparsed forms` (`EXIT=0`).
+- `bash -n script/build-binary.sh`: `EXIT=0`.
+
+**Rich Hickey certification:** one `atomic_io` primitive replaces four copy-pasted file-dance rituals and closes half a dozen races at once; every boundary (`write_file`, `rtk`, `notify_listen`, `browser_tool`, `a2a_client`, `web_search`) now fails closed on explicit data rather than hoping callers behave.
