@@ -2,12 +2,13 @@
 
 Theseus is a powerful AI agent harness built on Babashka. Inspired by Opencrabs
 
-It provides a local, hackable agentic shell with provider calls, configurable tool approvals (constitution floor always enforced), goal-driven autonomous work with durable workspaces, session metadata, usage tracking, scheduler/daemon workflows, a Telegram polling adapter with a durable outbox, and a small rich rendering layer.
+It provides a local, hackable agentic shell with provider calls, configurable tool approvals and fail-closed secret/shell boundaries, goal-driven autonomous work with durable workspaces, session metadata, usage tracking, scheduler/daemon workflows, a Telegram polling adapter with a durable outbox, and a small rich rendering layer.
 
 ## Requirements
 
 - Babashka (`bb`)
-- Optional: `sqlite3` for SQLite-backed memory tests/features
+- `pod-babashka-go-sqlite3` (`../.pods/pod-babashka-go-sqlite3`) for SQLite-backed memory, usage index, and FTS5 session search
+- Optional: `pdftotext` (`poppler`) for PDF attachment ingest and `node` (`>= 20`) for web deck JS unit tests
 
 ## Quick Start
 
@@ -81,7 +82,7 @@ In a forum group, `/goal <spec>` in a topic launches a goal owned by that topic:
 
 Theseus stores state under `$THESEUS_HOME` when set, otherwise `~/theseus`.
 
-Durable state lives in `state/` (a hygiene gate pins an allowlist; scratch is exiled to `scratch/`):
+Durable state lives in `state/` (a hygiene gate in `bb-agent.state-hygiene` pins an allowlist; scratch is exiled to `scratch/`):
 
 - `config.edn`
 - `state/sessions/*.edn` (tool-result fields capped at 8KB at persistence)
@@ -92,7 +93,10 @@ Durable state lives in `state/` (a hygiene gate pins an allowlist; scratch is ex
 - `state/poller.pid` (instance lock — a live foreign pid refuses the boot)
 - `state/goal-queue.edn` (durable FIFO, created when goals queue)
 - `state/schedules.edn`, `state/schedule-runs.edn`
-- `state/digest.edn`, `state/memory.edn`
+- `state/digest.edn`, `state/memory.edn`, `state/memory.sqlite`, `state/search.db`
+- `state/approvals.edn`, `state/approvals.edn.lock` (companion lock for cross-process approval serialization)
+- `state/web-lane.edn`, `state/web-sessions.edn` (web deck jobs and SHA-256-hashed session tokens)
+- `state/a2a-token`, `state/a2a-opencrabs-token`, `state/skill-research/`, `state/subagents.edn`
 - `goals/` (registry `active.edn` + one workspace per goal: spec, config, ledgers, run.log, verdicts)
 - `skills/<name>/SKILL.md` (YAML frontmatter plus inert workflow prompt body)
 - `channel_attachments/telegram/<chat-id>/[topic-<thread-id>/]` (authorized inbound files, inert bytes)
@@ -131,7 +135,7 @@ Approvals and goals:
 
 ```edn
 {:approval/mode :auto-all        ; substitute for the default :ask — no human checkpoint.
-                                 ; The constitution (brain/rules.clj) still vetoes first.
+                                 ; Secret-path and dormant-tool boundaries still enforce.
  :max-tool-rounds 200            ; chat-turn tool budget
  :goal {:max-authoring-rounds 200
         :authoring-timeout-ms 480000   ; idle fuse on tool-call emits
@@ -245,8 +249,10 @@ as everything else: a master password. One-time setup on the host with
 `bb scripts/set_web_password.bb` (typed twice, minimum 8 characters;
 only a PBKDF2-SHA256 salt+hash lands on disk, at
 `<home>/.web-pass.edn`, owner-only permissions — never the password).
-The browser login exchanges it for a session token (7-day TTL, held in
-memory: a service restart or a password rotation logs everyone out)
+The browser login exchanges it for a session token (7-day TTL, stored
+SHA-256-hashed in `state/web-sessions.edn`: surviving service restarts,
+while password rotation or `.web-pass-ro.edn` change/removal revokes sessions,
+including open `/api/events` SSE streams)
 and every `/api/*` route requires that token in the Authorization
 header. Login is rate-limited: five consecutive misses lock it for a
 minute, even for the right password. Until a password is set the deck

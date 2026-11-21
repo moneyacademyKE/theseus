@@ -7,10 +7,11 @@ Every rule below is indexed to a real incident; the full ledger lives in
 ## Before You Start
 
 1. **One clone per repo.** Before cloning, search the machine for an existing
-   clone. The canonical clone is `~/Desktop/rich-hickey-gap-analysis/theseus`.
+   clone. The canonical clone is `/Users/moe/theseus/theseus`.
    A second clone is drift waiting to happen.
-   *(Incident: a plan worker that couldn't see the canonical clone created a
-   duplicate at `~/theseus`.)*
+   *(Incident: a plan worker created a duplicate at `~/theseus`; historically
+   `~/Desktop/rich-hickey-gap-analysis/theseus` also drifted before
+   standardizing on `/Users/moe/theseus/theseus`.)*
 2. **Check the tree before starting.** `git status` + look for HANDOFF notes.
    Parallel sessions work in this clone. Uncommitted work that isn't yours:
    read it, run the relevant suite against it, then absorb-after-verify or
@@ -80,6 +81,9 @@ Every rule below is indexed to a real incident; the full ledger lives in
     are summed from actual output (assertions are field 5 of each
     `Ran N tests containing M assertions` line), never arithmetic on remembered
     counts.
-18. **LOC ceiling:** soft 250, hard 500 per file (test files exempt). `wc -l`
-    before claiming done.
-19. **Zero dependencies.** New dependencies require explicit owner approval.
+18. **LOC ceiling (project override active):** Default repo guideline is soft
+    250, hard 500 per file (test files exempt); **ignored for this project per
+    owner directive** (2026-11-21) so `wc -l` does not block fixes.
+19. **Zero new dependencies:** Existing `bb.edn` dependencies (`com.github.kbosompem/bb-excel`
+    `0.1.1`) and pods (`org.babashka/go-sqlite3`, `org.babashka/buddy` `0.3.4`) are
+    grandfathered; any *new* dependency requires explicit owner approval.

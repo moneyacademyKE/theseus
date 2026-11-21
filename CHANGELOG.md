@@ -1,13 +1,15 @@
 # Changelog
 
-## v1.3.0 - 2026-11-15
+## Unreleased
 
-### Release verification
+### Added / Changed / Fixed — codebase audit remediation (2026-11-21)
 
-- Full registered suite passes through `bb test`; lint exits with zero warnings and zero errors.
-- Optional app-wide hot-reload supervisor is included as an explicit launchd development service; production services remain separate.
-- Added a first-class `bb test` alias for the complete registered test graph.
-- Moved hot-reload logs out of the durable `state/` hygiene surface and into operational logs.
+- **Web & tool security boundaries** (`b25bf41`): hardened goal slug containment (`/api/goal-detail`, `/api/goal-control`), added symlink-resolving `protected-secret-path?` across `file.clj`/`process.clj`/`web_artifacts.clj`, wrapped shell never-auto classification across basename/path/wrappers, hashed bearer tokens (`"sha256:..."`) in `state/web-sessions.edn`, tracked `.web-pass-ro.edn` mtime across processes with live SSE auth re-checks and pre-auth bounded body reads, created private state files born-`0600`, extended secret redaction across `pr-str` escapes, and removed `.innerHTML` status injection from the cockpit UI.
+- **Honest lint & test gates + loopback server binds** (`04b2a67`): resurrected 3 hidden nested `deftest`s (`web_test.clj`, `coordinates_test.clj`), removed all 18 `:level :off` kondo suppressions and fixed all 98 warnings / 9 info notices (including `skill_research_github.clj` `normalize-candidate`), enforced `--fail-level warning` in `bb lint` and `e2e.kondo-test`, dropped the unused `fswatcher` pod, unified `test:goal`, `anthropic`, `subagent`, `rsi-learn`, `telegram-reactions`, and `test:web:js` into `test:e2e:all` (removing duplicate `telegram-edits`), updated `.github/workflows/tests.yml` (`poppler-utils`, `bb lint`, `.clj-kondo/**`), and converted 20 `test/e2e/` mock servers from wildcard `0.0.0.0` `free-port` binds to kernel-assigned `{:port 0 :ip "127.0.0.1"}`.
+- **Runtime, Anthropic wire & build parity** (`b1e92f3`): fixed FTS5 `sanitize-query` in `web_search.clj`, classified proxy non-JSON 5xx/peer-reset failures as `:infra` before JSON parsing (`provider.clj`, `error_classifier.clj`), lifted `:anthropic-compatible` to full `system`/`tools`/`tool_use`/`tool_result` parity, fixed `:role :user` loop nudges (`core.clj`), updated stale `tool.clj` docstring, added `30s` HTTP timeout + 3-nil poll tolerance (`a2a_client.clj`) and `[1000 600000]` ms validation (`a2a_tool.clj`), allowlisted new durable entries in `state_hygiene.clj`, and removed duplicate `bb-excel` unpacking in `script/build-binary.sh`.
+- **Decomplected brain ledgers** (`7a8759b`): excluded append-only ledgers `improvements.md` and `wins.md` (`938394` chars on disk) from `load-brain`, surfacing them via `ledger-index` in `load-brain-context`; `bb context-cost` dropped from `946071` chars (~`236517` tokens) to `7835` chars (~`1958` tokens).
+- **Concurrency & storage hardening** (`caf635c`): serialized `approval.clj` via JVM lock + companion `approvals.edn.lock` `FileChannel/.lock` + born-`0600` atomic rename, migrated `memory.clj` from `sqlite3` CLI to parameterized transactional `pod.babashka.go-sqlite3`, wrapped `store.clj` `index-usage!` in `BEGIN IMMEDIATE` and hardened SQL `query` validation, scoped `core.clj` `provider-breaker` updates per provider key, and bounded `@uploads` (`max-uploads 100`) with disk eviction in `web_turn.clj`.
+- **Docs, ADR & verification receipts**: added ADR 0002, GAP_ANALYSIS §25, and updated `AGENTS.md`, `README.md`, and `docs/INDEX.md`. Verified: `bb lint` (`0 errors, 0 warnings`), `bb test-roster` (`120/120`, `0 never-run`), `bb test` (49 Clojure test blocks totaling `924` tests / `4414` assertions with `0 failures, 0 errors`, plus `11/11` Node JS tests), `bb scripts/check_web_graph.bb` (`15 files, 0 missing exports`), and `bash -n script/build-binary.sh` (exit `0`).
 
 ## v1.3.1 - 2026-11-17
 
@@ -60,6 +62,15 @@
 ### Fixed
 
 - **Web deck — dead boot, two stacked breaks** (bk-28a2; incident 2026-11-10 — the owner loaded the deck through the tunnel and got the static "connecting…" shell with no login prompt). Break 1, the operative one: tasks 9–12 added `media.js`, `paging.js`, `schedules.js`, `transcript.js` but the static whitelist in `web.clj` never learned them — the browser's module fetches 404'd, which Chrome reports as the generic "Failed to fetch dynamically imported module", and every gate stayed green because curl checks only ever hit `main.js`/`api.js` (whitelisted since day one) and `node --check` never fetches anything. Break 2, hiding behind it: `media.js` imported `put` from `api.js`, which never exported it — a hard SyntaxError at module-graph resolution, before any code runs. Fixed in `e66e5c9` and this commit; the deck then verified **end-to-end in a real browser** through the tunnel: all 14 modules resolve, the clock ticks EAT, the login overlay opens, and a wrong password renders the honest error. Two new gates pin the seams nobody was watching: `scripts/check_web_graph.bb` (every import in `web/js` must resolve to a real export; proven against the broken tree before the fix landed; comments stripped so prose can't pose as code) wired into `test:e2e:web` as `module-graph-resolves-test`, and `every-disk-module-is-served-test` (every `.js`/`.css` on disk under `web/` must serve 200 through the app — the old whitelist test compared the table against itself, so drift was invisible). Web e2e suite: 27 tests / 300 assertions.
+
+## v1.3.0 - 2026-11-15
+
+### Release verification
+
+- Full registered suite passes through `bb test`; lint exits with zero warnings and zero errors.
+- Optional app-wide hot-reload supervisor is included as an explicit launchd development service; production services remain separate.
+- Added a first-class `bb test` alias for the complete registered test graph.
+- Moved hot-reload logs out of the durable `state/` hygiene surface and into operational logs.
 
 ## v1.2.0 - 2026-11-09
 

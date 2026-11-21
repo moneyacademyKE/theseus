@@ -28,3 +28,4 @@
 - v1.0.0 release (2026-09-09) — V1–V7: detached authoring + live progress, deliverables out, /goal control, skill economy, durable queue, daily digest, `bb release` (`docs/roadmaps/v1.0-enhancement-roadmap.md`)
 - Post-v1.0 hardening (2026-09-10/11) — approval modes, veto-vs-approval distinction, flow compression, session cap, poll backoff, instance lock; v1.1.0 (`docs/audits/fix-all-round2-2026-09-09.md`)
 - Axiom seam map (2026-09-10) — blend was a fold-in: `bb-agent.goal.*` IS axiom renamed; external repo frozen (`docs/axiom-seam-map.md`)
+- Codebase audit remediation & honest gates (2026-11-21) — security boundaries, `clj-kondo` warning-level enforcement, loopback test binds, Anthropic wire parity, decomplected brain ledgers, SQLite/approval concurrency hardening, and ADR 0002 (`docs/GAP_ANALYSIS.md` §25, `docs/babashka-rewrite/adr/0002-codebase-audit-hardening-and-honest-gates.md`)
