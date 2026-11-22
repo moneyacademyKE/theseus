@@ -55,7 +55,7 @@
                                (or (ex-message e) (.getName (class e)))
                                {:exception/type (str (class e))
                                 :executed? false})))
-      (common/error-result name (str "Unknown tool: " name) {}))))
+      (common/error-result name (str "Unknown tool: " name) {:executed? false}))))
 
 (defn- run-discover-tools [args cfg]
   (let [q (or (:query args) (get args "query") "")

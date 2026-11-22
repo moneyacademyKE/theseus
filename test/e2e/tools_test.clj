@@ -391,3 +391,9 @@
           (is (false? (:executed? br)))))
       (finally
         (fs/delete-tree home)))))
+
+(deftest unknown-tool-reports-not-executed
+  (let [res (tool/execute-tool-request {:tool/name "no_such_tool_xyz" :tool/args {}})]
+    (is (= :error (:status res)))
+    (is (false? (:executed? res)))
+    (is (str/includes? (str (:error/message res)) "Unknown tool"))))
