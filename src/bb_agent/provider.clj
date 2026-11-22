@@ -128,10 +128,12 @@
                        :body (redact/redact-secrets (:body response))})))
     [status body vision-degraded?]))
 
-(defmethod complete :openai-compatible [_ {:keys [model messages images provider/config]
-                                           :as request}]
+(defn- complete-openai-compatible
+  [provider {:keys [model messages images provider/config]
+             :as request}]
   (let [_base-url (require-config config :base-url)
-        api-key (require-config config :api-key)
+        api-key (when (= :openai-compatible provider)
+                  (require-config config :api-key))
         ;; Optional tools ride the request (:provider/tools, set by core from
         ;; config). Absent → fail-closed default: the core registry only, not
         ;; the dormant extras (owner directive 2026-11-12: capabilities must
@@ -139,8 +141,9 @@
         advertised-tools (or (:provider/tools request) (tools/active-definitions nil))
         post! (fn [imgs]
                 (http/post (openai-url config)
-                           {:headers {"authorization" (str "Bearer " api-key)
-                                      "content-type" "application/json"}
+                           {:headers (cond-> {"content-type" "application/json"}
+                                       api-key
+                                       (assoc "authorization" (str "Bearer " api-key)))
                             :throw false
                             :timeout (or (:timeout-ms config) 60000)
                             :body (json/generate-string
@@ -163,6 +166,15 @@
       (:usage body) (assoc :usage (openai-usage body))
       (seq tool-calls) (assoc :tool/requests (mapv openai-tool-request tool-calls))
       vision-degraded? (assoc :vision/degraded true))))
+
+(defmethod complete :openai-compatible [_ request]
+  (complete-openai-compatible :openai-compatible request))
+
+(defmethod complete :infered-local [_ request]
+  (complete-openai-compatible :infered-local request))
+
+(defmethod complete :infered-router [_ request]
+  (complete-openai-compatible :infered-router request))
 
 (defn- anthropic-url [{:keys [base-url]}]
   (str (str/replace (or base-url "") #"/+$" "") "/messages"))

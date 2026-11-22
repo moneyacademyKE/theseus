@@ -12,6 +12,8 @@
 
 (def ^:private provider-required-keys
   {:openai-compatible [:base-url :api-key]
+   :infered-local [:base-url]
+   :infered-router [:base-url]
    :anthropic-compatible [:base-url :api-key]})
 
 (defn check-provider-config [cfg]
@@ -81,7 +83,7 @@
    died on a single-provider path that looked guarded. Keep this list
    current in the same change that adds a new top-level config key."
   #{:providers :provider :model :session/id :provider/fallbacks
-    :nudge-final-rounds :nudge-interval :max-tool-rounds
+    :tools/enable-optional :nudge-final-rounds :nudge-interval :max-tool-rounds
     :vision-chain :vision-model :goal :goal/max-authoring-rounds
     :policy :approval/mode :notify :telegram :web
     :retry :cwd :max-tokens :max-cost-usd})

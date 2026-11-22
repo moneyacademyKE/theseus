@@ -1,5 +1,7 @@
 (ns e2e.provider-wire-test
-  (:require [bb-agent.error-classifier :as ec]
+  (:require [babashka.http-client :as http]
+            [cheshire.core :as json]
+            [bb-agent.error-classifier :as ec]
             [bb-agent.provider :as provider]
             [bb-agent.tools :as tools]
             [clojure.test :refer [deftest is testing]]
@@ -96,6 +98,26 @@
             (is (true? (ec/retryable? (ec/classify (ex-message err))))))))
       (finally
         (stop-server)))))
+
+(deftest infered-aliases-use-openai-wire
+  (let [calls (atom [])]
+    (with-redefs [http/post
+                  (fn [url _opts]
+                    (swap! calls conj url)
+                    {:status 200
+                     :body (json/generate-string
+                            {:choices [{:message {:content "OK"}
+                                        :finish_reason "stop"}]})})]
+      (doseq [[provider url] [[:infered-local "http://local/v1"]
+                              [:infered-router "https://router/v1"]]]
+        (is (= "OK"
+               (:content (provider/complete provider
+                                            {:model "infered/auto"
+                                             :messages [{:role :user :content "ping"}]
+                                             :provider/config {:base-url url}})))))
+      (is (= ["http://local/v1/chat/completions"
+              "https://router/v1/chat/completions"]
+             @calls)))))
 
 (deftest anthropic-tools-shapes-active-definitions
   (let [converted (provider/anthropic-tools (tools/active-definitions nil))
