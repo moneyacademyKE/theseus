@@ -4,8 +4,33 @@
 // innerHTML with data.
 
 import { mdToNode } from './md.js';
-import { getToken } from './api.js';
+import { get, post } from './api.js';
+import { isReadOnly } from './state.js';
 import { relTime, eatFull } from './time.js';
+import { createMachine, registerMachine, createGate, projectAttr } from './fsm.js';
+
+const goalDetailMachine = registerMachine(createMachine({
+  name: 'goalDetail',
+  initial: 'closed',
+  transitions: {
+    closed: ['loading'],
+    loading: ['open', 'error', 'closed', 'loading'],
+    open: ['acting', 'loading', 'closed'],
+    acting: ['loading', 'open', 'error', 'closed'],
+    error: ['loading', 'closed'],
+  },
+  onTransition: ({ to }) => projectAttr('#goal-detail', 'data-state', to),
+}));
+
+const goalGate = createGate();
+let goalRefreshTimer = null;
+
+function clearGoalRefreshTimer() {
+  if (goalRefreshTimer) {
+    clearTimeout(goalRefreshTimer);
+    goalRefreshTimer = null;
+  }
+}
 
 export function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -74,6 +99,7 @@ function card(body, parts) {
   if (parts.title) c.append(el('div', 'title', parts.title));
   if (parts.sub) c.append(el('div', 'sub', parts.sub));
   body.append(c);
+  return c;
 }
 
 function empty(body, text) {
@@ -149,7 +175,7 @@ function sessionCard(body, s) {
   c.append(el('div', 'title', s.id || 'session'));
   if (s.summary) c.append(el('div', 'sub', s.summary));
   c.addEventListener('click', () => {
-    window.dispatchEvent(new CustomEvent('theseus:open-session', {detail: s.id}));
+    window.dispatchEvent(new CustomEvent('theseus:open-session', { detail: s.id }));
   });
   body.append(c);
 }
@@ -186,25 +212,26 @@ export function renderGoals(rows) {
 
 // ---- goal detail: the operator drawer (run log + control verbs) ----
 
-async function post(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
-    body: JSON.stringify(body || {}),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
-  return data;
-}
-
 async function openGoalDetail(dir) {
   const dialog = document.getElementById('goal-detail');
   if (!dialog || !dir) return;
+  if (!dialog.dataset.wired) {
+    dialog.dataset.wired = '1';
+    dialog.addEventListener('close', () => {
+      clearGoalRefreshTimer();
+      goalGate.invalidate();
+      goalDetailMachine.force('closed');
+    });
+  }
   const close = document.getElementById('goal-detail-close');
   if (close && !close.dataset.wired) {
     close.dataset.wired = '1';
     close.addEventListener('click', () => dialog.close());
   }
+  clearGoalRefreshTimer();
+  const token = goalGate.next();
+  goalDetailMachine.force('loading', { dir });
+
   const title = document.getElementById('goal-detail-title');
   const meta = document.getElementById('goal-detail-meta');
   const log = document.getElementById('goal-detail-log');
@@ -214,13 +241,11 @@ async function openGoalDetail(dir) {
   if (log) log.replaceChildren(el('div', 'dim', 'loading…'));
   if (meta) meta.replaceChildren();
   if (note) { note.textContent = ''; note.hidden = true; }
-  dialog.showModal();
+  // Guard .open so post-action refreshes never throw InvalidStateError.
+  if (!dialog.open) dialog.showModal();
   try {
-    const res = await fetch('/api/goal-detail?id=' + encodeURIComponent(dir), {
-      headers: { Authorization: 'Bearer ' + getToken() },
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const g = await res.json();
+    const g = await get('/api/goal-detail?id=' + encodeURIComponent(dir));
+    if (!goalGate.isCurrent(token) || !dialog.open) return;
     if (meta) {
       meta.append(
         el('span', 'pill ' + (g.verdict === 'fulfilled' ? 'ok' : g.verdict === 'halted' ? 'fail' : 'idle'), g.verdict),
@@ -234,16 +259,26 @@ async function openGoalDetail(dir) {
     }
     if (actions) {
       actions.replaceChildren();
+      const ro = isReadOnly();
       for (const verb of ['pause', 'resume', 'stop', 'cancel']) {
         const b = el('button', 'goal-verb ' + (verb === 'stop' || verb === 'cancel' ? 'danger' : ''), verb);
+        b.disabled = ro;
         b.setAttribute('aria-label', verb + ' goal ' + dir);
         b.onclick = async () => {
           b.disabled = true;
+          goalDetailMachine.force('acting', { dir, verb });
           try {
             const result = await post('/api/goal-control', { id: dir, action: verb });
+            if (!goalGate.isCurrent(token) || !dialog.open) return;
             if (note) { note.textContent = verb + ': ' + (result.state || result['command'] || JSON.stringify(result)); note.hidden = false; }
-            setTimeout(() => openGoalDetail(dir), 800); // re-read control state
+            clearGoalRefreshTimer();
+            goalRefreshTimer = setTimeout(() => {
+              goalRefreshTimer = null;
+              if (dialog.open) openGoalDetail(dir);
+            }, 800);
           } catch (e) {
+            if (!goalGate.isCurrent(token) || !dialog.open) return;
+            goalDetailMachine.force('error', { dir, verb, error: e && e.message });
             if (note) { note.textContent = verb + ' failed — ' + e.message; note.hidden = false; }
             b.disabled = false;
           }
@@ -251,7 +286,10 @@ async function openGoalDetail(dir) {
         actions.append(b);
       }
     }
+    goalDetailMachine.force('open', { dir });
   } catch (e) {
+    if (!goalGate.isCurrent(token)) return;
+    goalDetailMachine.force('error', { dir, error: e && e.message });
     if (log) log.replaceChildren(el('div', 'empty', 'detail unavailable — ' + e.message));
   }
 }

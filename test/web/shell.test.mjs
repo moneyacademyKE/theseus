@@ -73,4 +73,26 @@ test('neuromorphic layout controls stay local and composable', () => {
   assert.ok(!layout.includes('.innerHTML'), 'layout.js must construct stream headers with DOM nodes, not innerHTML');
   assert.ok(layout.includes('STREAM_KEY') && layout.includes('filter('),
     'removing a custom stream also removes it from persisted STREAM_KEY');
+  assert.ok(layout.includes('export function reapplyFilter'), 'filter survives SSE re-renders');
+  assert.ok(layout.includes('UI_KEY') && layout.includes('[ORDER_KEY, LAYOUT_KEY, PIN_KEY, STREAM_KEY, UI_KEY]'),
+    'reset clears UI_KEY alongside layout keys');
+});
+
+test('explicit state machines & AX/DX/UX hardening pins', () => {
+  const main = readFileSync(join(here, '../../web/js/main.js'), 'utf8');
+  const cockpit = readFileSync(join(here, '../../web/js/cockpit.js'), 'utf8');
+  const columns = readFileSync(join(here, '../../web/js/columns.js'), 'utf8');
+  const media = readFileSync(join(here, '../../web/js/media.js'), 'utf8');
+  const state = readFileSync(join(here, '../../web/js/state.js'), 'utf8');
+  present('id="rotate-dialog"', 'non-blocking password rotation dialog');
+  assert.ok(main.includes('installDeckInspector'), 'AX read-only deck inspector installed');
+  assert.ok(!main.includes('prompt(') && !main.includes('alert('),
+    'main.js must not use blocking prompt()/alert() dialogs');
+  assert.ok(!cockpit.includes('async function post(') && !columns.includes('async function post('),
+    'cockpit.js and columns.js must share api.js post() for unified 401 handling');
+  assert.ok(cockpit.includes('decidingApprovalId'),
+    'approval buttons stay locked across 1s SSE ticks while decision is in flight');
+  assert.ok(!media.includes('if (r && r.state'),
+    'media.js must not reference undeclared r in stop callback');
+  assert.ok(state.includes('data-role'), 'role (owner/ro) projected onto html[data-role]');
 });

@@ -132,6 +132,23 @@
   <div id="goal-detail-note" class="goal-detail-note" role="status" hidden></div>
 </dialog>
 
+<dialog id="rotate-dialog" aria-labelledby="rotate-title">
+  <form id="rotate-form" method="dialog">
+    <div class="login-title" id="rotate-title"><span class="glyph">⚿</span>rotate master password</div>
+    <label class="sr-only" for="rotate-current">current master password</label>
+    <input id="rotate-current" type="password" placeholder="current master password" autocomplete="current-password" required>
+    <label class="sr-only" for="rotate-next">new master password</label>
+    <input id="rotate-next" type="password" placeholder="new master password" autocomplete="new-password" required>
+    <label class="sr-only" for="rotate-confirm">confirm new master password</label>
+    <input id="rotate-confirm" type="password" placeholder="confirm new password" autocomplete="new-password" required>
+    <div class="goal-detail-actions">
+      <button type="submit" id="rotate-submit">rotate</button>
+      <button type="button" id="rotate-cancel">cancel</button>
+    </div>
+    <div id="rotate-status" class="login-error" role="alert" aria-live="assertive" hidden></div>
+  </form>
+</dialog>
+
 <!-- vendored, no CDN: markdown rendering (marked) + its sanitizer
      (DOMPurify). UMD builds exposing window.marked / window.DOMPurify;
      md.js degrades to plain text if either fails to load. -->

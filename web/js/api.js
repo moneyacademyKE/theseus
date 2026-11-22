@@ -1,17 +1,45 @@
 // deck api — session-gated fetch, login, and the single push stream.
 // The stored credential is a session token minted by POST /api/login
 // (master password); it never equals the password itself.
-// Status surfaces (text, led, title, data-conn) live in state.js —
-// the connection machine's single source of truth.
-import { setConn, setLed } from './state.js';
+// Status surfaces (text, led, title, data-conn, data-role) live in
+// state.js — the connection & auth machines' single source of truth.
+import { setConn, setRole, clearRole, setAuthState } from './state.js';
+import { createMachine, registerMachine } from './fsm.js';
 
 const TOKEN_KEY = 'theseus-deck-token';
+
+const transportMachine = registerMachine(createMachine({
+  name: 'transport',
+  initial: 'idle',
+  transitions: {
+    idle: ['sse-connecting', 'polling'],
+    'sse-connecting': ['sse-open', 'sse-backoff', 'polling', 'stopped'],
+    'sse-open': ['sse-backoff', 'polling', 'stopped'],
+    'sse-backoff': ['sse-open', 'polling', 'stopped'],
+    polling: ['stopped'],
+    stopped: ['sse-connecting'],
+  },
+}));
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
 export function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 
+export function showLogin() {
+  const el = document.getElementById('login');
+  if (!el) return;
+  // Native <dialog>: guard .open so concurrent 401s never throw InvalidStateError.
+  if (!el.open) el.showModal();
+}
+
+function handleUnauthorized() {
+  setAuthState('locked', { reason: '401' });
+  setConn('login required');
+  showLogin();
+}
+
 export async function login(password) {
+  setAuthState('authenticating');
   const res = await fetch('/api/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -20,8 +48,10 @@ export async function login(password) {
   if (res.status === 200) {
     const session = await res.json();
     setToken(session.token);
+    setRole(session.role || 'owner');
     return session;
   }
+  setAuthState('locked', { reason: 'login-failed', status: res.status });
   const err = await res.json().catch(() => ({}));
   throw Object.assign(new Error('login failed'), {
     code: err.error || 'unknown',
@@ -30,20 +60,12 @@ export async function login(password) {
   });
 }
 
-export function showLogin() {
-  const el = document.getElementById('login');
-  if (!el) return;
-  // Native <dialog>: showModal owns the focus trap, Esc, inert
-  // background, and centers the box. No-op if already open.
-  el.showModal();
-}
-
 export async function get(path) {
   const res = await fetch(path, {
     headers: { Authorization: 'Bearer ' + getToken() },
   });
   if (res.status === 401) {
-    showLogin();
+    handleUnauthorized();
     throw Object.assign(new Error('unauthorized'), { unauthorized: true });
   }
   if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
@@ -52,23 +74,8 @@ export async function get(path) {
 
 // stream({onState}) — the deck's single push channel: one EventSource
 // replaces every column poller and the cockpit's job/session tickers.
-// EventSource reconnects on its own after a drop; a dead token gets an
-// explicit `unauthorized` event from the server before the close, so
-// the login overlay takes over instead of a blind retry loop.
-// If the pipe stays dead ~20s across EventSource's own retries, the
-// stream degrades to a 5s poll of GET /api/state — the same snapshot,
-// one request — and stays there until reload (which re-tries push).
-// EventSource cannot set headers, so the session token rides as
-// ?token= on this one route.
 const FALLBACK_AFTER_MS = 20000;
 const POLL_MS = 5000;
-// The server pings every 15s exactly so the client can tell a quiet
-// deck from a dead pipe. EventSource fires onerror when the OS
-// delivers the close — but a half-open pipe (partition, sleep, a
-// tunnel dying without FIN) delivers nothing at all, and `live` would
-// be a lie forever. So the client watchdogs the heartbeat: three
-// missed pings and the stream degrades to poll, which finds out the
-// truth within one POLL_MS.
 const HEARTBEAT_STALE_MS = 45000;
 
 export function stream({ onState }) {
@@ -78,7 +85,7 @@ export function stream({ onState }) {
   let dead = false;
   let lastOk = Date.now();
 
-  const markOk = () => { lastOk = Date.now(); setLed('on'); };
+  const markOk = () => { lastOk = Date.now(); };
 
   function stop() {
     dead = true;
@@ -86,37 +93,50 @@ export function stream({ onState }) {
     if (watchdogTimer) clearInterval(watchdogTimer);
     pollTimer = null;
     watchdogTimer = null;
+    transportMachine.force('stopped');
+  }
+
+  async function pollOnce() {
+    if (dead) return;
+    try {
+      const st = await get('/api/state');
+      if (dead) return;
+      markOk();
+      setConn('live · poll');
+      try { onState(st); } catch (_) { /* renderer isolation, same as push */ }
+    } catch (ex) {
+      if (dead) return;
+      if (ex && ex.unauthorized) { stop(); }
+      else { setConn('offline'); }
+    }
   }
 
   function startPoll() {
+    if (fellBack) return;
     fellBack = true;
-    setConn('live · poll');
-    setLed('on');
-    pollTimer = setInterval(async () => {
-      try {
-        const st = await get('/api/state');
-        markOk();
-        setConn('live · poll');
-        try { onState(st); } catch (_) { /* renderer isolation, same as push */ }
-      } catch (ex) {
-        if (ex && ex.unauthorized) { stop(); setConn('login required'); }
-        else { setConn('offline'); }
-      }
-    }, POLL_MS);
+    transportMachine.force('polling');
+    // Stay honest: remain reconnecting until the first poll actually returns 200 OK.
+    setConn('reconnecting…');
+    pollOnce();
+    pollTimer = setInterval(pollOnce, POLL_MS);
   }
 
+  transportMachine.force('sse-connecting');
   const es = new EventSource('/api/events?token=' + encodeURIComponent(getToken()));
   watchdogTimer = setInterval(() => {
     if (dead || fellBack) return;
     if (Date.now() - lastOk > HEARTBEAT_STALE_MS) {
       es.close();
-      dead = true;
       startPoll();
     }
   }, 5000);
-  es.onopen = markOk;
+  es.onopen = () => {
+    markOk();
+    transportMachine.to('sse-open');
+  };
   es.addEventListener('state', (e) => {
     markOk();
+    transportMachine.to('sse-open');
     setConn('live · push');
     try { onState(JSON.parse(e.data)); } catch (_) { /* one bad frame never kills the deck */ }
   });
@@ -124,26 +144,22 @@ export function stream({ onState }) {
   es.addEventListener('unauthorized', () => {
     stop();
     es.close();
-    showLogin();
-    setConn('login required');
+    handleUnauthorized();
   });
   es.onerror = () => {
     if (dead || fellBack) return;
     if (Date.now() - lastOk > FALLBACK_AFTER_MS) {
       es.close();
-      dead = true;
       startPoll();
       return;
     }
+    transportMachine.to('sse-backoff');
     setConn('reconnecting…');
   };
   return { stop };
 }
 
-// authed mutations shared by the cockpit + schedules modules. post
-// already exists in cockpit.js's private scope; these are the module
-// surface versions (schedules.js, account buttons) so no second copy
-// of the fetch shape lives anywhere.
+// Unified authed mutations shared by cockpit, columns, schedules, and account buttons.
 export async function post(path, body) {
   const res = await fetch(path, {
     method: 'POST',
@@ -152,7 +168,7 @@ export async function post(path, body) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    showLogin();
+    handleUnauthorized();
     throw Object.assign(new Error(data.error || 'unauthorized'), { unauthorized: true });
   }
   if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
@@ -166,18 +182,13 @@ export async function del(path) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    showLogin();
+    handleUnauthorized();
     throw Object.assign(new Error(data.error || 'unauthorized'), { unauthorized: true });
   }
   if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
   return data;
 }
 
-// raw-bytes upload (mic/camera lane): PUT /api/attachment?name=&mime=
-// carries the bytes as the body and returns the descriptor JSON —
-// same auth contract as post/del. (2026-11-10: this export was
-// missing, media.js's import killed the browser's module-graph
-// resolution before boot — scripts/check_web_graph.bb pins it.)
 export async function put(path, bytes) {
   const res = await fetch(path, {
     method: 'PUT',
@@ -186,19 +197,17 @@ export async function put(path, bytes) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    showLogin();
+    handleUnauthorized();
     throw Object.assign(new Error(data.error || 'unauthorized'), { unauthorized: true });
   }
   if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
   return data;
 }
 
-// logout + rotation (parity row 18): logout revokes this token and
-// drops the local copy; rotation swaps the stored token for the fresh
-// one the route returns.
 export async function logout() {
   try { await post('/api/logout', {}); } catch (_) { /* a dead token logs out fine */ }
   localStorage.removeItem(TOKEN_KEY);
+  clearRole();
 }
 
 export async function rotatePassword(current, next) {

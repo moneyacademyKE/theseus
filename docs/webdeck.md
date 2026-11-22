@@ -118,27 +118,28 @@ pings and the stream degrades to poll, because a half-open pipe (no
 FIN — partition, sleep, tunnel death) never fires `onerror` on its
 own. Poll-mode 401s land in `login required`, not stale text.
 
-### The documented ones
+### Explicit client state machines (`web/js/fsm.js`)
 
-| Machine | Where | States |
-|---|---|---|
-| login form | `main.js` | idle → unlocking… → success (reload) / rate-limited (timed) / not-set / bad-password |
-| login dialog re-arm | `main.js` | Esc-closed → any click re-opens once (native `<dialog>`) |
-| auth session | `api.js` + `web_auth.clj` | out → authenticating → in → expired (in-memory store: a server bounce logs everyone out) |
-| login rate-limit | `web_auth.clj` | counting → locked-until (reset on success) |
-| session view | `cockpit.js` | picker → loading → loaded / empty / unavailable |
-| compose | `cockpit.js` | idle → sending (disabled) → queued / send-failed (text restored) |
-| attachments | `cockpit.js` | idle → uploading (chips) → removable; per-file failure surfaces in the alert |
-| approval | `cockpit.js` | new (focused) → deciding (disabled) → resolved / failed |
-| job watch | `cockpit.js` + `web_turn.clj` | none → queued → running → done / failed → aged-out (server grace 30s, box hides after 5s) |
-| scroll settle | `cockpit.js` | 5 rAF frames + 300ms tail → settled |
-| search | `search.js` | closed → open → searching → results / empty / failed → highlighted → closed |
-| PiP window | `pip.js` | unsupported (hidden) → closed → open (mirrored) → closed |
-| column flash | `columns.js` | changed → flash class → removed |
-| SSE channel | `web.clj` | joined (nil fp) → streaming (fp) → closed; late joiners get the next tick's snapshot |
-| broadcaster | `web.clj` | stopped → running (1s pulse, 15s named ping) |
-| turn engine | `web_turn.clj` | enqueue → running → done / failed (jobs/uploads in-memory) |
-| search index | `web_search.clj` | per-file: unindexed / stale → indexed (mtime-driven) |
+All core deck state machines share one tiny, zero-dependency kernel (`web/js/fsm.js`: `createMachine`, `createGate`, `registerMachine`, `installDeckInspector`) — explicit transition tables, monotonic async request gates (`createGate`), a bounded 60-entry transition ring buffer, DOM `data-*` projections, and a frozen read-only `window.__THESEUS_DECK__` inspector.
+
+| Machine | Where | States | DOM Projection |
+|---|---|---|---|
+| `conn` | `state.js` | `connecting`, `cached`, `live`, `reconnecting`, `offline`, `locked` | `html[data-conn]` |
+| `auth` | `state.js` + `api.js` | `locked`, `authenticating`, `owner`, `ro` (durable `state/web-sessions.edn`) | `html[data-auth]`, `html[data-role]` |
+| `transport` | `api.js` | `idle`, `sse-connecting`, `sse-open`, `sse-backoff`, `polling`, `stopped` | — |
+| `composer` | `cockpit.js` | `idle`, `editing`, `sending`, `error` | `#col-cockpit[data-compose-state]` |
+| `job` | `cockpit.js` + `web_turn.clj` | `idle`, `queued`, `running`, `waiting-approval`, `done`, `failed`, `interrupted`, `canceled` (durable `state/web-lane.edn`) | `#col-cockpit[data-job-state]` |
+| `approval` | `cockpit.js` + `web_turn.clj` | `none`, `pending`, `deciding`, `resolved` | `#cockpit-job[data-approval-state]` |
+| `transcript` | `transcript.js` | `idle`, `loading`, `loaded`, `loading-older`, `empty`, `error` | `#cockpit-transcript[data-state]` |
+| `search` | `search.js` | `closed`, `open`, `searching`, `results`, `empty`, `error` | `#cockpit-searchbar[data-state]` |
+| `media` | `media.js` | `idle`, `recording`, `uploading`, `error` | `#cockpit-mic[data-state]` |
+| `goalDetail` | `columns.js` | `closed`, `loading`, `open`, `acting`, `error` | `#goal-detail[data-state]` |
+| `pip` | `pip.js` | `unavailable`, `closed`, `open` | `#pip-toggle[data-state]` |
+| `deckFilter` | `layout.js` | `inactive`, `filtering` (survives SSE re-renders via `reapplyFilter()`) | `#layout-tools[data-filter-state]` |
+| `schedules` | `schedules.js` | `idle`, `creating`, `deleting`, `error` | `#col-schedules[data-state]` |
+| `passwordRotate` | `main.js` | `idle`, `open`, `rotating`, `done`, `error` | `#rotate-dialog[data-state]` |
+| SSE channel / broadcaster | `web.clj` | joined (nil fp) → streaming (fp) → closed; 1s pulse, 15s named ping | — |
+| search index | `web_search.clj` | per-file: unindexed / stale → indexed (mtime-driven, transactional SQLite) | — |
 
 Invariants that are *not* machines: the markdown pipeline always
 sanitizes-or-degrades (`md.js` — never raw innerHTML), and vendors are
@@ -146,14 +147,14 @@ immutable-cached while modules are `no-cache`.
 
 ### Agent contract (AX)
 
-- `document.documentElement.dataset.conn` — the connection state,
-  always current, zero parsing.
+- `window.__THESEUS_DECK__` — frozen read-only introspection object exposing `.snapshot()` (all 14 registered machines + live `{conn, role, session, jobId}` context), `.history()` (last 60 transitions including rejected moves), and `.machines()`.
+- `document.documentElement.dataset.{conn, auth, role, density}` — machine-readable top-level state, always current, zero text parsing.
+- Per-surface projections: `#col-cockpit[data-compose-state]`, `#col-cockpit[data-job-state]`, `#cockpit-job[data-approval-state]`, `#cockpit-transcript[data-state]`, `#cockpit-searchbar[data-state]`, `#cockpit-mic[data-state]`, `#goal-detail[data-state]`, `#pip-toggle[data-state]`, `#layout-tools[data-filter-state]`, `#col-schedules[data-state]`, `#rotate-dialog[data-state]`.
 - `#api-state` carries `role="status"` + `aria-live="polite"`; the led
   carries an `aria-label`. Screen readers announce transitions.
-- SSE events are typed: `state`, `ping`, `unauthorized` (terminal).
+- SSE events are typed: `state`, `ping`, `unauthorized` (terminal); client fires `theseus:transcript-loaded` when transcript loads complete.
 - Read surface: `/api/state`, `/api/search?q=`, `/api/usage`.
-- Writes go through `setConn` only. Adding a state = adding one row to
-  `STATES` in `state.js` — never a direct `textContent` write.
+- Writes go through `api.js` (`post`/`put`/`del`) and `setConn` only — every 401 uniformly transitions `auth` → `locked`, `conn` → `login required`, and opens `#login`.
 
 ## Vendoring policy
 

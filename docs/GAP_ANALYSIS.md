@@ -547,3 +547,24 @@ Fifteen zero-dependency, pure-functional capabilities adapted from `cosmicstack-
 - `bb lint`: `0 errors, 0 warnings` (`EXIT=0`).
 
 **Rich Hickey certification:** every guard is a pure value-to-value function (`Exposure`, `Belief`, `TurnSignals`, `SaverMode`) composed at one thin seam (`tool.clj` / `core.clj`) with zero new dependencies and zero hidden framework state.
+
+---
+
+## 29. Web Deck Implicit State-Machine Audit & UX/DX/AX Hardening (2026-11-22)
+
+Full audit of all 24 state machines across `web/index.html`, `web/js/*.js` (16 modules), and `src/bb_agent/web*.clj` (`docs/audits/webdeck-state-machines-2026-11-22.md`, ADR `0006`) executed 15 zero-dependency decisions elevating UX, DX, and AX simultaneously:
+
+- **Pure FSM kernel & AX surface (`web/js/fsm.js`, whitelisted in `src/bb_agent/web.clj`):** `createMachine`, `createGate` (monotonic async fetch guard), `registerMachine`, `projectAttr`, and frozen read-only `window.__THESEUS_DECK__` (`snapshot()`, `history()`, `machines()`).
+- **Unified Auth/Role & Honest Transport (`state.js`, `api.js`):** removed duplicate private `post()`/`put()` in `cockpit.js` and `columns.js`; every HTTP 401 and SSE `unauthorized` uniformly transitions `auth` → `locked`, `conn` → `login required`, and guards `if (!dialog.open) dialog.showModal()`; persisted/projected `html[data-role]` (`owner` | `ro`) disabling write controls in read-only mode; polling fallback now polls immediately and stays `reconnecting…` until 200 OK.
+- **Cockpit, Transcript, Search & Media fixes:** fixed `Enter` bypassing edit-last mode (`submitFromComposer`), preserved uploaded attachments on send failure, added `Escape` to cancel edit mode, locked approval buttons across 1s SSE ticks via `decidingApprovalId`, cancelled stale 5s job-hide timers, added monotonic fetch gating + `theseus:transcript-loaded` event + stopped `loadOlder` from corrupting `lastUserInput`, replaced hardcoded `400ms`/`1200ms` search highlight timers and preserved jump highlights on result click, fixed `media.js` undeclared `r` `ReferenceError` on stop and wrapped voice upload/send in `try/catch`.
+- **Columns, PiP, Layout, Schedules & Rotate Dialog:** fixed `columns.js` `card()` missing `return c;` (which broke goal card click wiring), guarded `#goal-detail.open` before `showModal()` + gated stale fetches/timers, fixed `pip.js` hours calculation (`total / 3600` instead of `total / 60`) and removed DOM scraping in favor of `state.js`, made `⌘K` deck filter survive 1s SSE re-renders via `reapplyFilter()`, switched telemetry inspector to `#deck` `dblclick` delegation, added `UI_KEY` to layout reset, added explicit `schedules` CRUD pending lock, and replaced blocking cleartext `prompt()`/`alert()` password rotation with `<dialog id="rotate-dialog">`.
+
+### Verified receipts (2026-11-22)
+
+- `bb scripts/check_web_graph.bb`: `16 files, 0 missing exports, 0 unparsed forms` (`EXIT=0`).
+- `bb test:web:js`: `16/16` Node JS tests (`0 fail, 0 skipped`, `EXIT=0`) including `test/web/fsm.test.mjs`.
+- `bb test:e2e:web`: `38` tests / `392` assertions (`0 failures, 0 errors`, `EXIT=0`).
+- `bb test`: `49` Clojure test blocks totaling `964` tests / `4605` assertions (`0 failures, 0 errors`), plus `bb verify:rewrite-docs` (`EXIT=0`).
+- `bb lint`: `0 errors, 0 warnings` (`EXIT=0`); `bb test-roster`: `125/125`, `0 never-run` (`EXIT=0`).
+
+**Rich Hickey certification:** 14 implicit client state machines are now explicit data tables with one shared 120-line pure kernel, zero new dependencies, zero DOM scraping, and a frozen read-only `window.__THESEUS_DECK__` contract that serves humans, developers, and agents from the same source of truth.

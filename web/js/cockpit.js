@@ -2,56 +2,80 @@
 // run (live tool flow), answer approvals, read the transcript. The same
 // engine Telegram rides; the session file is the shared history, so a
 // session continued here is a session continued there.
-import { get, getToken } from './api.js';
+import { get, post, put, getToken } from './api.js';
 import { mdToNode } from './md.js';
 import { relTime } from './time.js';
 import { reloadTarget } from './paging.js';
 import { bubble, loadTranscript, getLastUserInput } from './transcript.js';
 import { micSupported, micToggle, captureAndSend } from './media.js';
+import { createMachine, registerMachine, projectAttr } from './fsm.js';
 
 const el = (id) => document.getElementById(id);
+
+const composerMachine = registerMachine(createMachine({
+  name: 'composer',
+  initial: 'idle',
+  transitions: {
+    idle: ['editing', 'sending'],
+    editing: ['idle', 'sending'],
+    sending: ['idle', 'error'],
+    error: ['idle', 'editing', 'sending'],
+  },
+  onTransition: ({ to }) => projectAttr('#col-cockpit', 'data-compose-state', to),
+}));
+
+const jobMachine = registerMachine(createMachine({
+  name: 'job',
+  initial: 'idle',
+  transitions: {
+    idle: ['queued', 'running', 'waiting-approval', 'done', 'failed', 'interrupted', 'canceled'],
+    queued: ['running', 'waiting-approval', 'done', 'failed', 'interrupted', 'canceled', 'idle'],
+    running: ['waiting-approval', 'done', 'failed', 'interrupted', 'canceled', 'idle'],
+    'waiting-approval': ['running', 'done', 'failed', 'interrupted', 'canceled', 'idle'],
+    done: ['idle', 'queued'],
+    failed: ['idle', 'queued'],
+    interrupted: ['idle', 'queued'],
+    canceled: ['idle', 'queued'],
+  },
+  onTransition: ({ to }) => projectAttr('#col-cockpit', 'data-job-state', to),
+}));
+
+const approvalMachine = registerMachine(createMachine({
+  name: 'approval',
+  initial: 'none',
+  transitions: {
+    none: ['pending'],
+    pending: ['deciding', 'none'],
+    deciding: ['resolved', 'pending', 'none'],
+    resolved: ['none', 'pending'],
+  },
+  onTransition: ({ to }) => projectAttr('#cockpit-job', 'data-approval-state', to),
+}));
 
 const state = {
   session: localStorage.getItem('theseus-cockpit-session') || 'web',
   attachments: [],
   jobId: localStorage.getItem('theseus-cockpit-job') || null,
   lastApprovalId: null,
+  decidingApprovalId: null,
   busySession: null, // the session our running job writes to
 };
 
-// one in-flight missing-job verification at a time (issue #35): a
-// snapshot without our job triggers a job-route check, and overlapping
-// checks would race each other's watchJob(null)
 let verifyingGone = false;
+let jobHideTimer = null;
 
-// ---------- authed non-GET helpers ----------
-
-async function post(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
-    body: JSON.stringify(body || {}),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
-  return data;
+function clearJobHideTimer() {
+  if (jobHideTimer) {
+    clearTimeout(jobHideTimer);
+    jobHideTimer = null;
+  }
 }
 
-async function put(path, body) {
-  const res = await fetch(path, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/octet-stream', Authorization: 'Bearer ' + getToken() },
-    body,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || ('HTTP ' + res.status)), { status: res.status });
-  return data;
-}
+export function getActiveSession() { return state.session; }
+export function getActiveJobId() { return state.jobId; }
 
 // ---------- sessions ----------
 
-// The picker rides the push: the stream carries session-list with
-// every state event, so there is nothing left to poll.
 let lastSessionRows = [];
 
 function refreshSessions(rows) {
@@ -60,7 +84,7 @@ function refreshSessions(rows) {
   if (Array.isArray(rows)) lastSessionRows = rows;
   const list = Array.isArray(rows)
     ? rows
-    : (lastSessionRows.length ? lastSessionRows : [{id: state.session}]);
+    : (lastSessionRows.length ? lastSessionRows : [{ id: state.session }]);
   sel.replaceChildren();
   const opt = (id, label) => {
     const o = document.createElement('option');
@@ -76,7 +100,7 @@ function refreshSessions(rows) {
     if (r.updated) bits.push(relTime(r.updated));
     return bits.join(' · ');
   };
-  const current = list.find((r) => r.id === state.session) || {id: state.session};
+  const current = list.find((r) => r.id === state.session) || { id: state.session };
   opt(state.session, sessionLabel(current) + (known.has(state.session) ? '' : '  (new)'));
   for (const r of list) if (r.id !== state.session) opt(r.id, sessionLabel(r));
 }
@@ -84,6 +108,11 @@ function refreshSessions(rows) {
 function pickSession(id) {
   state.session = id;
   localStorage.setItem('theseus-cockpit-session', id);
+  const input = el('cockpit-text');
+  if (input && input.dataset.editing) {
+    delete input.dataset.editing;
+    composerMachine.force('idle');
+  }
   refreshSessions();
   loadTranscript(state.session);
 }
@@ -91,8 +120,6 @@ function pickSession(id) {
 function newSession() {
   pickSession('web-' + Math.random().toString(16).slice(2, 10));
 }
-
-
 
 // ---------- attachments ----------
 
@@ -160,6 +187,7 @@ async function jobAction(id, verb) {
     if (verb === 'cancel' && data.canceled) el('cockpit-status').textContent = 'canceled';
     if (verb === 'cancel' && data['cancel-requested']) el('cockpit-status').textContent = 'cancel requested';
     if (verb === 'retry' && data['job/id']) {
+      clearJobHideTimer();
       watchJob(data['job/id']);
       renderJob({ status: 'queued', events: [] });
       el('cockpit-status').textContent = 'requeued';
@@ -174,11 +202,14 @@ async function jobAction(id, verb) {
 }
 
 async function decide(id, decision) {
+  state.decidingApprovalId = id;
+  approvalMachine.force('deciding', { id, decision });
   try {
     await post('/api/approval', { id, decision });
+    approvalMachine.force('resolved', { id, decision });
   } catch (e) {
-    // errors belong to the action that caused them, not the connection
-    // line — the alert element the shell already reserves for this
+    state.decidingApprovalId = null;
+    approvalMachine.force('pending', { id, error: e && e.message });
     const error = el('cockpit-error');
     if (error) {
       error.textContent = 'approval failed — ' + e.message;
@@ -198,15 +229,14 @@ function elapsedLabel(ms) {
 function renderJob(job) {
   const box = el('cockpit-job');
   if (!box) return;
-  // Scroll pinning across the rebuild: a turn re-renders this box on
-  // every push (roughly per second). If the user was pinned near the
-  // bottom, follow the new content; if they scrolled up to read an
-  // earlier tool call, keep their exact offset instead of yanking
-  // them back down.
+  clearJobHideTimer();
   const pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   const offset = box.scrollTop;
   box.hidden = false;
-  box.innerHTML = '';
+  box.replaceChildren();
+  const effectiveJobState = job.approval ? 'waiting-approval' : (job.status || 'queued');
+  jobMachine.force(effectiveJobState, { id: job['job/id'] || state.jobId });
+
   const head = document.createElement('div');
   head.className = 'job-head ' + job.status;
   const started = job['started-at'] || job['submitted-at'];
@@ -222,12 +252,17 @@ function renderJob(job) {
   box.appendChild(flow);
   if (job.approval) {
     const isNewApproval = state.lastApprovalId !== job.approval.id;
-    if (isNewApproval) state.lastApprovalId = job.approval.id;
+    const isDeciding = state.decidingApprovalId === job.approval.id;
+    if (isNewApproval) {
+      state.lastApprovalId = job.approval.id;
+      if (!isDeciding) approvalMachine.force('pending', { id: job.approval.id });
+    }
     const ap = document.createElement('div');
     ap.className = 'approval';
     const txt = document.createElement('div');
     txt.textContent = '🔒 ' + job.approval.tool +
-      (job.approval.context ? ' · ' + job.approval.context : '');
+      (job.approval.context ? ' · ' + job.approval.context : '') +
+      (isDeciding ? ' · deciding…' : '');
     ap.appendChild(txt);
     const bar = document.createElement('div');
     bar.className = 'approval-bar';
@@ -236,15 +271,17 @@ function renderJob(job) {
       const b = document.createElement('button');
       b.textContent = label;
       b.className = dec === 'deny' ? 'deny' : 'approve';
+      b.disabled = isDeciding;
       b.setAttribute('aria-label', dec + ' ' + job.approval.tool +
         (job.approval.context ? ' — ' + job.approval.context : ''));
       b.onclick = () => {
+        if (state.decidingApprovalId === job.approval.id) return;
         [...bar.querySelectorAll('button')].forEach((btn) => { btn.disabled = true; });
         decide(job.approval.id, dec);
       };
       bar.appendChild(b);
     }
-    if (isNewApproval) {
+    if (isNewApproval && !isDeciding) {
       const first = bar.querySelector('button');
       if (first) first.focus();
     }
@@ -252,6 +289,8 @@ function renderJob(job) {
     box.appendChild(ap);
   } else {
     state.lastApprovalId = null;
+    state.decidingApprovalId = null;
+    approvalMachine.force('none');
   }
   if (job.status === 'failed' || job.status === 'interrupted' || job.status === 'canceled') {
     if (job.status !== 'canceled') {
@@ -295,10 +334,6 @@ function renderJob(job) {
   box.scrollTop = pinned ? box.scrollHeight : offset;
 }
 
-// The job rides the push stream: the state event carries the job map,
-// so watching a job is just remembering which one — now also across a
-// reload (localStorage), so a refresh restores the live watch instead
-// of orphaning a running turn.
 function watchJob(id) {
   state.jobId = id;
   if (id) localStorage.setItem('theseus-cockpit-job', id);
@@ -307,12 +342,20 @@ function watchJob(id) {
 
 function jobFinished(job) {
   watchJob(null);
+  state.decidingApprovalId = null;
+  approvalMachine.force('none');
+  jobMachine.force(job ? job.status : 'idle');
   el('cockpit-status').textContent = job ? job.status : 'gone';
   state.busySession = null;
   loadTranscript(state.session);
-  setTimeout(() => {
+  clearJobHideTimer();
+  jobHideTimer = setTimeout(() => {
     const box = el('cockpit-job');
-    if (box && !state.jobId) box.hidden = true;
+    if (box && !state.jobId) {
+      box.hidden = true;
+      jobMachine.force('idle');
+    }
+    jobHideTimer = null;
   }, 5000);
 }
 
@@ -325,19 +368,21 @@ async function send(opts) {
   if (!text && state.attachments.length === 0) return;
   if (error) error.hidden = true;
   if (button) button.disabled = true;
+  composerMachine.force('sending', { edit });
   input.value = '';
   input.style.height = 'auto';
-  const attachments = state.attachments.map((a) => a.id);
+  const savedAttachments = state.attachments.slice();
+  const attachments = savedAttachments.map((a) => a.id);
   state.attachments = [];
   renderAttachments();
   try {
     const job = await post('/api/turn', { session: state.session, text, attachments, edit });
+    composerMachine.force('idle');
     if (job.bypassed) {
-      // a typed approval answered a waiting turn on the request thread —
-      // no job exists; show the verdict where the transcript grows
       el('cockpit-status').textContent = 'approval ' + (job.decision || 'answered');
       const note = el('cockpit-job');
       if (note) {
+        clearJobHideTimer();
         note.hidden = false;
         note.replaceChildren();
         const line = document.createElement('div');
@@ -346,7 +391,10 @@ async function send(opts) {
         note.appendChild(line);
         const reply = bubble(job.reply || '', 'out', 'theseus');
         note.appendChild(reply);
-        setTimeout(() => { if (!state.jobId) note.hidden = true; }, 5000);
+        jobHideTimer = setTimeout(() => {
+          if (!state.jobId) note.hidden = true;
+          jobHideTimer = null;
+        }, 5000);
       }
       loadTranscript(state.session);
       return;
@@ -356,20 +404,25 @@ async function send(opts) {
     renderJob({ status: 'queued', events: [] });
     watchJob(job['job/id']);
   } catch (e) {
+    composerMachine.force('error', { error: e && e.message });
     el('cockpit-status').textContent = 'send failed';
     if (error) {
       error.textContent = 'send failed — ' + e.message;
       error.hidden = false;
     }
     input.value = text;
+    if (edit) input.dataset.editing = 'last';
+    // Restore attachments that were cleared optimistically so the user
+    // never loses uploaded files on a transient network or 401 failure.
+    if (savedAttachments.length) {
+      state.attachments = savedAttachments.concat(state.attachments);
+      renderAttachments();
+    }
   } finally {
     if (button) button.disabled = false;
   }
 }
 
-// The edit affordance (parity row 16): the last user input returns to
-// the composer; the re-submit sends :edit, the engine drops the old
-// turn and re-runs — one replacement, never a duplicate.
 function editLast() {
   const input = el('cockpit-text');
   const last = getLastUserInput();
@@ -379,12 +432,22 @@ function editLast() {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 160) + 'px';
   input.dataset.editing = 'last';
+  composerMachine.force('editing');
+}
+
+function cancelEdit() {
+  const input = el('cockpit-text');
+  if (!input || input.dataset.editing !== 'last') return;
+  delete input.dataset.editing;
+  input.value = '';
+  input.style.height = 'auto';
+  composerMachine.force('idle');
 }
 
 function submitFromComposer(e) {
-  e.preventDefault();
+  if (e) e.preventDefault();
   const input = el('cockpit-text');
-  const edit = input && input.dataset.editing === 'last';
+  const edit = Boolean(input && input.dataset.editing === 'last');
   if (input) delete input.dataset.editing;
   send({ edit });
 }
@@ -394,10 +457,17 @@ function submitFromComposer(e) {
 export function bootCockpit() {
   const form = el('cockpit-form');
   if (!form) return;
+  projectAttr('#col-cockpit', 'data-compose-state', composerMachine.state());
+  projectAttr('#col-cockpit', 'data-job-state', jobMachine.state());
   form.addEventListener('submit', submitFromComposer);
   const input = el('cockpit-text');
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send({}); }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      submitFromComposer(e);
+    } else if (e.key === 'Escape' && input.dataset.editing === 'last') {
+      e.preventDefault();
+      cancelEdit();
+    }
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
@@ -410,8 +480,6 @@ export function bootCockpit() {
     if (e.target.files && e.target.files.length) uploadFiles([...e.target.files]);
     e.target.value = '';
   });
-  // microphone: feature-detected — the button hides itself when the
-  // browser cannot record. Tap starts, tap again stops+sends.
   const micBtn = el('cockpit-mic');
   if (micBtn) {
     if (micSupported()) {
@@ -428,8 +496,6 @@ export function bootCockpit() {
       micBtn.hidden = true;
     }
   }
-  // camera: capture="environment" rides the same upload lane; photo
-  // sends immediately like a Telegram camera shot.
   const camBtn = el('cockpit-camera');
   if (camBtn) {
     camBtn.hidden = false;
@@ -442,25 +508,17 @@ export function bootCockpit() {
       });
     });
   }
-  // edit affordance: the last user input returns to the composer
   const editBtn = el('cockpit-edit');
   if (editBtn) editBtn.addEventListener('click', editLast);
   window.addEventListener('theseus:open-session', (e) => {
     if (e.detail && e.detail !== state.session) pickSession(e.detail);
   });
   loadTranscript(state.session);
-  // Everything else rides the push: the session list arrives in every
-  // state event, the job map lands here while a turn runs. A reloaded
-  // page re-watches its remembered job; if the server restarted the job
-  // shows :interrupted and the retry button takes over from there.
   if (state.jobId) renderJob({ status: 'queued', events: [] });
   let seenSessions = null;
   return {
     onState: (st) => {
       if (Array.isArray(st['session-list'])) {
-        // cross-channel sync (parity row 13): a session that moved but
-        // is NOT the one our running job writes to grew from the other
-        // channel — reload its transcript if it is the open one.
         const moved = reloadTarget(seenSessions, st['session-list'], state.busySession);
         seenSessions = st['session-list'];
         if (moved === state.session && !state.jobId) loadTranscript(state.session);
@@ -473,10 +531,6 @@ export function bootCockpit() {
         if (job.status === 'done' || job.status === 'failed' ||
             job.status === 'interrupted' || job.status === 'canceled') jobFinished(job);
       } else if (!verifyingGone) {
-        // A snapshot can predate the POST that created the job (issue #35:
-        // a poll/push frame raced the send and the cockpit declared the
-        // job "gone" before the engine ever ran it). Missing ≠ gone —
-        // ask the job route; only a real 404 ends the watch.
         verifyingGone = true;
         const id = state.jobId;
         get('/api/job/' + encodeURIComponent(id))

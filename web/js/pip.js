@@ -1,22 +1,33 @@
 // deck pip — Document Picture-in-Picture mini cockpit: the led, the
 // running job, and the EAT clock in an always-on-top window that
-// follows you out of the tab. Chromium-only API, feature-detected —
-// the button simply doesn't exist where the platform doesn't.
-// The pip window shares this page's JS realm, so updates are direct
-// DOM writes from the same stream handler; no postMessage bridge.
+// follows you out of the tab. Reads connection state directly from
+// state.js instead of scraping DOM text/classes.
 
 import { eatClock } from './time.js';
+import { connLabel, connState } from './state.js';
+import { createMachine, registerMachine, projectAttr } from './fsm.js';
+
+const pipMachine = registerMachine(createMachine({
+  name: 'pip',
+  initial: 'unavailable',
+  transitions: {
+    unavailable: ['closed'],
+    closed: ['open'],
+    open: ['closed'],
+  },
+  onTransition: ({ to }) => projectAttr('#pip-toggle', 'data-state', to),
+}));
 
 let pipWindow = null;
 let els = null;
 let jobs = {};
 let timer = null;
 
-function available() { return 'documentPictureInPicture' in window; }
+function available() {
+  return typeof window !== 'undefined' && 'documentPictureInPicture' in window;
+}
 
 function copyStyles(win) {
-  // all deck styles are <link> sheets (style-src 'self' in the CSP
-  // blocks <style> elements in the inherited policy) — clone links
   for (const sheet of document.styleSheets) {
     if (sheet.href) {
       const link = win.document.createElement('link');
@@ -34,12 +45,13 @@ function node(win, tag, cls, text) {
   return n;
 }
 
-function elapsedLabel(ms) {
+// Pure helper exported for Node unit tests (fixes the total / 60 hours bug).
+export function formatElapsed(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
   if (total < 60) return total + 's';
   const minutes = Math.floor(total / 60);
   if (minutes < 60) return minutes + 'm ' + (total % 60) + 's';
-  return Math.floor(total / 60) + 'h ' + (minutes % 60) + 'm';
+  return Math.floor(total / 3600) + 'h ' + (minutes % 60) + 'm';
 }
 
 function runningJob() {
@@ -58,16 +70,15 @@ function renderJob() {
   const elapsed = started ? Math.max(0, ended - started) : 0;
   const steps = (job.events || []).length;
   els.job.className = 'pip-job ' + job.status;
-  els.job.textContent = job.status + ' · ' + elapsedLabel(elapsed) + ' · '
+  els.job.textContent = job.status + ' · ' + formatElapsed(elapsed) + ' · '
     + steps + (steps === 1 ? ' step' : ' steps');
 }
 
 function renderStatus() {
   if (!els) return;
-  const state = document.getElementById('api-state');
-  const led = document.querySelector('.status-led, .led');
-  els.state.textContent = state ? state.textContent : '';
-  els.led.className = 'pip-led ' + (led ? led.className.replace(/^led\s*/, '') : 'off');
+  const st = connState();
+  els.state.textContent = connLabel() || '';
+  els.led.className = 'pip-led ' + (st && st.led ? st.led : 'off');
 }
 
 function tick() {
@@ -100,8 +111,10 @@ async function openPip(button) {
     timer = null;
     pipWindow = null;
     els = null;
+    pipMachine.force('closed');
     if (button) button.textContent = '⧉';
   });
+  pipMachine.force('open');
   timer = setInterval(tick, 1000);
   tick();
   if (button) button.textContent = '⧉ on';
@@ -115,7 +128,11 @@ export function pipPush(st) {
 export function bootPip() {
   const button = document.getElementById('pip-toggle');
   if (!button) return;
-  if (!available()) return; // stays hidden: the platform has no PiP document
+  if (!available()) {
+    projectAttr(button, 'data-state', 'unavailable');
+    return;
+  }
+  pipMachine.force('closed');
   button.hidden = false;
   button.addEventListener('click', () => {
     if (pipWindow) { pipWindow.close(); return; }
