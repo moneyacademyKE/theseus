@@ -97,7 +97,8 @@
                                [bb-agent.plan-and-subagent-test]
                                [bb-agent.opencrabs-polish-test]
                                [bb-agent.duskbot-tier1-test]
-                               [bb-agent.duskbot-tier2-test])
+                               [bb-agent.duskbot-tier2-test]
+                               [bb-agent.duskbot-tier3-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -142,7 +143,8 @@
                                              'bb-agent.plan-and-subagent-test
                                              'bb-agent.opencrabs-polish-test
                                              'bb-agent.duskbot-tier1-test
-                                             'bb-agent.duskbot-tier2-test)]
+                                             'bb-agent.duskbot-tier2-test
+                                             'bb-agent.duskbot-tier3-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"

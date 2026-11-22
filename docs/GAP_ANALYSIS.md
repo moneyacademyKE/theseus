@@ -93,3 +93,13 @@ Three Red/Green TDD waves (`aaf9b63`, `ff75512`, Wave 3 + ADR `0007`) closed the
 - **Wave 4 (OpenCrabs Polish — 6 Remaining Mechanics):** Added tool-name alias/Levenshtein-1 + parameter-alias self-healing (`tool/common.clj`), harness-written `## PLAN STATE (harness)` prompt injection (`plan.clj`/`core.clj`), 20% `bounded-output-tokens` cap + `calibrate-token-report` (`compression.clj`/`provider.clj`), session sticky fallback promotion + `guard-model-leak` (`fallback.clj`/`core.clj`), `turn_signals` → `rsi/analyze` `:friction-signals` aggregation (`rsi.clj`), and `extract-bare-tool-call` + `unrun-fenced-shell?` (`turn_integrity.clj`/`core.clj`).
 
 **Rich Hickey certification:** ~1,050 LOC of pure, zero-dependency data transformations closed the surgical-editing, skill-enforcement, parallel-read, prompt-cache, worktree-subagent, plan-gate, alias-healing, sticky-fallback, and RSI friction-signal gaps without importing OpenCrabs's 400k-LOC platform tax.
+
+---
+
+## 7. DuskBot-Inspired Reliability, Safety Floor, Pacing & Memory Upgrades (2026-11-22)
+
+Eleven zero-dependency capabilities (plus PII-free failure-signature normalization) adapted from `DuskBotAI/duskbot` landed across three Red/Green TDD commits (`82d349b`, `2a2eb00`, Tier 3 + ADR `0008`):
+
+- **Tier 1 (`82d349b`):** `bb-agent.tool-hints` (5 failure classes + `:next-step` directives + `find /` shell timeout hints wired at `tool.clj`), 6 deterministic post-turn stop gates (`turn-integrity/stop-gate-for`, max 2/turn), and authorship-verified memory taint gate (`security/memory-trust-verdict` wired in `memory/add-memory!`).
+- **Tier 2 (`2a2eb00`):** `bb-agent.shell-lexer` (linear-time shell scanner ignoring quoted/heredoc data, failing closed on unsynced syntax), `bb-agent.schedule-probe` (macOS Seatbelt SBPL sandbox + stripped env + output-diff/`wakeAgent` trigger + boot-hold/daily-cap/deterministic-backoff pacing), `bb-agent.action-receipts` (declarative action-claim vs. tool-receipt auditor + 0600 monthly JSONL receipts + `failure-key` normalizer), and `bb-agent.deliverable-check` (zero-tool untrusted-document critic).
+- **Tier 3 (ADR `0008`):** `bb-agent.warm-compaction` (idle-gap background compaction inside prompt-cache TTL), `bb-agent.batch-checklist` (monotonic crash-resumable restart-merge checklist), `bb-agent.memory-dream` (cross-conversation DREAM consolidation with deterministic user-quote verification), and `bb-agent.checkpoints` (bare shadow-git per-turn workspace snapshots/diffs/restores). Allowlisted `"receipts"`, `"checklists"`, `"checkpoints"` in `state_hygiene.clj`.

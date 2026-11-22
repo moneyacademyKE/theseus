@@ -11,6 +11,7 @@ Only active, factually accurate documentation for the current codebase is indexe
 - [ADR 0005 — Mercury-Agent Safety, Token Economics, Turn Integrity & Self-Learning](babashka-rewrite/adr/0005-mercury-agent-safety-economics-and-learning.md)
 - [ADR 0006 — Web Deck Explicit State Machines & UX/DX/AX Hardening](babashka-rewrite/adr/0006-webdeck-explicit-state-machines.md)
 - [ADR 0007 — OpenCrabs v0.6.0 Workflow Parity: Surgical I/O, Mechanical Gates, Parallel Reads & Live Subagents](babashka-rewrite/adr/0007-opencrabs-parity-surgical-io-gates-and-subagents.md)
+- [ADR 0008 — DuskBot-Inspired Reliability, Safety Floor, Pacing & Memory Upgrades](babashka-rewrite/adr/0008-duskbot-reliability-safety-and-memory-upgrades.md)
 
 ## Active Subsystems & Audits
 - [The Web Deck](webdeck.md) — architecture, explicit state machines, AX contract (`window.__THESEUS_DECK__`, `data-*`), vendoring policy, and tests.
