@@ -9,10 +9,12 @@
   [{:type "function"
     :function
     {:name "read_file"
-     :description "Read a text file from disk and return its contents."
+     :description "Read a text file from disk (full file or optional 1-based inclusive line range)."
      :parameters
      {:type "object"
-      :properties {"path" {:type "string" :description "File path to read"}}
+      :properties {"path" {:type "string" :description "File path to read"}
+                   "start_line" {:type "integer" :description "Optional 1-based starting line (inclusive)"}
+                   "end_line" {:type "integer" :description "Optional 1-based ending line (inclusive)"}}
       :required ["path"]}}}
    {:type "function"
     :function
@@ -27,6 +29,19 @@
       :required ["path" "content"]}}}
    {:type "function"
     :function
+    {:name "edit_file"
+     :description "Surgically edit an existing file via exact/fuzzy search-and-replace (old_text/new_text) or 1-based inclusive line range (start_line/end_line/new_text). Prefer this over write_file when modifying existing files."
+     :parameters
+     {:type "object"
+      :properties {"path" {:type "string" :description "Existing file path to edit"}
+                   "old_text" {:type "string" :description "Exact text to replace (for search-replace mode)"}
+                   "new_text" {:type "string" :description "Replacement text"}
+                   "replace_all" {:type "boolean" :description "Replace all exact occurrences (default false)"}
+                   "start_line" {:type "integer" :description "1-based start line (inclusive, for line-range mode)"}
+                   "end_line" {:type "integer" :description "1-based end line (inclusive, for line-range mode)"}}
+      :required ["path" "new_text"]}}}
+   {:type "function"
+    :function
     {:name "shell"
      :description "Run a shell command and return stdout/stderr (subject to approval policy)."
      :parameters
@@ -38,11 +53,13 @@
    {:type "function"
     :function
     {:name "search"
-     :description "Search a file for a query string; returns matching lines with line numbers."
+     :description "Search a file or directory for a query string or regex; returns matching lines with line numbers."
      :parameters
      {:type "object"
-      :properties {"path" {:type "string" :description "File path to search"}
-                   "query" {:type "string" :description "Text to search for"}}
+      :properties {"path" {:type "string" :description "File or directory path to search"}
+                   "query" {:type "string" :description "Text or regex pattern to search for"}
+                   "regex" {:type "boolean" :description "Treat query as a regular expression (default false)"}
+                   "glob" {:type "string" :description "Optional filename glob filter (e.g. \"*.clj\")"}}
       :required ["path" "query"]}}}
    {:type "function"
     :function

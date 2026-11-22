@@ -19,7 +19,7 @@
 
 (def control-tools
   "Tools that mutate local state or execute commands."
-  #{"write_file" "shell" "launch_goal"})
+  #{"write_file" "edit_file" "shell" "launch_goal" "spawn_subagent"})
 
 (def outbound-tools
   "Tools that transmit data off-host or to external channels."

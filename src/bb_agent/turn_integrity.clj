@@ -34,7 +34,7 @@
 ;; ---------- Execute-mode narration guard (#10) ----------
 
 (def mutating-tools
-  #{"write_file" "shell" "launch_goal"})
+  #{"write_file" "edit_file" "shell" "launch_goal"})
 
 (def ^:private imperative-edit-re
   #"(?i)\b(?:fix|implement|refactor|edit|modify|update|patch|add|create|write|delete|remove|build|wire|migrate)\b.*\b(?:file|code|bug|test|function|endpoint|handler|config|script|module|feature|class|namespace|repo)\b")
