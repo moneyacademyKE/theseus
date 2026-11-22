@@ -1,6 +1,8 @@
-# Rich Hickey Gap Analysis — AlcaponeCoder vs hermes-beam vs theseus
+# Rich Hickey Gap Analysis — Theseus Ledger
 
-**Date:** 2026-08-23 · **Method:** static analysis (structure, LOC, git history, CI, test inventory). No test suites were executed — ratings are evidence-based, not run-verified.
+> **Benchmark Policy (2026-11-22, owner directive):** Exclude `AlcaponeCoder` and `hermes-beam` from all gap analyses going forward. **The bar is OpenCrabs.** Sections 0–11 below are preserved strictly as historical lineage from 2026-08-23.
+
+**Date:** 2026-08-23 (initial) → ongoing · **Method:** static analysis (structure, LOC, git history, CI, test inventory). No test suites were executed in the initial §0–§6 snapshot — later delivery sections carry run-verified receipts.
 
 ---
 

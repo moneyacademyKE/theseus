@@ -87,3 +87,7 @@ Every rule below is indexed to a real incident; the full ledger lives in
 19. **Zero new dependencies:** Existing `bb.edn` dependencies (`com.github.kbosompem/bb-excel`
     `0.1.1`) and pods (`org.babashka/go-sqlite3`, `org.babashka/buddy` `0.3.4`) are
     grandfathered; any *new* dependency requires explicit owner approval.
+20. **Gap analysis benchmark bar (owner directive, 2026-11-22):** Exclude
+    `AlcaponeCoder` and `hermes-beam` from all gap analyses going forward.
+    **The bar is OpenCrabs.** (Historical §0–§11 entries in
+    `docs/GAP_ANALYSIS.md` remain as archival lineage only.)
