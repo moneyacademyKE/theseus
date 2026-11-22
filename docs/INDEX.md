@@ -1,35 +1,22 @@
-- 0. The Headline — Three repos are generations of one agent runtime lineage
-- 1. Maturity Dashboard — Side-by-side metrics and composite maturity scores per repo
-- 2. Module-by-Module Feature Matrix — Capability comparison across all three repos' modules
-- 3. Per-Repo Module Maturity — Per-module ratings with strengths, weaknesses, repo sins
-- 4. Rich Hickey Decomposition — Complecting vs Decomplecting — Code got simpler; repo boundaries kept complecting
-- 5. The Gaps (What to Port Where) — Numbered list of ports between the three repos
-- 6. Recommendation (Opinionated) — Bet on theseus as trunk; port patterns, not platforms
-- 7. Ports Executed (2026-08-23) — Compression, circuit breaker, classifier, CI landed on theseus
-- 8. Addition Roadmap — what else theseus needs (2026-08-23) — Five prioritized additions plus a refuse list
-- 9. Roadmap Items 1–4 Executed (2026-08-23, later session) — Retry, cron tests, benchmark, subagents delivered with findings
-- 10. Delivery Record (2026-08-23, final) — PR merged, CI green, v0.2.0 released
-- 11. Item 5 Execution Record (2026-08-23, later) — Semantic memory ported; concurrent-writer incident resolved; v0.3.0 released
-- §13. V2 Delivery Record (v0.4.0, 2026-08-29) — PR #6 merged cleanly, release ceremony lessons applied
-- §14. V3 Pattern-Port Execution Record (OpenCrabs → theseus, 2026-08-30) — Doctor, stats, brain files ported; worker collisions absorbed
-- §15. v0.5.0 Release Record (2026-08-30) — Release shipped; wrong cost-table claim corrected by reading files
-- §16. Policy Predicates: Prose → Enforcement (2026-08-30) — Sandbox-evaluated policy rules gate tool approvals, fail-safe
-- 17. v0.6.0 release — 2026-08-30 — Policy PR merged and released via single-pass ceremony
-- 18. Binary distribution (2026-08-30) — Uberjar shipped; phantom native-standalone claim debunked
-- §19. Port proposal: OpenCrabs RSI + RTK (2026-08-30, investigation) — Analysis of token filters and self-improvement loop ports
-- 20. V5 execution record — RTK filters + RSI v1 (2026-08-30) — Both ports shipped; five defects self-caught
-- 21. v0.7.0 release + jar defect — 2026-08-30 — Release shipped; broken jar caught only by cold-run smoke
-- §22. Real work: tool advertisement (v0.8.0 arc) — Real model exposed unadvertised tools; registry shipped and pinned
-- 23. Telegram gateway — parity tier 1 (2026-08-30) — HTML rendering, fail-closed allowlist, poll loop, five defects
-- 24. Telegram group and forum-topic parity (2026-08-31) — Actor identity replaces chat identity; topic-scoped sessions
-- Telegram delivery integrity — bounded Retry-After, HTML-to-plain fallback, and authorized inert attachments (`TELEGRAM_DELIVERY_INTEGRITY_PARITY.md`)
-- Product-readiness audit + R1–R5 roadmap (2026-09-09) — durable outbox, graceful shutdown, boot health, log cap, stats, state hygiene gate; v0.9.0 (`docs/audits/product-readiness-audit-2026-09-09.md`)
-- Dogfood v0.9.0 (2026-09-09) — real goal over Telegram topic; authoring-stall watchdog recalibrated (progress-based fuse) (`docs/dogfood-v0.9.0-report.md`)
-- v1.0.0 release (2026-09-09) — V1–V7: detached authoring + live progress, deliverables out, /goal control, skill economy, durable queue, daily digest, `bb release` (`docs/roadmaps/v1.0-enhancement-roadmap.md`)
-- Post-v1.0 hardening (2026-09-10/11) — approval modes, veto-vs-approval distinction, flow compression, session cap, poll backoff, instance lock; v1.1.0 (`docs/audits/fix-all-round2-2026-09-09.md`)
-- Axiom seam map (2026-09-10) — blend was a fold-in: `bb-agent.goal.*` IS axiom renamed; external repo frozen (`docs/axiom-seam-map.md`)
-- Codebase audit remediation & honest gates (2026-11-21) — security boundaries, `clj-kondo` warning-level enforcement, loopback test binds, Anthropic wire parity, decomplected brain ledgers, SQLite/approval concurrency hardening, and ADR 0002 (`docs/GAP_ANALYSIS.md` §25, `docs/babashka-rewrite/adr/0002-codebase-audit-hardening-and-honest-gates.md`)
-- Audit wave 2: shared atomic I/O, security boundaries & runtime hardening (2026-11-22) — `bb-agent.atomic-io`, `write_file` secret protection, `rtk` read-eval block, `notify`/`a2a`/`browser` bounds, Telegram timeouts, transactional `web_search`, and ADR 0003 (`docs/GAP_ANALYSIS.md` §26, `docs/babashka-rewrite/adr/0003-audit-wave2-atomic-io-and-runtime-hardening.md`)
-- Hierarchical context compaction & persistent checkpoints (2026-11-22) — rolling EDN checkpoints, structured memory ledger, `[Turns A-B]` provenance + `session/load-turn-range`, 1-line tool breadcrumbs, model-aware dynamic history budget, pure retention check, and ADR 0004 (`docs/GAP_ANALYSIS.md` §27, `docs/babashka-rewrite/adr/0004-hierarchical-context-compaction.md`)
-- Mercury-agent safety, economics, integrity & learning upgrades (2026-11-22) — taint tracking, injection spotlighting, exfil detection, Anthropic prompt caching, `discover_tools`, Token Saver Mode, finish-reason recovery, execute guard, silent receipts, stall watchdog, crash flag, evidence-backed beliefs, turn signals, and ADR 0005 (`docs/GAP_ANALYSIS.md` §28, `docs/babashka-rewrite/adr/0005-mercury-agent-safety-economics-and-learning.md`)
-- Web Deck implicit state-machine audit & UX/DX/AX hardening (2026-11-22) — 24 state machines inventoried, zero-dep `web/js/fsm.js` kernel + `createGate` + frozen `window.__THESEUS_DECK__`, 15 UX/DX/AX decisions & live bug fixes, and ADR 0006 (`docs/audits/webdeck-state-machines-2026-11-22.md`, `docs/GAP_ANALYSIS.md` §29, `docs/babashka-rewrite/adr/0006-webdeck-explicit-state-machines.md`)
+# Theseus Documentation Index
+
+Only active, factually accurate documentation for the current codebase is indexed here.
+
+## Architecture & Decisions
+- [Babashka Rewrite Spec, Roadmap & Tasklist](babashka-rewrite/README.md) — `PRODUCT_SPEC.md`, `ROADMAP.md`, `TASKLIST.md` (verified by `bb verify:rewrite-docs`).
+- [ADR 0001 — Babashka-Only Semantic Rewrite](babashka-rewrite/adr/0001-babashka-only-rewrite.md)
+- [ADR 0002 — Codebase Audit Hardening and Honest Gates](babashka-rewrite/adr/0002-codebase-audit-hardening-and-honest-gates.md)
+- [ADR 0003 — Audit Wave 2: Shared Atomic I/O, Security Boundaries & Runtime Hardening](babashka-rewrite/adr/0003-audit-wave2-atomic-io-and-runtime-hardening.md)
+- [ADR 0004 — Hierarchical Context Compaction & Persistent Checkpoints](babashka-rewrite/adr/0004-hierarchical-context-compaction.md)
+- [ADR 0005 — Mercury-Agent Safety, Token Economics, Turn Integrity & Self-Learning](babashka-rewrite/adr/0005-mercury-agent-safety-economics-and-learning.md)
+- [ADR 0006 — Web Deck Explicit State Machines & UX/DX/AX Hardening](babashka-rewrite/adr/0006-webdeck-explicit-state-machines.md)
+
+## Active Subsystems & Audits
+- [The Web Deck](webdeck.md) — architecture, explicit state machines, AX contract (`window.__THESEUS_DECK__`, `data-*`), vendoring policy, and tests.
+- [Web Deck State-Machine Audit (2026-11-22)](audits/webdeck-state-machines-2026-11-22.md) — full 24-machine inventory and 15 UX/DX/AX decisions.
+- [Hot-Code Reload](hot-reload.md) — opt-in launchd development supervisor (`THESEUS_HOT_RELOAD=1`).
+- [Goal Runner × OpenCode Dogfood Ladder](opencode-dogfood.md) — dogfood contract pinned by `test/bb_agent/goal/phase9_opencode_dogfood_test.clj`.
+
+## Gap Analysis (Benchmark Bar: OpenCrabs)
+- [Theseus Current Gap Analysis & Delivery Ledger](GAP_ANALYSIS.md) — active audits, learnings, patterns, and verified receipts.
+- [Theseus vs OpenCrabs — Architecture Gap Analysis](gap-analysis-theseus-vs-opencrabs-2026-11-11.md) — tool/architecture comparison against the OpenCrabs bar.

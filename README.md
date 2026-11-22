@@ -154,7 +154,7 @@ bb test:e2e:all    # full composite (includes boot-load pins, state hygiene, fak
 
 ## Documentation
 
-See `docs/babashka-rewrite/` for the product spec, roadmap, tasklist, and ADR. Audits and release records live in `docs/audits/` and `docs/roadmaps/`; `docs/INDEX.md` is the lineage record.
+See `docs/INDEX.md` for active architecture docs, ADRs (`docs/babashka-rewrite/adr/`), current audits (`docs/audits/`), and the OpenCrabs gap-analysis ledger (`docs/GAP_ANALYSIS.md`).
 
 ## Running as a daemon (launchd)
 
@@ -188,8 +188,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.theseus.telegram.pli
 
 A TweetDeck-style dashboard over live state: the **cockpit** column is
 the interactive surface (full parity with how Theseus interacts over
-Telegram — the row-by-row contract and its closure witness live in
-`docs/webdeck-parity.md` and `docs/webdeck-parity-witness.edn`), and
+Telegram — architecture, state machines, and AX contract live in
+`docs/webdeck.md`), and
 the rest are read-only columns for LLM turns, the tool-funnel table,
 the RSI digest, session summaries, goals, schedule runs, and system
 health. Run it directly:
