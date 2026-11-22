@@ -19,4 +19,4 @@ Only active, factually accurate documentation for the current codebase is indexe
 
 ## Gap Analysis (Benchmark Bar: OpenCrabs)
 - [Theseus Current Gap Analysis & Delivery Ledger](GAP_ANALYSIS.md) — active audits, learnings, patterns, and verified receipts.
-- [Theseus vs OpenCrabs — Architecture Gap Analysis](gap-analysis-theseus-vs-opencrabs-2026-11-11.md) — tool/architecture comparison against the OpenCrabs bar.
+- [Theseus vs OpenCrabs v0.6.0 — Workflows, Tools & LLM Build Mechanics (2026-11-22)](gap-analysis-theseus-vs-opencrabs-2026-11-22.md) — deep side-by-side analysis against OpenCrabs `v0.6.0` (`8666ca2d9`).
