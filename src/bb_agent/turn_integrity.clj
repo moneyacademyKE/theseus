@@ -195,3 +195,84 @@
          (not (re-find show-example-prompt-re p))
          (boolean (re-find run-command-prompt-re p))
          (boolean (re-find fenced-shell-re c)))))
+
+;; ---------- Deterministic Post-Turn Stop Gates ----------
+
+(def ^:private max-stop-gates 2)
+
+(def ^:private follow-up-promise-re
+  #"(?i)\b(?:i(?:'ll| will)\s+(?:remind you|keep an eye on|check back|follow up|watch for|monitor|ping you|let you know)|i(?:'ve| have)\s+scheduled)\b")
+
+(def ^:private bare-agree-re
+  #"(?i)^\s*(?:you(?:'re| are)\s+(?:totally\s+|completely\s+|absolutely\s+)?right|good catch|my mistake|fair point|understood|got it)(?:[\s,;:-]+(?:my mistake|sorry|good catch|understood|got it|my bad))?[\s.,!]*$")
+
+(def ^:private announces-step-re
+  #"(?i)(?:^\s*(?:let me|i(?:'ll| will))\s+(?:check|inspect|look|read|run|verify|search)\b[^.!?\n]{0,120}(?:\.\.\.|:)\s*$|\bshould i (?:continue|proceed|go ahead)\??\s*$)")
+
+(def ^:private outward-destructive-re
+  #"(?i)\b(?:send|email|delete|remove|drop|deploy|push|publish|pay|purchase|wire|transfer)\b")
+
+(def ^:private bare-ack-re
+  #"(?i)^\s*(?:on it|working on it|checking now|let me check|one moment|sure thing|will do)[\s.,!]*$")
+
+(defn- bare-tool-ack? [res]
+  (let [out (str/trim (str (or (:output res) (:content res) (:stdout res) "")))]
+    (and (= :ok (:status res))
+         (contains? #{"write_file" "edit_file" "shell" "a2a_task"} (:tool/name res))
+         (or (str/blank? out)
+             (#{"ok" "done" "true" "{}" "{\"ok\":true}" "{\"ok\": true}"} (str/lower-case out))))))
+
+(defn stop-gate-for
+  "Evaluate 6 deterministic post-turn stop gates (capped at 2 per turn, each
+   kind at most once, never after a failed/interrupted turn). Returns nil when
+   the reply is clean, or {:gate kw :nudge str}."
+  [{:keys [prompt content tool-results fired-gates turn-ok?]
+    :or {fired-gates #{} turn-ok? true}}]
+  (let [c (str/trim (str (or content "")))
+        p (str/trim (str (or prompt "")))
+        results (vec (or tool-results []))
+        fired (set fired-gates)
+        can-fire? (fn [k] (and (not (contains? fired k)) (< (count fired) max-stop-gates)))
+        ran-schedule-or-goal? (some #(contains? #{"launch_goal" "plan"} (:tool/name %)) results)]
+    (when (and turn-ok? (not (str/blank? c)) (< (count fired) max-stop-gates))
+      (cond
+        (and (can-fire? :follow-up)
+             (not ran-schedule-or-goal?)
+             (re-find follow-up-promise-re c))
+        {:gate :follow-up
+         :nudge "Stop gate: you promised a future follow-up or reminder, but no scheduling/goal tool ran. Either schedule/create it now or tell the user honestly you cannot watch asynchronously."}
+
+        (and (can-fire? :checklist)
+             (re-find #"(?m)^\s*[-*]\s+\[x\]" c)
+             (re-find #"(?m)^\s*[-*]\s+\[ \]" c))
+        {:gate :checklist
+         :nudge "Stop gate: your reply has both completed [x] and open [ ] checklist items. Finish the remaining open items you own before concluding."}
+
+        (and (can-fire? :bare-agree)
+             (empty? results)
+             (re-find bare-agree-re c)
+             (re-find imperative-edit-re p))
+        {:gate :bare-agree
+         :nudge "Stop gate: you agreed with the user without calling any tools. Perform the requested fix now instead of only acknowledging."}
+
+        (and (can-fire? :open-items)
+             (empty? results)
+             (re-find bare-ack-re c))
+        {:gate :open-items
+         :nudge "Stop gate: your reply is an acknowledgement only. Execute the work and return the actual result."}
+
+        (and (can-fire? :announces-step)
+             (re-find announces-step-re c)
+             (not (re-find outward-destructive-re c)))
+        {:gate :announces-step
+         :nudge "Stop gate: you announced your next read-only step instead of executing it. Run the step now and finish the answer."}
+
+        (and (can-fire? :unconfirmed-write)
+             (seq results)
+             (bare-tool-ack? (peek results))
+             (not (some #(= "read_file" (:tool/name %)) (rest (reverse results))))
+             (re-find #"(?i)\b(?:done|saved|written|updated|confirmed)\b" c))
+        {:gate :unconfirmed-write
+         :nudge "Stop gate: the last side-effecting tool returned only a bare ack. Verify/read back the result before confirming completion."}
+
+        :else nil))))

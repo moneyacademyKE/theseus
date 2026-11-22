@@ -3,6 +3,7 @@
             [bb-agent.atomic-io :as aio]
             [bb-agent.beliefs :as beliefs]
             [bb-agent.config :as config]
+            [bb-agent.security :as sec]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [pod.babashka.go-sqlite3 :as sqlite]))
@@ -88,17 +89,23 @@
       (vec entries))))
 
 (defn add-memory!
-  "Upsert a belief entry with local negation-aware deduplication and
-   non-destructive contradiction handling. Kind defaults to :raw;
-   :curated entries rank before raw ones in search regardless of score."
+  "Upsert a belief entry with local negation-aware deduplication,
+   non-destructive contradiction handling, and optional authorship-verified
+   memory taint gating when opts carries :exposure. Kind defaults to :raw."
   ([text] (add-memory! text :raw))
-  ([text kind]
-   (let [entry {:memory/id (str (random-uuid))
-                :memory/text text
-                :memory/kind kind}
-         [entries saved] (beliefs/upsert-belief (load-memories) entry)]
-     (save-memories! entries)
-     saved)))
+  ([text kind-or-opts]
+   (let [opts (if (map? kind-or-opts) kind-or-opts {:kind kind-or-opts})
+         kind (or (:kind opts) :raw)
+         verdict (when (:exposure opts)
+                   (sec/memory-trust-verdict text (:exposure opts) (:user-messages opts)))]
+     (if (and verdict (not (:allowed? verdict)))
+       {:blocked? true :reason (:reason verdict) :verdict verdict}
+       (let [entry {:memory/id (str (random-uuid))
+                    :memory/text text
+                    :memory/kind kind}
+             [entries saved] (beliefs/upsert-belief (load-memories) entry)]
+         (save-memories! entries)
+         saved)))))
 
 (defn curate-memory!
   "Promote the entry with `id` to :curated. Throws when no entry

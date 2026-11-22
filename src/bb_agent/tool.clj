@@ -12,6 +12,7 @@
             [bb-agent.browser-tool :as browser-tool]
             [bb-agent.tools :as tools]
             [bb-agent.tool.common :as common]
+            [bb-agent.tool-hints :as hints]
             [bb-agent.tool.file :as file]
             [bb-agent.tool.goal :as goal]
             [bb-agent.tool.process :as process]
@@ -199,4 +200,4 @@
                            :denial-category (:denial/category result)
                            :denial-reason (:denial/reason result)})
        (catch Exception _ nil))
-     (rtk/apply request result cfg))))
+     (hints/attach-next-step request (rtk/apply request result cfg)))))

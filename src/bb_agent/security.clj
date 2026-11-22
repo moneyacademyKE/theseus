@@ -236,3 +236,65 @@
        :reason (str "Tainted turn on non-frontier model requires approval for " tool-name)}
 
       :else :allow)))
+
+;; ---------- Authorship-Verified Memory Taint Gate (Anti-SpAIware / MINJA) ----------
+
+(def ^:private memory-filler-words
+  #{"the" "a" "an" "and" "or" "but" "is" "are" "was" "were" "be" "been" "to"
+    "of" "in" "on" "for" "with" "at" "by" "from" "as" "that" "this" "it"
+    "user" "prefers" "always" "never" "likes" "wants" "uses" "should" "will"})
+
+(defn- special-literal-tokens [s]
+  (->> (re-seq #"[^\s,;:()\"'<>]+" (str (or s "")))
+       (map str/lower-case)
+       (filter (fn [tok]
+                 (or (re-find #"\d" tok)
+                     (str/includes? tok "@")
+                     (re-find #"\.[a-z]{2,}$" tok))))
+       set))
+
+(defn- content-stems [s]
+  (->> (re-seq #"[a-z]{3,}" (str/lower-case (str (or s ""))))
+       (remove memory-filler-words)
+       (map #(if (> (count %) 5) (subs % 0 5) %))
+       set))
+
+(defn memory-trust-verdict
+  "Gate memory/belief persistence against persistent prompt injection:
+   1. Unconditionally blocks instruction-like payloads (override/exfil/secrecy).
+   2. When the turn read untrusted external content (:external? or :suspicious?),
+      requires that every digit/@/.tld literal token AND >= 60% of non-filler
+      content stems appeared in the user's own typed messages."
+  [candidate-text exposure user-messages]
+  (let [text (str (or candidate-text ""))
+        scan (scan-injection text)
+        exp (or exposure empty-exposure)
+        tainted? (or (:external? exp) (:suspicious? exp))]
+    (cond
+      (str/blank? text)
+      {:allowed? false :reason :empty}
+
+      (or (:suspicious? scan)
+          (re-find #"(?i)\b(?:auto[- ]?forward|send\s+all\s+(?:tokens|keys|secrets)|system\s+prompt)\b" text))
+      {:allowed? false :reason :instruction-like :signals (:signals scan)}
+
+      (not tainted?)
+      {:allowed? true}
+
+      :else
+      (let [user-corpus (str/join "\n" (map str (or user-messages [])))
+            user-lower (str/lower-case user-corpus)
+            specials (special-literal-tokens text)
+            all-specials-seen? (every? #(str/includes? user-lower %) specials)
+            cand-stems (content-stems text)
+            user-stems (content-stems user-corpus)
+            overlap (if (empty? cand-stems)
+                      1.0
+                      (/ (double (count (filter user-stems cand-stems)))
+                         (double (count cand-stems))))]
+        (if (and all-specials-seen? (>= overlap 0.6))
+          {:allowed? true :overlap overlap}
+          {:allowed? false
+           :reason :unauthored-tainted-memory
+           :overlap overlap
+           :unmatched-specials (vec (remove #(str/includes? user-lower %) specials))})))))
