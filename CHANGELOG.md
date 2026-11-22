@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added — zero-daemon Babashka-native Datalog engine (2026-11-22)
+
+- **Zero-dependency in-memory EAV Datalog (`src/bb_agent/datalog.clj`, ADR `0009`):** added pure-map immutable EAV/AEV/AVE store (`empty-db`, `db-with`, `:db.unique/identity`, `:db.type/ref`, cardinality-one upsert replacement + `:db.cardinality/many`, lookup refs, `:db/add`, `:db/retract`), `q` (`:find` relation/`[?x ...]`/`?x .`/aggregates `count`/`sum`/`min`/`max`, `:in`, real Clojure predicates, `(not ...)` negation), `pull` (explicit attrs, wildcard `:*`, nested ref maps), `hydrate-home!` + mtime-cached `theseus-db` over `state/memory.edn`, `state/session-summaries.edn`, and `goals/*/project.edn`, plus `bb datalog:query '<edn-query>'` in `bb.edn` (`datascript/datascript 1.8.1` verified incompatible under Babashka `v1.13.222` SCI due to `deftype` in `datascript/lru.cljc`). Verified: `bb lint` (`0 errors, 0 warnings`), `bb test-roster` (`133/133`, `0 never-run`), `bb test:bb-agent` (`441` tests / `2135` assertions, `0 failures, 0 errors`, including `3` tests / `22` assertions in `bb-agent.datalog-test`), `bb verify:rewrite-docs` (exit `0`), and `bb datalog:query` live smoke test (exit `0`).
+
 ## v1.4.0 - 2026-11-22
 
 ### Added / Changed / Fixed — codebase audit remediation (2026-11-21)

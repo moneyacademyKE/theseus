@@ -98,7 +98,8 @@
                                [bb-agent.opencrabs-polish-test]
                                [bb-agent.duskbot-tier1-test]
                                [bb-agent.duskbot-tier2-test]
-                               [bb-agent.duskbot-tier3-test])
+                               [bb-agent.duskbot-tier3-test]
+                               [bb-agent.datalog-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -144,7 +145,8 @@
                                              'bb-agent.opencrabs-polish-test
                                              'bb-agent.duskbot-tier1-test
                                              'bb-agent.duskbot-tier2-test
-                                             'bb-agent.duskbot-tier3-test)]
+                                             'bb-agent.duskbot-tier3-test
+                                             'bb-agent.datalog-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
@@ -196,6 +198,15 @@
      usage:query {:doc "SELECT-only SQL over a fresh usage index. Usage: bb usage:query <sql>"
                   :requires ([bb-agent.store :as store])
                   :task (apply store/-main *command-line-args*)}
+     datalog:query {:doc "Zero-daemon Datalog query over Theseus EDN state. Usage: bb datalog:query '<edn-query>'"
+                    :requires ([bb-agent.datalog :as dl]
+                               [clojure.edn :as edn]
+                               [clojure.pprint :as pp])
+                    :task (let [q-str (first *command-line-args*)]
+                            (if (seq q-str)
+                              (pp/pprint (dl/q (edn/read-string q-str) (dl/theseus-db)))
+                              (do (println "Usage: bb datalog:query '[:find ?t :where [?e :memory/text ?t]]'")
+                                  (System/exit 1))))}
      model {:doc "Model commands. Usage: bb model set/current ..."
             :requires ([bb-agent.cli :as cli])
             :task (apply cli/-main "model" *command-line-args*)}
