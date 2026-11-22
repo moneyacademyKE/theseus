@@ -54,10 +54,13 @@ cat > "$STAGE/src/bb_agent/launcher.clj" <<'LAUNCHER'
 
 (defn- load-runtime-pods!
   []
-  (when-let [dir (System/getenv "BABASHKA_PODS_DIR")]
-    (let [pod (fs/path dir "pod-babashka-go-sqlite3")]
-      (when (fs/executable? pod)
-        (pods/load-pod (str pod))))))
+  (let [candidates (keep identity
+                         [(when-let [dir (System/getenv "BABASHKA_PODS_DIR")]
+                            (fs/path dir "pod-babashka-go-sqlite3"))
+                          (fs/path (System/getProperty "user.home") ".local" "bin" "pod-babashka-go-sqlite3")
+                          (fs/which "pod-babashka-go-sqlite3")])]
+    (when-let [pod (first (filter fs/executable? candidates))]
+      (pods/load-pod (str pod)))))
 
 (defn -main [& args]
   (load-runtime-pods!)
