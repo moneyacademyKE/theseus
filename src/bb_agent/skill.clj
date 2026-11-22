@@ -5,6 +5,18 @@
 
 (def ^:private slug-pattern #"^[a-z0-9][a-z0-9_-]*$")
 
+(defn- parse-globs [raw]
+  (when-not (str/blank? (str (or raw "")))
+    (->> (str/split (str raw) #",")
+         (map str/trim)
+         (remove str/blank?)
+         (mapcat (fn [g]
+                   (if (str/includes? g "/")
+                     [g]
+                     [g (str "**/" g)])))
+         distinct
+         vec)))
+
 (defn parse-skill [raw]
   (let [match (re-find #"(?sm)\A---\r?\n(.*?)^---\r?(?:\n|\z)(.*)\z" raw)]
     (when-not match
@@ -21,12 +33,62 @@
                   {}
                   (str/split-lines frontmatter))
           name (:name fields)
-          description (:description fields)]
+          description (:description fields)
+          globs (parse-globs (:globs fields))]
       (when (or (str/blank? name) (str/blank? description))
         (throw (ex-info "Skill name and description are required" {})))
       (when-not (re-matches slug-pattern name)
         (throw (ex-info "Invalid skill name" {:name name})))
-      {:name name :description description :body body})))
+      (cond-> {:name name :description description :body body}
+        (seq globs) (assoc :globs globs)))))
+
+(defn- glob->regex [glob]
+  (let [escaped (-> (str glob)
+                    (str/replace "\\" "/")
+                    (str/replace #"([.+^$(){}|\[\]])" "\\\\$1")
+                    (str/replace "**/" "\u0001")
+                    (str/replace "**" "\u0002")
+                    (str/replace "*" "[^/]*")
+                    (str/replace "?" "[^/]")
+                    (str/replace "\u0001" "(?:.*/)?")
+                    (str/replace "\u0002" ".*"))]
+    (re-pattern (str "^" escaped "$"))))
+
+(defn path-matches-glob?
+  "True when `path` matches `glob` (normalized with forward slashes)."
+  [path glob]
+  (let [norm (-> (str (or path ""))
+                 (str/replace "\\" "/")
+                 (str/replace #"^\./" ""))]
+    (boolean (re-matches (glob->regex glob) norm))))
+
+(defn matching-skills-for-path
+  "Return skills whose :globs match `path`."
+  [skills path]
+  (if (str/blank? (str (or path "")))
+    []
+    (filterv (fn [sk]
+               (and (seq (:globs sk))
+                    (some #(path-matches-glob? path %) (:globs sk))))
+             skills)))
+
+(defn check-skill-gate
+  "Glob-triggered just-in-time skill gate: if `tool-name` mutates a file path
+   matching a skill not yet in `@seen-atom`, marks the first matching skill seen
+   and returns `{:skill/name ... :skill/body ...}` so the caller blocks once,
+   injects the skill body, and allows the immediate retry."
+  [skills seen-atom tool-name path]
+  (when (and (contains? #{"write_file" "edit_file"} tool-name)
+             (seq skills)
+             (some? seen-atom)
+             (not (str/blank? (str (or path "")))))
+    (let [seen @seen-atom
+          unseen (->> (matching-skills-for-path skills path)
+                      (remove #(contains? seen (:name %))))]
+      (when-let [sk (first unseen)]
+        (swap! seen-atom conj (:name sk))
+        {:skill/name (:name sk)
+         :skill/body (:body sk)}))))
 
 (defn discover-skills [skills-dir]
   (if-not (fs/directory? skills-dir)

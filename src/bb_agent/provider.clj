@@ -284,12 +284,18 @@
                             (if (>= idx mark-start) (with-cache-marker m) m))
                           msgs))))))
 
+(defn- mark-anthropic-cache-tools [tools-payload]
+  (if (and (vector? tools-payload) (seq tools-payload))
+    (conj (pop tools-payload)
+          (assoc (peek tools-payload) :cache_control {:type "ephemeral"}))
+    tools-payload))
+
 (defmethod complete :anthropic-compatible [_ {:keys [model messages images provider/config]
                                               :as request}]
   (let [_base-url (require-config config :base-url)
         api-key (require-config config :api-key)
         advertised-tools (or (:provider/tools request) (tools/active-definitions nil))
-        tools-payload (anthropic-tools advertised-tools)
+        tools-payload (mark-anthropic-cache-tools (anthropic-tools advertised-tools))
         post! (fn [imgs]
                 (let [wire (anthropic-wire-payload
                             (vision/attach-to-first-user messages imgs :anthropic))

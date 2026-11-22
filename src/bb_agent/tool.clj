@@ -4,6 +4,7 @@
             [bb-agent.redact :as redact]
             [bb-agent.rtk :as rtk]
             [bb-agent.security :as sec]
+            [bb-agent.skill :as skill]
             [bb-agent.a2a-tool :as a2a-tool]
             [bb-agent.net-search :as net-search]
             [bb-agent.browser-tool :as browser-tool]
@@ -115,6 +116,13 @@
          approval-decision* (approval-decision decision-request)
          taint-decision (when-let [exp (:security/exposure cfg)]
                           (sec/taint-gate-decision exp (:tool/name request) (:tool/args request) cfg))
+         skill-gate-hit (when-let [skills (or (:skill/skills cfg)
+                                              (when (:skill/gate-enabled cfg)
+                                                (skill/discover-all-skills)))]
+                          (skill/check-skill-gate skills
+                                                  (:skill/seen cfg)
+                                                  (:tool/name request)
+                                                  (get-in request [:tool/args :path])))
          raw-result (cond
                       (= "discover_tools" (:tool/name request))
                       (case approval-decision*
@@ -129,6 +137,16 @@
                       ;; BEFORE execution. A tool absent from the prompt must not
                       ;; run just because a model hallucinated its name.
                       (deny-result request :dormant)
+
+                      skill-gate-hit
+                      (assoc (deny-result request :skill-gate
+                                          {:reason (str "Skill gate: read and follow skill '"
+                                                        (:skill/name skill-gate-hit)
+                                                        "' before editing "
+                                                        (get-in request [:tool/args :path])
+                                                        ". Retry the edit once reviewed.")})
+                             :skill/name (:skill/name skill-gate-hit)
+                             :skill/body (:skill/body skill-gate-hit))
 
                       (and (map? taint-decision) (:require-approval? taint-decision))
                       (if (and approver (= :approved (approver request)))

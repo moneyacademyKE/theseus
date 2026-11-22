@@ -404,7 +404,8 @@
         init-messages (if (:saver/active? cfg)
                         (into [{:role :system :content saver/system-hint}] base-messages)
                         base-messages)
-        heartbeat (atom (System/currentTimeMillis))]
+        heartbeat (atom (System/currentTimeMillis))
+        skill-seen (or (:skill/seen cfg) (atom #{}))]
     (ti/with-stall-watchdog
      cfg heartbeat
      (fn []
@@ -436,6 +437,8 @@
                           (compression/prune-old-tool-results messages live-tool-keep-recent)
                           messages)
                round-cfg (cond-> cfg
+                           (nil? (:skill/seen cfg)) (assoc :skill/seen skill-seen)
+                           true (assoc :turn/tool-calls (count (:tool/results turn)))
                            (seq discovered-tools) (assoc :tools/discovered discovered-tools))
                round-tools (if (seq discovered-tools)
                              (tools/active-definitions round-cfg)
@@ -468,8 +471,49 @@
                           (assoc turn :turn/ok false)
                           (loop-guard-message repeated)
                           (:usage response))
-             (let [{:keys [results cache exp]}
-                   (if (seq tool-requests)
+             (let [can-parallel-read?
+                   (and (>= (count tool-requests) 2)
+                        (every? (fn [req]
+                                  (let [tname (:tool/name req)
+                                        k [tname (canonical-args (:tool/args req))]
+                                        decision-req (if (and (nil? (:approval/policy req))
+                                                              (:approval/mode round-cfg))
+                                                       (assoc req :approval/policy (:approval/mode round-cfg))
+                                                       req)]
+                                    (and (contains? cacheable-read-tools tname)
+                                         (not (contains? read-cache k))
+                                         (not (and (pos? (get seen-calls k 0))
+                                                   (>= (get seen-calls k 0) (dec nudge-threshold))))
+                                         (= :approved (tool/approval-decision decision-req)))))
+                                tool-requests))
+                   {:keys [results cache exp]}
+                   (cond
+                     can-parallel-read?
+                     (let [futs (mapv (fn [req]
+                                        (let [tname (:tool/name req)]
+                                          (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
+                                          (future
+                                            (tool/handle-tool-request req (assoc round-cfg :security/exposure exposure)))))
+                                      tool-requests)
+                           par-results (mapv deref futs)]
+                       (reset! heartbeat (System/currentTimeMillis))
+                       (reduce
+                        (fn [{:keys [results cache exp]} [req result]]
+                          (let [tname (:tool/name req)
+                                k [tname (canonical-args (:tool/args req))]
+                                [exp* _scan] (sec/note-exposure exp tname result)]
+                            (safe-emit cfg {:status :tool/done
+                                            :tool tname
+                                            :args {:ok? (= :ok (:status result))}})
+                            {:results (conj results result)
+                             :cache (if (= :ok (:status result))
+                                      (assoc cache k result)
+                                      cache)
+                             :exp exp*}))
+                        {:results [] :cache read-cache :exp exposure}
+                        (map vector tool-requests par-results)))
+
+                     (seq tool-requests)
                      (reduce
                       (fn [{:keys [results cache exp]} req]
                         (let [tname (:tool/name req)
@@ -516,6 +560,8 @@
                                    :exp exp*})))))
                       {:results [] :cache read-cache :exp exposure}
                       tool-requests)
+
+                     :else
                      {:results nil :cache read-cache :exp exposure})
                    tool-results results
                    read-cache* cache
