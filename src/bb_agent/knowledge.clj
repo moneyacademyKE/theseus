@@ -12,7 +12,6 @@
             [bb-agent.knowledge-routing :as routing]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.set :as set]
             [clojure.string :as str])
   (:import [java.time LocalDate]
            [java.time.temporal ChronoUnit]))
