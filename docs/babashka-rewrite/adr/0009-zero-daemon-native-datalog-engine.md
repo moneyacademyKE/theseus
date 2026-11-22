@@ -21,10 +21,12 @@ Implement a **zero-dependency, pure-map Babashka-native EAV Datalog engine** in 
    - `:find` relation, collection (`[?x ...]`), scalar (`?x .`), and aggregates (`count`, `sum`, `min`, `max`).
    - `:in` parameter bindings, multi-hop joins, real Clojure predicates inside `:where`, and `(not ...)` negation.
    - `pull` with explicit attribute specs, wildcard `:*`, and nested ref traversal maps.
-3. **Zero-Daemon Mtime-Cached Hydrator (`hydrate-home!`, `theseus-db`) & CLI (`bb datalog:query`):**
+3. **Zero-Daemon Mtime-Cached Hydrator (`hydrate-home!`, `theseus-db`), `query_graph` Tool & CLI:**
    - Hydrates `state/memory.edn` (including `:memory/supersedes` ref edges), `state/session-summaries.edn`, and `goals/*/project.edn` into an immutable DB value.
    - Caches by `[home memory-mtime summaries-mtime goals-project-mtimes]`; returns the identical immutable DB value when unchanged and re-hydrates automatically when any EDN file changes.
-   - Exposed via `bb datalog:query '<edn-query>'` in `bb.edn`.
+   - **Wired into the live agent runtime:** registered `query_graph` in `tools.clj`, `tool.clj` (`datalog/handlers`), `tool/common.clj` (`safe-auto-tools`), and `core.clj` (`cacheable-read-tools` — enabling both in-turn read caching and parallel read-only batching).
+   - **Security boundary:** `:where` predicates use a strict pure-function allowlist (`pred-fns`, no arbitrary `resolve`), EDN is parsed safely with `clojure.edn/read-string`, and result rows are bounded (`default 50`, `max 200`).
+   - **CLI:** exposed as both `bb datalog:query '<edn-query>'` in `bb.edn` and `theseus datalog <edn-query|schema>` in `cli.clj`.
 
 ## Consequences
 

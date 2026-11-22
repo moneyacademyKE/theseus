@@ -364,7 +364,7 @@
        " — after that, text like this is accepted as the final answer."))
 
 (def ^:private cacheable-read-tools
-  #{"read_file" "search" "git_status" "document_read" "read_session_turns"})
+  #{"read_file" "search" "git_status" "document_read" "read_session_turns" "query_graph"})
 
 (def ^:private live-tool-keep-recent 4)
 

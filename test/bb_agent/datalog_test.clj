@@ -2,6 +2,9 @@
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
             [bb-agent.datalog :as dl]
+            [bb-agent.tool :as tool]
+            [bb-agent.tool.common :as common]
+            [bb-agent.tools :as tools]
             [clojure.test :refer [deftest is testing]]))
 
 (deftest datalog-eav-joins-predicates-negation-and-pull
@@ -76,6 +79,15 @@
       (is (= #{"a" "b"} (set (dl/q '[:find [?t ...] :where [?e :belief/id "b1"] [?e :belief/tag ?t]] db1))))
       (is (= #{"b"} (set (dl/q '[:find [?t ...] :where [?e :belief/id "b1"] [?e :belief/tag ?t]] db2)))))))
 
+(deftest datalog-blocks-non-allowlisted-predicates
+  (let [db (dl/db-with (dl/empty-db) [{:item/name "secret"}])
+        res (dl/q '[:find ?out
+                    :where
+                    [?e :item/name ?n]
+                    [(clojure.core/slurp "/etc/hosts") ?out]]
+                  db)]
+    (is (empty? res) "arbitrary Clojure functions like slurp must never execute in :where")))
+
 (deftest hydrate-theseus-home-and-mtime-cache-invalidation
   (let [home (fs/create-temp-dir {:prefix "theseus-datalog-"})]
     (try
@@ -109,7 +121,6 @@
                  (dl/q '[:find ?st .
                          :where [?e :goal/slug "demo-goal"] [?e :goal/status ?st]]
                        db1)))
-          ;; Touch project.edn with a newer mtime and updated status
           (let [proj (fs/path home "goals" "demo-goal" "project.edn")
                 old-ms (.toMillis (fs/last-modified-time proj))]
             (spit (str proj) (pr-str {:name "Demo Goal" :status :fulfilled}))
@@ -120,5 +131,63 @@
                      (dl/q '[:find ?st .
                              :where [?e :goal/slug "demo-goal"] [?e :goal/status ?st]]
                            db3)))))))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest query-graph-tool-wiring-and-execution
+  (let [home (fs/create-temp-dir {:prefix "theseus-qgraph-"})]
+    (try
+      (fs/create-dirs (fs/path home "state"))
+      (fs/create-dirs (fs/path home "goals" "g1"))
+      (spit (str (fs/path home "state" "memory.edn"))
+            (pr-str [{:memory/id "m1" :memory/text "old rule" :memory/status :contested :memory/evidence-count 1}
+                     {:memory/id "m2" :memory/text "new rule" :memory/status :confirmed :memory/evidence-count 3
+                      :memory/supersedes "m1"}]))
+      (spit (str (fs/path home "goals" "g1" "project.edn"))
+            (pr-str {:name "Goal One" :status :fulfilled}))
+      (testing "query_graph is advertised and auto-approved"
+        (is (some #(= "query_graph" (get-in % [:function :name])) tools/definitions))
+        (is (some #(= "query_graph" (get-in % [:function :name])) (tools/active-definitions nil)))
+        (is (contains? common/safe-auto-tools "query_graph")))
+      (with-redefs [config/home (constantly (str home))]
+        (let [cfg {:approval/mode :auto-safe}]
+          (testing "Datalog query through handle-tool-request"
+            (let [res (tool/handle-tool-request
+                       {:tool/name "query_graph"
+                        :tool/args {:query "[:find ?new ?old :where [?e :memory/status :confirmed] [?e :memory/text ?new] [?e :memory/supersedes ?o] [?o :memory/text ?old]]"}}
+                       cfg)]
+              (is (= :ok (:status res)))
+              (is (= #{["new rule" "old rule"]} (:result res)))))
+          (testing "pull mode resolves nested refs"
+            (let [res (tool/handle-tool-request
+                       {:tool/name "query_graph"
+                        :tool/args {:pull "[:memory/text {:memory/supersedes [:memory/id :memory/text]}]"
+                                    :ref "[:memory/id \"m2\"]"}}
+                       cfg)]
+              (is (= :ok (:status res)))
+              (is (= {:memory/text "new rule"
+                      :memory/supersedes {:memory/id "m1" :memory/text "old rule"}}
+                     (:result res)))))
+          (testing "schema introspection mode"
+            (let [res (tool/handle-tool-request
+                       {:tool/name "query_graph"
+                        :tool/args {:query "schema"}}
+                       cfg)]
+              (is (= :ok (:status res)))
+              (is (contains? (:schema res) :memory/id))))
+          (testing "limit bounds result rows"
+            (let [res (tool/handle-tool-request
+                       {:tool/name "query_graph"
+                        :tool/args {:query "[:find [?id ...] :where [?e :memory/id ?id]]"
+                                    :limit 1}}
+                       cfg)]
+              (is (= :ok (:status res)))
+              (is (= 1 (count (:result res))))))
+          (testing "malformed EDN returns clean error result"
+            (let [res (tool/handle-tool-request
+                       {:tool/name "query_graph"
+                        :tool/args {:query "[:find ?x"}}
+                       cfg)]
+              (is (= :error (:status res)))))))
       (finally
         (fs/delete-tree home)))))

@@ -136,6 +136,17 @@
       :required ["from" "to"]}}}
    {:type "function"
     :function
+    {:name "query_graph"
+     :description "Run a read-only zero-daemon Datalog query or pull over Theseus's hydrated EDN state (memories/beliefs with :memory/supersedes refs, session summaries, and goals). Pass query=\"schema\" to inspect attributes and allowed predicates."
+     :parameters
+     {:type "object"
+      :properties {"query" {:type "string" :description "EDN Datalog query vector (e.g. \"[:find ?t :where [?e :memory/status :confirmed] [?e :memory/text ?t]]\") or \"schema\""}
+                   "pull" {:type "string" :description "Optional EDN pull pattern (e.g. \"[:memory/text {:memory/supersedes [:memory/id :memory/text]}]\")"}
+                   "ref" {:type "string" :description "Lookup ref EDN for pull mode (e.g. \"[:memory/id \\\"m1\\\"]\" or \"[:goal/slug \\\"demo\\\"]\")"}
+                   "limit" {:type "integer" :description "Optional max result rows (1-200, default 50)"}}
+      :required []}}}
+   {:type "function"
+    :function
     {:name "plan"
      :description "Manage the structured session plan (actions: init, start, complete, status, clear). Supports optional shell verify_cmd on complete to verify step completion."
      :parameters

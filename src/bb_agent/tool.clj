@@ -1,6 +1,7 @@
 (ns bb-agent.tool
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
+            [bb-agent.datalog :as datalog]
             [bb-agent.plan :as plan]
             [bb-agent.redact :as redact]
             [bb-agent.rtk :as rtk]
@@ -28,7 +29,7 @@
 (def ^:private handlers
   (merge file/handlers process/handlers telegram/handlers goal/handlers
          web/handlers net-search/handlers browser-tool/handlers
-         a2a-tool/handlers))
+         a2a-tool/handlers datalog/handlers))
 
 (defn execute-tool-request
   "Run one tool request. The argument heal happens HERE as well as in

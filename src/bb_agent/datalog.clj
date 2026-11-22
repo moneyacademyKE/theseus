@@ -1,7 +1,7 @@
 (ns bb-agent.datalog
   "Zero-dependency, Babashka-native in-memory EAV Datalog engine.
    Hydrates immutable DB values from Theseus's EDN truth on disk (cached by
-   mtime) — zero daemon, zero native pod, zero IPC overhead, and real Clojure
+   mtime) — zero daemon, zero native pod, zero IPC overhead, and pure Clojure
    predicates inside :where clauses.
 
    (Empirical note: datascript/datascript 1.8.1 fails under Babashka SCI due to
@@ -9,6 +9,8 @@
   (:require [babashka.fs :as fs]
             [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
+            [bb-agent.tool.common :as common]
+            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 ;; ---------- Immutable EAV / AEV / AVE store ----------
@@ -178,16 +180,23 @@
           candidates)))
 
 (def ^:private pred-fns
+  "Strict pure-function allowlist for :where predicates. Arbitrary symbol
+   resolution is intentionally disallowed so untrusted queries cannot execute I/O."
   {'= = 'not= not= '< < '<= <= '> > '>= >=
    'str/includes? str/includes?
    'str/starts-with? str/starts-with?
    'str/ends-with? str/ends-with?
+   'str/lower-case str/lower-case
+   'str/upper-case str/upper-case
+   're-find (fn [pat s] (when (and (string? pat) (string? s)) (re-find (re-pattern pat) s)))
+   'count count 'empty? empty? 'seq seq
    'contains? contains?
-   'some? some? 'nil? nil? 'pos? pos? 'zero? zero? 'neg? neg?})
+   'some? some? 'nil? nil? 'pos? pos? 'zero? zero? 'neg? neg?
+   'even? even? 'odd? odd? 'inc inc 'dec dec '+ + '- - '* *})
 
 (defn- eval-pred [expr env]
   (let [[op & args] expr
-        f (or (get pred-fns op) (when (symbol? op) (some-> (resolve op) deref)))
+        f (get pred-fns op)
         resolved (mapv #(if (qvar? %) (get env %) %) args)]
     (when (fn? f)
       (apply f resolved))))
@@ -311,6 +320,12 @@
    :session/id {:db/unique :db.unique/identity}
    :goal/slug {:db/unique :db.unique/identity}})
 
+(def theseus-attributes
+  "Advertised attributes hydrated into `(theseus-db)` for agent introspection."
+  {:memory [:memory/id :memory/text :memory/kind :memory/status :memory/evidence-count :memory/supersedes]
+   :session [:session/id :session/summary :session/updated]
+   :goal [:goal/slug :goal/name :goal/status]})
+
 (def ^:private cache (atom {:sig nil :db nil}))
 
 (defn- file-mtime [p]
@@ -381,3 +396,64 @@
       (let [db (hydrate-home!)]
         (reset! cache {:sig sig :db db})
         db))))
+
+;; ---------- Agent tool handler (`query_graph`) ----------
+
+(def ^:private default-limit 50)
+(def ^:private max-limit 200)
+
+(defn- bound-result [res limit]
+  (cond
+    (set? res) (set (take limit res))
+    (vector? res) (vec (take limit res))
+    :else res))
+
+(defn run-query-tool!
+  "Read-only tool handler for `query_graph`. Accepts either:
+   - {:query \"schema\"} to inspect hydrated schema and attributes
+   - {:query \"[:find ... :where ...]\"} for Datalog queries
+   - {:pull \"[...]\" :ref \"[:attr val]\"} for entity/ref pulls"
+  [args]
+  (let [q-str (:query args)
+        pull-str (:pull args)
+        ref-str (:ref args)
+        limit (let [n (or (:limit args) default-limit)]
+                (min max-limit (max 1 (if (integer? n) n default-limit))))]
+    (try
+      (cond
+        (= "schema" (some-> q-str str/trim str/lower-case))
+        (common/ok-result "query_graph"
+                          {:schema theseus-schema
+                           :attributes theseus-attributes
+                           :predicates (vec (sort (keys pred-fns)))})
+
+        (and (string? pull-str) (not (str/blank? pull-str)))
+        (if (or (nil? ref-str) (str/blank? (str ref-str)))
+          (common/error-result "query_graph" "pull requires :ref (e.g. \"[:memory/id \\\"m1\\\"]\")" {})
+          (let [pat (edn/read-string pull-str)
+                ref (edn/read-string (str ref-str))
+                res (pull (theseus-db) pat ref)]
+            (common/ok-result "query_graph" {:result res})))
+
+        (and (string? q-str) (not (str/blank? q-str)))
+        (let [q-vec (edn/read-string q-str)]
+          (if-not (vector? q-vec)
+            (common/error-result "query_graph" "query must be an EDN vector starting with :find" {})
+            (let [raw (q q-vec (theseus-db))
+                  bounded (bound-result raw limit)]
+              (common/ok-result "query_graph"
+                                {:result bounded
+                                 :count (if (coll? bounded) (count bounded) 1)
+                                 :truncated? (and (coll? raw) (> (count raw) limit))}))))
+
+        :else
+        (common/error-result "query_graph"
+                             "provide :query (EDN Datalog vector or \"schema\") or :pull + :ref"
+                             {}))
+      (catch Exception e
+        (common/error-result "query_graph"
+                             (str "Invalid Datalog query/pull EDN: " (ex-message e))
+                             {})))))
+
+(def handlers
+  {"query_graph" run-query-tool!})

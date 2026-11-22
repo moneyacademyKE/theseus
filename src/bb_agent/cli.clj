@@ -4,6 +4,7 @@
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.daemon :as daemon]
+            [bb-agent.datalog :as datalog]
             [bb-agent.doctor :as doctor]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
@@ -411,6 +412,15 @@
       (usage! "Usage: bb rsi digest | bb rsi analyze | bb rsi propose | bb rsi cycle | bb rsi learn fetch|propose [--dry-run]" 2))))
 
 
+(defn- handle-datalog-command [args]
+  (let [q-str (str/join " " args)]
+    (if (str/blank? q-str)
+      (usage! "Usage: bb datalog <edn-query|schema>" 2)
+      (let [res (datalog/run-query-tool! {:query q-str})]
+        (if (= :ok (:status res))
+          (println (pr-str (or (:result res) (select-keys res [:schema :attributes :predicates]))))
+          (usage! (or (:error/message res) "datalog query failed") 1))))))
+
 (defn -main [& args]
   (let [[command & rest-args] (if (= 1 (count args))
                                 (let [only (first args)]
@@ -418,6 +428,7 @@
                                 args)]
     (case command
       "memory" (handle-memory-command rest-args)
+      "datalog" (handle-datalog-command rest-args)
       "session" (handle-session-command rest-args)
       "skill" (handle-skill-command rest-args)
       "usage" (handle-usage-command rest-args)
