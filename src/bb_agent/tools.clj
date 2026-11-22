@@ -136,6 +136,29 @@
       :required ["from" "to"]}}}
    {:type "function"
     :function
+    {:name "plan"
+     :description "Manage the structured session plan (actions: init, start, complete, status, clear). Supports optional shell verify_cmd on complete to verify step completion."
+     :parameters
+     {:type "object"
+      :properties {"action" {:type "string" :description "One of: init, start, complete, status, clear"}
+                   "title" {:type "string" :description "Plan title (for init)"}
+                   "steps" {:type "array" :items {:type "string"} :description "Ordered step titles (for init)"}
+                   "step" {:type "integer" :description "1-based step index (for start/complete)"}
+                   "verify_cmd" {:type "string" :description "Optional shell verification command (exit 0 required to mark step done)"}
+                   "note" {:type "string" :description "Optional completion note"}}
+      :required ["action"]}}}
+   {:type "function"
+    :function
+    {:name "spawn_subagent"
+     :description "Run a focused child agent turn in-process with optional detached git worktree isolation (worktree=true) and inherited security taint. Subject to approval policy."
+     :parameters
+     {:type "object"
+      :properties {"prompt" {:type "string" :description "Clear task brief for the subagent"}
+                   "worktree" {:type "boolean" :description "Isolate execution in a temporary detached git worktree (default false)"}
+                   "max_rounds" {:type "integer" :description "Optional max tool rounds (1-12, default 8)"}}
+      :required ["prompt"]}}}
+   {:type "function"
+    :function
     {:name "launch_goal"
      :description "Launch a supervised goal runner for a complex build. It loops — acts, measures observers, rolls back on integrity violations — until the goal is met or halts, and posts progress plus the outcome to this chat. Use it when a build needs more than a few tool rounds (multi-file projects, tests that must pass); do not use it for simple one-shot answers."
       :parameters

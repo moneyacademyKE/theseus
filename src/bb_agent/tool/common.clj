@@ -52,7 +52,7 @@
 (def max-write-bytes 1000000)
 (def max-search-results 50)
 (def max-doc-chars 20000)
-(def safe-auto-tools #{"read_file" "search" "document_read" "git_status" "web_search" "read_session_turns" "discover_tools"})
+(def safe-auto-tools #{"read_file" "search" "document_read" "git_status" "web_search" "read_session_turns" "discover_tools" "plan"})
 
 (defn arg-schema
   "tool name -> {arg keyword -> declared :type}, derived from the definitions the

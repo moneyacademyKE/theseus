@@ -78,6 +78,17 @@ Full audit (`docs/audits/webdeck-state-machines-2026-11-22.md`, ADR `0006`, comm
 
 - `bb scripts/check_web_graph.bb`: `16 files, 0 missing exports, 0 unparsed forms` (`EXIT=0`).
 - `bb test:web:js`: `16/16` Node JS tests (`0 fail, 0 skipped`, `EXIT=0`).
-- `bb test:e2e:web`: `38` tests / `392` assertions (`0 failures, 0 errors`, `EXIT=0`).
-- `bb test`: `49` Clojure test blocks totaling `964` tests / `4605` assertions (`0 failures, 0 errors`), plus `bb verify:rewrite-docs` (`EXIT=0`).
-- `bb lint`: `0 errors, 0 warnings` (`EXIT=0`); `bb test-roster`: `125/125`, `0 never-run` (`EXIT=0`).
+- `bb test`: `49` Clojure test blocks totaling `975` tests / `4676` assertions (`0 failures, 0 errors`), plus `16/16` Node JS tests and `bb verify:rewrite-docs` (`EXIT=0`).
+- `bb lint`: `0 errors, 0 warnings` (`EXIT=0`); `bb test-roster`: `128/128`, `0 never-run` (`EXIT=0`).
+
+---
+
+## 6. OpenCrabs v0.6.0 Workflow Parity: Surgical I/O, Mechanical Gates, Parallel Reads & Live Subagents (2026-11-22)
+
+Three Red/Green TDD waves (`aaf9b63`, `ff75512`, Wave 3 + ADR `0007`) closed the core workflow/tool mechanics gap identified in `docs/gap-analysis-theseus-vs-opencrabs-2026-11-22.md` with zero new dependencies:
+
+- **Wave 1 (`aaf9b63` — Surgical Code I/O):** Added `edit_file` (exact search-replace with unique-match guard + `replace_all`, whitespace-trimmed line-block fallback, and 1-based inclusive line-range replace, enforcing `protected-write-path?` and `knowledge/guard-write!`, classified in `security/control-tools` and `turn-integrity/mutating-tools`), optional `start_line`/`end_line` on `read_file`, and optional `regex` + `glob` filtering on `search`.
+- **Wave 2 (`ff75512` — Mechanical `skill_gate`, Parallel Read-Only Batching, Anthropic `:tools` Cache):** Parsed `globs:` frontmatter in `skill.clj` and wired `skill/check-skill-gate` in `tool.clj` (blocks the first matching `write_file`/`edit_file` once per turn with `:denial/source :skill-gate` and full skill body injected); parallelized eligible multi-call auto-approved read-only tool rounds via `future`s in `core.clj` while folding cache/exposure deterministically in order; marked the last tool schema with `:cache_control {:type "ephemeral"}` in `provider.clj`.
+- **Wave 3 (Live `spawn_subagent` & Slim `plan` Gate):** Extended `subagent.clj` with `run-subagent!` (capacity-checked, optional temporary detached `git worktree` cleaned in `finally`, inherited parent `:security/exposure` taint, cycle-free runner resolution) and added `plan.clj` (`state/plans/<session-id>.edn`, allowlisted in `state_hygiene.clj`) with shell-verified `complete` (`verify_cmd`) and an opt-in mechanical `:plan/gate-after-tool-calls` gate in `tool.clj`.
+
+**Rich Hickey certification:** ~800 LOC of pure, zero-dependency data transformations closed the surgical-editing, skill-enforcement, parallel-read, prompt-cache, worktree-subagent, and plan-gate gaps without importing OpenCrabs's 400k-LOC platform tax.

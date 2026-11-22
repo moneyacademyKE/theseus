@@ -46,7 +46,7 @@
     ;; proposals, and subagent ledger.
     "approvals.edn" "approvals.edn.lock" "memory.sqlite" "search.db"
     "skill-research" "subagents.edn" "subagents.edn.lock"
-    "session-compaction"})
+    "session-compaction" "plans"})
 
 (defn violations
   "Top-level entries under state-dir that are not allowlisted durable

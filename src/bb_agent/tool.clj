@@ -1,10 +1,12 @@
 (ns bb-agent.tool
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
+            [bb-agent.plan :as plan]
             [bb-agent.redact :as redact]
             [bb-agent.rtk :as rtk]
             [bb-agent.security :as sec]
             [bb-agent.skill :as skill]
+            [bb-agent.subagent :as subagent]
             [bb-agent.a2a-tool :as a2a-tool]
             [bb-agent.net-search :as net-search]
             [bb-agent.browser-tool :as browser-tool]
@@ -123,6 +125,12 @@
                                                   (:skill/seen cfg)
                                                   (:tool/name request)
                                                   (get-in request [:tool/args :path])))
+         plan-gate-hit? (plan/plan-gate-blocked? cfg (:tool/name request))
+         run-request! (fn [req]
+                        (case (:tool/name req)
+                          "plan" (plan/run-plan-tool (:tool/args req) cfg)
+                          "spawn_subagent" (subagent/run-subagent! (:tool/args req) cfg)
+                          (execute-tool-request req)))
          raw-result (cond
                       (= "discover_tools" (:tool/name request))
                       (case approval-decision*
@@ -138,6 +146,12 @@
                       ;; run just because a model hallucinated its name.
                       (deny-result request :dormant)
 
+                      plan-gate-hit?
+                      (deny-result request :plan-gate
+                                   {:reason (str "Plan gate: " (:turn/tool-calls cfg)
+                                                 " tool calls reached without an active session plan. "
+                                                 "Call plan(action=\"init\", title=..., steps=[...]) before further edits.")})
+
                       skill-gate-hit
                       (assoc (deny-result request :skill-gate
                                           {:reason (str "Skill gate: read and follow skill '"
@@ -150,14 +164,14 @@
 
                       (and (map? taint-decision) (:require-approval? taint-decision))
                       (if (and approver (= :approved (approver request)))
-                        (execute-tool-request request)
+                        (run-request! request)
                         (deny-result request :taint {:reason (:reason taint-decision)}))
 
                       :else
                       (case approval-decision*
-                        :approved (execute-tool-request request)
+                        :approved (run-request! request)
                         :ask (if (and approver (= :approved (approver request)))
-                               (execute-tool-request request)
+                               (run-request! request)
                                (deny-result request))
                         :denied (deny-result request)))
          redacted-result (redact/redact-deep raw-result)
