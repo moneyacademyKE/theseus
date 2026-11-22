@@ -27,6 +27,19 @@
   (let [p (load-plan session-id)]
     (boolean (and (map? p) (= :active (:status p)) (seq (:steps p))))))
 
+(defn plan-state-block
+  "Render a compact harness-written `## PLAN STATE (harness)` block for
+   injection into the system prompt when the session has an active plan."
+  [session-id]
+  (when-let [p (load-plan session-id)]
+    (when (and (= :active (:status p)) (seq (:steps p)))
+      (str "## PLAN STATE (harness)\n"
+           "Title: " (:title p) "\n"
+           (str/join "\n"
+                     (map (fn [{:keys [index title status]}]
+                            (str "[" (name (or status :pending)) "] " index ". " title))
+                          (:steps p)))))))
+
 (defn plan-gate-blocked?
   "True when cfg sets :plan/gate-after-tool-calls N, the turn has already
    executed >= N tool calls, tool-name is a mutating/control tool, and the

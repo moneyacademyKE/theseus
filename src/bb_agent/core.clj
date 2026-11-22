@@ -5,6 +5,7 @@
             [bb-agent.fallback :as fallback]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
+            [bb-agent.plan :as plan]
             [bb-agent.provider :as provider]
             [bb-agent.redact :as redact]
             [bb-agent.retry :as retry]
@@ -133,18 +134,27 @@
                     :provider/config (get-in cfg [:providers p])})))
           (:provider/fallbacks cfg))))
 
+(def ^:private sticky-fallbacks (atom {}))
+
 (defn- complete-chain
   "Primary provider first (retries + breaker intact), then
-  :provider/fallbacks as data — each step its own provider, model,
-  and provider config. Nothing configured: exactly the old
-  single-provider path, byte for byte."
+  :provider/fallbacks as data — each step guarded against cross-provider
+  model leaks and reordered when a fallback earns session stickiness."
   [cfg base-request]
-  (let [steps (fallback-steps cfg base-request)]
+  (let [raw-steps (fallback-steps cfg base-request)
+        primary-p (:provider base-request)
+        guarded (mapv #(fallback/guard-model-leak % primary-p (:providers cfg)) raw-steps)
+        steps (fallback/reorder-with-sticky sticky-fallbacks (:session/id cfg) guarded)]
     (if (= 1 (count steps))
       (complete-retrying cfg (:provider base-request) base-request)
-      (fallback/try-chain steps
-                          #(complete-retrying cfg (:provider %)
-                                              (request-for base-request %))))))
+      (let [res (fallback/try-chain steps
+                                    #(complete-retrying cfg (:provider %)
+                                                        (request-for base-request %)))]
+        (when (and (map? res) (seq (:fallback/tried res)) (:fallback/served-by res))
+          (fallback/record-rescue! sticky-fallbacks (:session/id cfg)
+                                   {:provider (:fallback/served-by res)
+                                    :model (:fallback/model res)}))
+        res))))
 
 (defn- awaiting-human?
   "True when every result in the round is a denial a HUMAN can lift — the
@@ -399,11 +409,12 @@
                           (reduce + 0 (map #(count (str (:memory/text % "")))
                                            memory-matches)))
         live-budget (compression/history-budget-chars cfg overhead-chars)
+        plan-ctx (plan/plan-state-block id)
         base-messages (initial-messages prompt memory-matches semantic-ctx brain-ctx skills-ctx
                                         (history-messages cfg id overhead-chars))
-        init-messages (if (:saver/active? cfg)
-                        (into [{:role :system :content saver/system-hint}] base-messages)
-                        base-messages)
+        init-messages (cond-> base-messages
+                        plan-ctx (into [{:role :system :content plan-ctx}])
+                        (:saver/active? cfg) (into [{:role :system :content saver/system-hint}]))
         heartbeat (atom (System/currentTimeMillis))
         skill-seen (or (:skill/seen cfg) (atom #{}))]
     (ti/with-stall-watchdog
@@ -452,6 +463,12 @@
                request (cond-> request (seq user-images) (assoc :images user-images))
                response (complete-chain cfg request)
                _ (reset! heartbeat (System/currentTimeMillis))
+               known-names (set (map #(get-in % [:function :name]) round-tools))
+               rescued-call (when (empty? (:tool/requests response))
+                              (ti/extract-bare-tool-call (:content response) known-names))
+               response (if rescued-call
+                          (assoc response :tool/requests [rescued-call])
+                          response)
                tool-requests (:tool/requests response)
                truncated? (= :truncated (ti/classify-finish-reason (:finish/reason response)))
                threshold (or (:loop-guard-threshold cfg) default-loop-guard-threshold)

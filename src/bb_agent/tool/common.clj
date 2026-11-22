@@ -115,33 +115,104 @@
   [schema k]
   (get schema (if (keyword? k) k (keyword (str k)))))
 
-(defn heal-args
-  "Heal one tool's args against its declared schema, under their original keys.
-   Well-formed args come back as the same map; a healed arg replaces only its own
-   value. An unknown tool, a tool with no declared properties, or a non-map arg
-   returns the input untouched.
+(def ^:private tool-name-aliases
+  {"bash" "shell"
+   "run_command" "shell"
+   "exec" "shell"
+   "grep" "search"
+   "rg" "search"
+   "find_in_files" "search"
+   "readFile" "read_file"
+   "read" "read_file"
+   "writeFile" "write_file"
+   "editFile" "edit_file"
+   "patch_file" "edit_file"})
 
-   Idempotent by construction: a healed value is no longer a string, so a second
-   pass is a no-op — TYSA: heals are idempotent, so a per-tool heal composed
-   under the record-level wrapper is a harmless second pass."
+(def ^:private param-aliases
+  {:file_path :path
+   :filepath :path
+   :file :path
+   :old_string :old_text
+   :old :old_text
+   :new_string :new_text
+   :new :new_text
+   :command :cmd
+   :pattern :query})
+
+(defn- levenshtein-1?
+  "True when strings a and b are within edit distance 1 (insert/delete/substitute)."
+  [^String a ^String b]
+  (let [la (.length a) lb (.length b) diff (Math/abs (- la lb))]
+    (cond
+      (> diff 1) false
+      (= a b) true
+      (= la lb)
+      (= 1 (count (filter #(not= (.charAt a %) (.charAt b %)) (range la))))
+      :else
+      (let [^String shorter (if (< la lb) a b)
+            ^String longer (if (< la lb) b a)]
+        (loop [i 0 j 0 edits 0]
+          (cond
+            (> edits 1) false
+            (>= i (.length shorter)) true
+            (= (.charAt shorter i) (.charAt longer j))
+            (recur (inc i) (inc j) edits)
+            :else
+            (recur i (inc j) (inc edits))))))))
+
+(defn resolve-tool-name
+  "Normalize common LLM tool-name aliases (bash->shell, grep->search,
+   readFile->read_file) and single-character typos against declared tool names."
+  [raw-name]
+  (let [s (str (or raw-name ""))
+        known (set (map #(get-in % [:function :name]) tools/definitions))]
+    (cond
+      (contains? known s) s
+      (contains? tool-name-aliases s) (get tool-name-aliases s)
+      :else
+      (or (some (fn [k] (when (levenshtein-1? s k) k)) known)
+          s))))
+
+(defn- alias-args [schema args]
+  (reduce-kv
+   (fn [m k v]
+     (let [kw (if (keyword? k) k (keyword (str k)))
+           canonical (get param-aliases kw)]
+       (if (and canonical
+                (contains? schema canonical)
+                (not (contains? m canonical))
+                (not (contains? m (name canonical))))
+         (-> m (dissoc k) (assoc canonical v))
+         m)))
+   args
+   args))
+
+(defn heal-args
+  "Heal one tool's args against its declared schema: first maps common
+   parameter aliases (:old_string->:old_text, :file_path->:path, :command->:cmd)
+   when the canonical key is absent, then coerces string-encoded booleans and
+   numbers to their declared schema types. Idempotent by construction."
   [tool-name args]
-  (let [schema (get (arg-schema) (str tool-name))]
+  (let [resolved (resolve-tool-name tool-name)
+        schema (get (arg-schema) resolved)]
     (if (or (nil? schema) (not (map? args)))
       args
-      (reduce-kv
-       (fn [m k v]
-         (let [healed (when-let [declared (declared-type schema k)]
-                        (heal-one declared v))]
-           (if (nil? healed) m (assoc m k healed))))
-       args
-       args))))
+      (let [aliased (alias-args schema args)]
+        (reduce-kv
+         (fn [m k v]
+           (let [healed (when-let [declared (declared-type schema k)]
+                          (heal-one declared v))]
+             (if (nil? healed) m (assoc m k healed))))
+         aliased
+         aliased)))))
 
 (defn normalize-request [request]
-  (-> request
-      (update :tool/name str)
-      (update :tool/args #(heal-args (str (:tool/name request)) %))
-      (update :approval/policy #(or % :ask))
-      (assoc :approval/required? true)))
+  (let [resolved (resolve-tool-name (:tool/name request))]
+    (-> request
+        (assoc :tool/name resolved)
+        (update :tool/args #(heal-args resolved %))
+        (update :approval/policy #(or % :ask))
+        (assoc :approval/required? true))))
 
 (defn approval-decision [{:approval/keys [policy] :tool/keys [name]}]
   (case policy

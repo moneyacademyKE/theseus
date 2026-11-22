@@ -6,7 +6,8 @@
    - Silent-turn factual receipt synthesizer (truthful bulleted summary from
      executed tool receipts instead of failing a productive silent turn).
    - Two-stage interactive stall watchdog (soft pulse + hard escalation)."
-  (:require [clojure.string :as str]))
+  (:require [cheshire.core :as json]
+            [clojure.string :as str]))
 
 ;; ---------- Finish-reason integrity (#9) ----------
 
@@ -150,3 +151,47 @@
           (finally
             (reset! done? true)
             (.interrupt worker)))))))
+
+;; ---------- Bare JSON tool-call extractor & unrun fenced-shell guard ----------
+
+(defn extract-bare-tool-call
+  "Rescue models that emit a raw JSON tool call (`{\"name\": ..., \"arguments\": {...}}`,
+   optionally inside a ```json fence) in plain text instead of structured tool_calls.
+   Only returns a request when :name matches `known-tool-names`."
+  [content known-tool-names]
+  (when (and (string? content) (seq known-tool-names))
+    (let [trimmed (str/trim content)
+          unwrapped (if-let [[_ inner] (re-matches #"(?s)^```(?:json)?\s*\r?\n?(.*?)\r?\n?```$" trimmed)]
+                      (str/trim inner)
+                      trimmed)]
+      (when (and (str/starts-with? unwrapped "{") (str/ends-with? unwrapped "}"))
+        (try
+          (let [parsed (json/parse-string unwrapped true)
+                tname (some-> (or (:name parsed) (:tool parsed)) str)
+                args (or (:arguments parsed) (:args parsed) (:input parsed) {})]
+            (when (and (contains? known-tool-names tname) (map? args))
+              {:tool/name tname :tool/args args}))
+          (catch Exception _ nil))))))
+
+(def ^:private run-command-prompt-re
+  #"(?i)\b(?:run|execute|test|check|verify|start|build|compile|lint)\b.*\b(?:test|tests|command|script|suite|build|lint|shell|cli|server|check)\b")
+
+(def ^:private show-example-prompt-re
+  #"(?i)^\s*(?:show|give|write|explain|how\s+do\s+i|what\s+command|example)\b")
+
+(def ^:private fenced-shell-re
+  #"(?s)```(?:bash|sh|zsh|shell)\b.*?\n.*?```")
+
+(defn unrun-fenced-shell?
+  "True when the user asked to run/execute a command, zero shell calls executed
+   in this turn, and the assistant replied with an unrun fenced shell block."
+  [prompt content tool-results]
+  (let [p (str (or prompt ""))
+        c (str (or content ""))
+        ran-shell? (some #(= "shell" (:tool/name %)) tool-results)]
+    (and (not (str/blank? p))
+         (not (str/blank? c))
+         (not ran-shell?)
+         (not (re-find show-example-prompt-re p))
+         (boolean (re-find run-command-prompt-re p))
+         (boolean (re-find fenced-shell-re c)))))

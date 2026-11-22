@@ -1,5 +1,6 @@
 (ns bb-agent.provider
   (:require [babashka.http-client :as http]
+            [bb-agent.compression :as compression]
             [bb-agent.redact :as redact]
             [cheshire.core :as json]
             [clojure.string :as str]
@@ -300,7 +301,8 @@
                 (let [wire (anthropic-wire-payload
                             (vision/attach-to-first-user messages imgs :anthropic))
                       payload (cond-> {:model model
-                                       :max_tokens (or (:max-tokens config) 4096)
+                                       :max_tokens (compression/bounded-output-tokens
+                                                    model (or (:max-tokens config) 4096))
                                        :messages (mark-anthropic-cache-messages (:messages wire))}
                                 (not (str/blank? (:system wire)))
                                 (assoc :system [{:type "text"

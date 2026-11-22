@@ -50,6 +50,32 @@
               model-token-prefixes)
         default-model-tokens)))
 
+(def ^:private output-window-percent 0.2)
+(def ^:private min-output-tokens 256)
+
+(defn bounded-output-tokens
+  "Cap requested max_tokens at 20% of the model's context window (floored at 256)
+   so an oversized max_tokens never starves input context."
+  [model requested-max-tokens]
+  (let [window (model-context-tokens model)
+        cap (max min-output-tokens (long (* window output-window-percent)))
+        req (long (or requested-max-tokens 4096))]
+    (max min-output-tokens (min req cap))))
+
+(defn calibrate-token-report
+  "Sanity-check a provider's reported input token count against a local estimate.
+   Rejects buggy flat provider offsets (e.g. +20k over-reports) and below-floor
+   drops; returns the credible value."
+  [reported estimated]
+  (let [est (max 0 (long (or estimated 0)))
+        rep (when (number? reported) (long reported))]
+    (cond
+      (nil? rep) est
+      (< rep 10) est
+      (and (>= est 500) (< rep (long (* 0.2 est)))) est
+      (> rep (max 10000 (* 4 (max 1 est)))) est
+      :else rep)))
+
 (defn history-budget-chars
   "Character budget for replayed session history. Explicit :history-budget-chars
    in cfg always wins; otherwise scales from the model's context window (25%

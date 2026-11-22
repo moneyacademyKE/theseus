@@ -180,6 +180,38 @@
                       :suggestion (format "fallback-pressure: %s keeps rescuing turns — consider promoting it to primary or fixing the model it replaces" who)}))))
          (seq))))
 
+(defn- friction-signal-opportunities
+  "Aggregate behavioural friction cues logged by turn_signals.clj into
+   actionable RSI opportunities when correction/repeat/brevity rates exceed flag-rate."
+  [events]
+  (let [turns (filter #(= :turn (:usage/event %)) events)
+        n (count turns)]
+    (when (>= n min-provider-turns)
+      (let [corrections (count (filter #(get-in % [:signals :correction?]) turns))
+            repeats (count (filter #(get-in % [:signals :repeated-prompt?]) turns))
+            shorter (count (filter #(= :shorter (get-in % [:signals :brevity])) turns))]
+        (cond-> []
+          (>= (/ (double corrections) n) flag-rate)
+          (conj {:kind :friction-signals
+                 :signal :corrections
+                 :detail (format "user corrections on %s/%s turns (%.0f%%)"
+                                 corrections n (* 100.0 (/ (double corrections) n)))
+                 :suggestion "friction-signals: high user correction rate — review recent failures and tighten system/skill instructions"})
+
+          (>= (/ (double repeats) n) flag-rate)
+          (conj {:kind :friction-signals
+                 :signal :repeated-prompts
+                 :detail (format "repeated prompts on %s/%s turns (%.0f%%)"
+                                 repeats n (* 100.0 (/ (double repeats) n)))
+                 :suggestion "friction-signals: users are repeating prompts — check tool completion and silent-turn handling"})
+
+          (>= (/ (double shorter) n) flag-rate)
+          (conj {:kind :friction-signals
+                 :signal :brevity-shorter
+                 :detail (format "brevity requests (:shorter) on %s/%s turns (%.0f%%)"
+                                 shorter n (* 100.0 (/ (double shorter) n)))
+                 :suggestion "friction-signals: frequent requests for shorter replies — tighten response conciseness in SOUL/AGENTS"}))))))
+
 (defn analyze
   "Derive opportunities from the usage ledger. Blocked below :min-events —
    small samples make liars of rates. Returns {:blocked msg} or
@@ -198,6 +230,7 @@
                                 (remove nil?)
                                 (concat (fallback-pressure-opportunity events))
                                 (concat (keep tool-failure-opportunity (:tools summary)))
+                                (concat (friction-signal-opportunities events))
                                 (vec))]
          {:opportunities opportunities})))))
 
