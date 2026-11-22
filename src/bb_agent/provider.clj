@@ -147,10 +147,12 @@
                             :throw false
                             :timeout (or (:timeout-ms config) 60000)
                             :body (json/generate-string
-                                   {:model model
-                                    :messages (openai-wire-messages
-                                               (vision/attach-to-first-user messages imgs :openai))
-                                    :tools advertised-tools})}))
+                                   (cond-> {:model model
+                                            :messages (openai-wire-messages
+                                                       (vision/attach-to-first-user messages imgs :openai))
+                                            :tools advertised-tools}
+                                            (:reasoning-effort config)
+                                            (assoc :reasoning_effort (:reasoning-effort config))))}))
         [status body vision-degraded?] (perform-with-vision-fallback post! images)
         choice (get-in body [:choices 0])
         message (:message choice)
