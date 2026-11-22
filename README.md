@@ -61,6 +61,7 @@ To use goals in a forum group: add the bot to the group, then `/goal <spec>` in 
 - `bb memory search <query>` searches memory.
 - `bb model set <session-id> <provider> <model>` stores session model selection.
 - `bb model current <session-id>` prints effective model selection.
+- Telegram `/models` shows routing; `/models default <provider> <provider/model>` changes the default; `/models fallback <provider> <provider/model>` sets one fallback; `/models clear-fallback` removes it. Only Telegram-authorized senders reach the command lane, and every write keeps `config.last-good.edn`.
 - `bb session list` lists session metadata.
 - `bb session current` prints current session metadata.
 - `bb session set-cwd <session-id> <cwd>` updates session working directory.

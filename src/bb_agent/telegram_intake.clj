@@ -11,6 +11,7 @@
             [bb-agent.core :as core]
             [bb-agent.goal-bridge :as goal-bridge]
             [bb-agent.goal.progress :as goal-progress]
+            [bb-agent.model-commands :as model-commands]
             [bb-agent.session :as session]
             [bb-agent.skill :as skill]
             [bb-agent.telegram-approval-ui :as approval-ui]
@@ -96,6 +97,11 @@
     :goal-request
 
     (and text (let [t (str/trim text)]
+                (or (= "/models" t)
+                    (str/starts-with? t "/models "))))
+    :models
+
+    (and text (let [t (str/trim text)]
                 (or (str/starts-with? t "/model ") (= "/model" t))))
     :model
 
@@ -127,7 +133,7 @@
 (defn handle-chat-command
   "Answer a chat command without an LLM turn. Public: shared verbatim
   with the web turn lane (bb-agent.web-turn) — one implementation of
-  /new /usage /model /goals /skills, two channels."
+  /new /usage /model /models /goals /skills, two channels."
   [cmd session-id text _chat-id _thread-id]
   (case cmd
     ;; :goal-request/:build-goal are intercepted in the dispatch before this
@@ -137,6 +143,8 @@
     :goals (or (when-let [lines (goal-progress/list-goals)]
                  (str "🎯 Goals:\n" (str/join "\n" lines)))
                "No goals yet — /goal <what to build> launches one.")
+    :models (:reply (model-commands/apply! (config/load-config)
+                                           (model-commands/parse text)))
     :new (do (session/reset! session-id)
              "🧹 Session reset — fresh context from here.")
     :usage (let [r (usage/report)
@@ -172,7 +180,7 @@
                      (str "🤖 Model switched: " (:model cfg) " → " arg
                           "\nPersisted to config — the next message runs on it.")))))
     :skills (let [skills (skill/discover-all-skills)
-                  native "⌨️ Commands: /new /reset /usage /autonomy /model /goal <spec> /goals /skills"
+                  native "⌨️ Commands: /new /reset /usage /autonomy /model /models /goal <spec> /goals /skills"
                   lines (map (fn [{:keys [name description]}]
                                (str "• /" name " — "
                                     (let [d (str/replace (or description "") #"\s+" " ")]

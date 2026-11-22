@@ -25,6 +25,7 @@
    ["goal" "Supervised goal build: /goal <what to build> · cancel · status <name> · resume <name>"]
    ["goals" "List goal runs and their status"]
    ["model" "Show or switch the LLM model"]
+   ["models" "Configure default and fallback models"]
    ["skills" "List all commands and skills"]
    ["help" "List all commands and skills"]])
 

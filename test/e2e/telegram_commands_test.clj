@@ -245,3 +245,14 @@
       (is (str/includes? after-reply "zai/glm-5.9") "the switch persisted — the next /model lists the new model")
       (let [cfg (edn/read-string (slurp (str home "/config.edn")))]
         (is (= "zai/glm-5.9" (:model cfg)) "config.edn on disk carries the new model")))))
+
+(deftest models-command-routes-through-telegram
+  (let [{:keys [home calls]} (run-poll [(dm-message 1 80 "/models")
+                                         (dm-message 2 81 "/models default fake fake/fake-deterministic")])
+        replies (replies calls)]
+    (try
+      (is (str/includes? (first replies) "Model routing"))
+      (is (str/includes? (second replies) "Default set"))
+      (is (= :fake (:provider (edn/read-string (slurp (str home "/config.edn"))))))
+      (finally
+        (fs/delete-tree home)))))
