@@ -102,22 +102,33 @@
 (deftest infered-aliases-use-openai-wire
   (let [calls (atom [])]
     (with-redefs [http/post
-                  (fn [url _opts]
-                    (swap! calls conj url)
+                  (fn [url opts]
+                    (swap! calls conj {:url url
+                                       :headers (:headers opts)
+                                       :body (json/parse-string (:body opts) true)})
                     {:status 200
                      :body (json/generate-string
                             {:choices [{:message {:content "OK"}
                                         :finish_reason "stop"}]})})]
-      (doseq [[provider url] [[:infered-local "http://local/v1"]
-                              [:infered-router "https://router/v1"]]]
-        (is (= "OK"
-               (:content (provider/complete provider
-                                            {:model "infered/auto"
-                                             :messages [{:role :user :content "ping"}]
-                                             :provider/config {:base-url url}})))))
-      (is (= ["http://local/v1/chat/completions"
-              "https://router/v1/chat/completions"]
-             @calls)))))
+      (is (= "OK"
+             (:content (provider/complete :infered-local
+                                          {:model "infered/auto"
+                                           :messages [{:role :user :content "ping"}]
+                                           :provider/config {:base-url "http://local/v1"}}))))
+      (is (= "OK"
+             (:content (provider/complete :infered-router
+                                          {:model "infered/auto"
+                                           :messages [{:role :user :content "ping"}]
+                                           :provider/config {:base-url "https://router/v1"
+                                                             :api-key "sk-router"
+                                                             :reasoning-effort "high"}}))))
+      (let [[local-call router-call] @calls]
+        (is (= "http://local/v1/chat/completions" (:url local-call)))
+        (is (nil? (get-in local-call [:headers "authorization"])))
+        (is (not (contains? (:body local-call) :reasoning_effort)))
+        (is (= "https://router/v1/chat/completions" (:url router-call)))
+        (is (= "Bearer sk-router" (get-in router-call [:headers "authorization"])))
+        (is (= "high" (get-in router-call [:body :reasoning_effort])))))))
 
 (deftest anthropic-tools-shapes-active-definitions
   (let [converted (provider/anthropic-tools (tools/active-definitions nil))

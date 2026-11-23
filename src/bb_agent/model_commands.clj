@@ -11,7 +11,7 @@
 (defn- model-name?
   [model]
   (and (string? model)
-       (re-matches #"[^/\s]+/[^/\s]+" model)))
+       (some? (re-matches #"[^\s]+" model))))
 
 (defn- provider-key
   [provider]
@@ -26,16 +26,23 @@
 (defn- validation-error
   [message]
   {:ok? false :reply (str "🚫 " message)})
+
 (defn- advertised-models
   [cfg provider]
-  (let [base-url (get-in cfg [:providers provider :base-url])]
+  (let [pcfg (get-in cfg [:providers provider])
+        base-url (:base-url pcfg)
+        api-key (:api-key pcfg)]
     (when (and base-url (not= :fake provider))
       (try
-        (let [response (http/get (str (str/replace base-url #"/+$" "") "/models")
-                                 {:throw false :connect-timeout 1500
-                                  :request-timeout 3000})
-              body (json/parse-string (:body response) true)]
-          (set (keep :id (:data body))))
+        (let [headers (cond-> {}
+                        (and (string? api-key) (not (str/blank? api-key)))
+                        (assoc "authorization" (str "Bearer " api-key)))
+              response (http/get (str (str/replace base-url #"/+$" "") "/models")
+                                 (cond-> {:throw false :connect-timeout 1500 :timeout 3000}
+                                   (seq headers) (assoc :headers headers)))]
+          (when (= 200 (:status response))
+            (let [body (json/parse-string (:body response) true)]
+              (set (keep :id (:data body))))))
         (catch Exception _ nil)))))
 
 (defn- model-advertised?
@@ -87,7 +94,7 @@
 (defn- provider-label
   [cfg provider]
   (str (name provider) " (configured="
-       (boolean (provider-configured? cfg provider)) ")"))
+       (provider-configured? cfg provider) ")"))
 
 (defn status
   "Render the current routing and configured provider names without secrets."

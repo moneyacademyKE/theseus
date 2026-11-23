@@ -63,3 +63,34 @@
                   "/models fallback infered-router infered/auto"))))
       (is (= [{:provider "infered-router" :model "infered/auto"}]
              (:provider/fallbacks @written))))))
+
+(deftest model-command-forwards-auth-checks-status-and-accepts-plain-model-ids
+  (let [seen-opts (atom nil)
+        written (atom nil)
+        cfg {:provider :fake
+             :model "fake-deterministic"
+             :providers {:openai-compatible {:base-url "https://api.example.test/v1"
+                                             :api-key "sk-test-123"}}}]
+    (with-redefs [config/write-config! (fn [candidate]
+                                         (reset! written candidate)
+                                         candidate)
+                  babashka.http-client/get
+                  (fn [_ opts]
+                    (reset! seen-opts opts)
+                    {:status 200
+                     :body "{\"data\":[{\"id\":\"gpt-4o\"}]}"})]
+      (let [res (model-commands/apply!
+                 cfg
+                 (model-commands/parse "/models default openai-compatible gpt-4o"))]
+        (is (:ok? res) "plain model IDs like gpt-4o must be accepted when advertised")
+        (is (= "gpt-4o" (:model @written)))
+        (is (= "Bearer sk-test-123" (get-in @seen-opts [:headers "authorization"])))
+        (is (number? (:timeout @seen-opts)))))
+    (with-redefs [babashka.http-client/get
+                  (fn [_ _]
+                    {:status 401
+                     :body "{\"data\":[{\"id\":\"gpt-4o\"}]}"})]
+      (let [res (model-commands/apply!
+                 cfg
+                 (model-commands/parse "/models default openai-compatible gpt-4o"))]
+        (is (false? (:ok? res)) "non-200 /models responses must be rejected")))))

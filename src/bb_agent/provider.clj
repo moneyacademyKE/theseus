@@ -132,8 +132,10 @@
   [provider {:keys [model messages images provider/config]
              :as request}]
   (let [_base-url (require-config config :base-url)
-        api-key (when (= :openai-compatible provider)
-                  (require-config config :api-key))
+        api-key (if (= :openai-compatible provider)
+                  (require-config config :api-key)
+                  (let [k (:api-key config)]
+                    (when (and (string? k) (not (str/blank? k))) k)))
         ;; Optional tools ride the request (:provider/tools, set by core from
         ;; config). Absent → fail-closed default: the core registry only, not
         ;; the dormant extras (owner directive 2026-11-12: capabilities must
