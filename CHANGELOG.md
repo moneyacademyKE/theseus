@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed — security-vs-robustness calibration (2026-11-24, ADR `0010`)
+
+- **Prioritized robustness across 5 false-positive security heuristics** (`docs/audits/security-vs-robustness-gap-analysis-2026-11-24.md`): kept `:css-hidden`/`:md-comment` as advisory spotlights without bricking `edit_file`/`write_file`/`shell` (`security.clj`), inverted `strong-model?` to a weak-model denylist so router aliases (`infered/auto`) and new frontier models (`zai/glm-5.9`) work after `web_search`, calibrated `dense-encoded-blob?` (`len >= 28`, `entropy >= 4.0`, mixed alpha+digits, UUID-exempt) + exempted loopback-only `curl -d` (`127.0.0.1`/`localhost`/`[::1]`), stripped single- and substitution-free double-quoted literals in `never-auto-shell-command?` (`tool/process.clj`, preserving `$(...)` catches), and allowed HTTPS `#fragments` + preserved successful page reads with `:warning` on transient tab-close failure (`browser_tool.clj`). Verified: `bb-agent.security-test` + `bb-agent.browser-tool-test` (`14` tests / `83` assertions), `bb test:e2e:tools` (`18` tests / `134` assertions), `bb lint` (`0 errors, 0 warnings`), `bb test-roster` (`137/137`, `0 never-run`), and `bb verify:rewrite-docs` (exit `0`).
+
 ## v1.5.0 - 2026-11-22
 
 ### Added / Changed / Fixed — zero-daemon Datalog engine, isolated test gates & binary hardening

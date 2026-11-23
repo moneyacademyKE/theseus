@@ -397,3 +397,17 @@
     (is (= :error (:status res)))
     (is (false? (:executed? res)))
     (is (str/includes? (str (:error/message res)) "Unknown tool"))))
+
+(deftest shell-floor-allows-quoted-harmless-mentions-of-rm-and-sudo
+  (let [home (fs/create-temp-dir {:prefix "theseus-tools-quoted-"})]
+    (try
+      (with-redefs [bb-agent.config/home (fn [] (str home))]
+        (doseq [cmd ["echo '(rm|dd)'"
+                     "echo \"cleanup\nrm old note\""
+                     "echo \"mention sudo in text\""]]
+          (let [r (tool/handle-tool-request {:tool/name "shell"
+                                             :approval/policy :auto-all
+                                             :tool/args {:cmd cmd}})]
+            (is (= :ok (:status r)) (str "quoted harmless command must not be blocked: " cmd)))))
+      (finally
+        (fs/delete-tree home)))))

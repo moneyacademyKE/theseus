@@ -19,10 +19,21 @@
         ")"
         "(?:(?:/[\\w.-]+)+/|\\\\)?(rm|dd|sudo|chown)\\b")))
 
+(defn- strip-quoted-literals
+  "Strip single-quoted strings and double-quoted literals while keeping
+   shell command substitutions ($(...) and `...`) visible to the safety floor."
+  [cmd]
+  (-> (or cmd "")
+      ;; Single-quoted strings never expand commands in POSIX sh.
+      (str/replace #"'[^']*'" "''")
+      ;; Double-quoted strings without command substitution ($( or `).
+      (str/replace #"\"(?:[^\"\\$`]|\\.)*\"" "\"\"")))
+
 (defn- never-auto-shell-command? [cmd]
-  (let [trimmed (str/trim (or cmd ""))]
-    (or (some #(str/starts-with? trimmed %) never-auto-shell-prefixes)
-        (boolean (re-find dangerous-cmd-re trimmed)))))
+  (let [trimmed (str/trim (or cmd ""))
+        unquoted (str/trim (strip-quoted-literals trimmed))]
+    (or (some #(str/starts-with? unquoted %) never-auto-shell-prefixes)
+        (boolean (re-find dangerous-cmd-re unquoted)))))
 
 (defn- checked-cwd [tool-name cwd]
   (if cwd

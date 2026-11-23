@@ -30,20 +30,13 @@
 (def ^:private weak-model-markers
   ["mini" "nano" "flash-lite" "flash_lite" "haiku" "small" "tiny" "3b" "7b" "8b" "fake"])
 
-(def ^:private strong-model-markers
-  ["claude-opus" "claude-sonnet" "claude-3-7" "claude-4"
-   "gpt-5" "gpt-4.1" "gpt-4o" "o3" "o4"
-   "gemini-2.5-pro" "gemini-3" "gemini-4"
-   "deepseek-r1" "deepseek-v3"])
-
 (defn strong-model?
-  "True for frontier models with strong instruction-hierarchy resistance.
-   Fails closed (false) on small, fast/lite, or unrecognized models."
+  "True for non-weak models (frontier models and router aliases like infered/auto).
+   Gates explicitly tiny/weak/fake models without breaking new frontier releases."
   [model]
   (let [m (str/lower-case (str (or model "")))]
     (and (not (str/blank? m))
-         (not-any? #(str/includes? m %) weak-model-markers)
-         (boolean (some #(str/includes? m %) strong-model-markers)))))
+         (not-any? #(str/includes? m %) weak-model-markers))))
 
 ;; ---------- Zero-LLM prompt-injection scanner (#2) ----------
 
@@ -113,19 +106,25 @@
 
 (defn- hex-or-slug? [s]
   (or (boolean (re-matches #"[0-9a-fA-F]{16,}" s))
+      (boolean (re-matches #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" s))
       (boolean (re-matches #"[a-z0-9]+(?:-[a-z0-9]+){2,}" s))))
 
 (def ^:private exfil-secret-re
   #"(?i)(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9._-]{16,}|-----BEGIN\s+[A-Z ]*PRIVATE\s+KEY-----)")
 
 (defn dense-encoded-blob?
-  "True when token looks like a dense encoded payload (entropy >= 3.6, len >= 24)
-   and is not a plain hex commit hash or lowercase hyphenated slug."
+  "True when token looks like a dense encoded payload (entropy >= 4.0, len >= 28,
+   mixed letters + digits) and is not a plain hex hash, UUID, or hyphenated slug."
   [token]
   (let [t (str (or token ""))]
-    (and (>= (count t) 24)
+    (and (>= (count t) 28)
          (not (hex-or-slug? t))
-         (>= (shannon-entropy t) 3.6))))
+         (boolean (re-find #"[A-Za-z]" t))
+         (boolean (re-find #"[0-9]" t))
+         (>= (shannon-entropy t) 4.0))))
+
+(defn- loopback-url? [u]
+  (boolean (re-matches #"(?i)^https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:/.*)?$" (str u))))
 
 (defn url-carries-data?
   "True when a URL not previously seen in turn inputs carries credential shapes
@@ -140,6 +139,9 @@
 
 (def ^:private shell-exfil-re
   #"(?i)(?:\bcurl\b[^\n]*(?:\s-(?:d|F|T)\b|--data|--form|--upload-file)|\|\s*(?:curl|nc|ncat|netcat|socat)\b|\bwget\b[^\n]*--post-(?:data|file))")
+
+(def ^:private netcat-pipe-re
+  #"(?i)\|\s*(?:nc|ncat|netcat|socat)\b")
 
 (defn exfil-risk
   "Inspect an outbound or shell tool call for data exfiltration indicators.
@@ -159,12 +161,16 @@
           {:risk? true :reason "Search query carries credential shape or dense encoded blob"}))
 
       "shell"
-      (let [cmd (str (or (:cmd args) (get args "cmd") ""))]
+      (let [cmd (str (or (:cmd args) (get args "cmd") ""))
+            urls (extract-urls cmd)
+            loopback-only? (and (seq urls)
+                                (every? loopback-url? urls)
+                                (not (re-find netcat-pipe-re cmd)))]
         (cond
-          (re-find shell-exfil-re cmd)
+          (and (re-find shell-exfil-re cmd) (not loopback-only?))
           {:risk? true :reason "Shell command uses outbound upload/pipe exfiltration flags"}
 
-          (some #(url-carries-data? % seen) (extract-urls cmd))
+          (some #(url-carries-data? % seen) urls)
           {:risk? true :reason "Shell command embeds data-carrying outbound URL"}
 
           :else nil))
@@ -208,13 +214,21 @@
                      (update :seen-urls into urls))]
         [exp' scan]))))
 
+(def ^:private hard-blocking-signals
+  "High-signal injection markers that hard-gate control/outbound sinks.
+   Ubiquitous styling/comment signals (:css-hidden, :md-comment) remain
+   advisory spotlights so reading normal CSS/HTML never bricks a coding turn."
+  #{:instruction-override :system-impersonation :secrecy-directive
+    :tool-coercion :zero-width-chars :html-comment})
+
 (defn taint-gate-decision
   "Evaluate whether a tool call requires explicit approval due to turn taint,
    exfiltration risk, or model strength. Returns :allow or
    {:require-approval? true :reason string}."
   [exposure tool-name args cfg]
   (let [exp (or exposure empty-exposure)
-        tainted? (or (:external? exp) (:suspicious? exp))
+        hard-signals (set (filter hard-blocking-signals (:signals exp)))
+        tainted? (or (:external? exp) (boolean (seq hard-signals)))
         exfil (when (or tainted? (seq (:sources exp)))
                 (exfil-risk tool-name args exp))
         sink? (or (contains? control-tools tool-name)
@@ -224,9 +238,9 @@
       {:require-approval? true
        :reason (:reason exfil)}
 
-      (and (:suspicious? exp) sink?)
+      (and (seq hard-signals) sink?)
       {:require-approval? true
-       :reason (str "Turn saw suspicious prompt-injection signals " (pr-str (:signals exp))
+       :reason (str "Turn saw suspicious prompt-injection signals " (pr-str hard-signals)
                     " before calling " tool-name)}
 
       (and (:external? exp)

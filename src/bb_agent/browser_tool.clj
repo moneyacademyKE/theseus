@@ -43,8 +43,7 @@
       (and (= "https" (.getScheme u))
            (some? host)
            (not (private-or-local-host? host))
-           (nil? (.getUserInfo u))
-           (nil? (.getFragment u))))
+           (nil? (.getUserInfo u))))
     (catch Exception _ false)))
 
 (defn- ok? [result]
@@ -79,14 +78,16 @@
         close-result (try (mcp/call-tool client "tabs" {:action "close" :page page})
                           (catch Exception _ nil))]
     (cond
-      (not (ok? close-result)) (failure "BrowserOS could not close the created tab")
       (not (ok? read-result)) (failure "BrowserOS could not read the page")
+      (not (ok? close-result)) (common/ok-result "browser_read"
+                                                 {:output (bounded-text (text read-result))
+                                                  :warning "BrowserOS could not close the created tab"})
       :else (common/ok-result "browser_read" {:output (bounded-text (text read-result))}))))
 
 (defn read-page [args]
   (let [url (or (:url args) (get args "url"))]
     (if-not (and (string? url) (valid-url? url))
-      (common/error-result "browser_read" "url must be HTTPS without userinfo or fragment"
+      (common/error-result "browser_read" "url must be HTTPS without userinfo"
                            {:executed? false})
       (try
         (let [client (mcp/connect {:url mcp-url :client-name "theseus-browser-read"})]

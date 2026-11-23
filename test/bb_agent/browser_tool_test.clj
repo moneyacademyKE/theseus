@@ -89,3 +89,28 @@
     (let [result (browser/read-page {:url "https://example.com"})]
       (is (= :ok (:status result)))
       (is (<= (count (:output result)) 20000)))))
+
+(deftest allows-https-fragments-and-preserves-read-on-close-hiccup
+  (testing "HTTPS URLs with #anchors are accepted"
+    (with-redefs [mcp/connect (fn [_] {:ok? true})
+                  mcp/call-tool (fn [_ name args]
+                                  (case [name (:action args)]
+                                    ["tabs" "list"] (response "ok")
+                                    ["tabs" "new"] (response "opened page 9")
+                                    ["read" nil] (response "Anchored docs")
+                                    ["tabs" "close"] (response "closed")))]
+      (let [res (browser/read-page {:url "https://clojure.org/reference/reader#_literals"})]
+        (is (= :ok (:status res)))
+        (is (str/includes? (:output res) "Anchored docs")))))
+  (testing "successful page read is preserved with warning when tab close fails"
+    (with-redefs [mcp/connect (fn [_] {:ok? true})
+                  mcp/call-tool (fn [_ name args]
+                                  (case [name (:action args)]
+                                    ["tabs" "list"] (response "ok")
+                                    ["tabs" "new"] (response "opened page 9")
+                                    ["read" nil] (response "Important page body")
+                                    ["tabs" "close"] {:ok? false :error "transient close timeout"}))]
+      (let [res (browser/read-page {:url "https://example.com/page"})]
+        (is (= :ok (:status res)))
+        (is (str/includes? (:output res) "Important page body"))
+        (is (string? (:warning res)))))))
