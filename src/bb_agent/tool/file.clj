@@ -1,5 +1,6 @@
 (ns bb-agent.tool.file
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.tool.common :as common]
             [bb-agent.knowledge :as knowledge]
             [bb-agent.session :as session]
@@ -10,7 +11,7 @@
   (cond
     (nil? v) nil
     (integer? v) (long v)
-    (string? v) (parse-long (str/trim v))
+    (string? v) (or (parse-long (str/trim v)) ::invalid)
     :else ::invalid))
 
 (defn- read-file! [{:keys [path start_line end_line]}]
@@ -56,7 +57,7 @@
                 total (count lines)
                 from-i (max 1 (or s-line 1))
                 to-i (min total (or e-line total))
-                sliced (if (or (zero? total) (> from-i total))
+                sliced (if (or (zero? total) (> from-i total) (> from-i to-i))
                          ""
                          (str/join "\n" (subvec (vec lines) (dec from-i) to-i)))]
             (common/ok-result "read_file"
@@ -79,7 +80,7 @@
       (fs/create-dirs parent)))
   (if append?
     (spit (str target) content :append true)
-    (spit (str target) content))
+    (aio/write-atomic-file! target content))
   (merge (common/ok-result "write_file"
                            {:path (str target)
                             :bytes bytes

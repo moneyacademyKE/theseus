@@ -1,17 +1,15 @@
 (ns bb-agent.usage
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
-            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (defn usage-file []
   (fs/path (config/home) "state" "usage.edn"))
 
 (defn load-events []
-  (let [path (usage-file)]
-    (if (fs/regular-file? path)
-      (edn/read-string (slurp (str path)))
-      [])))
+  (let [raw (aio/read-edn-safe (usage-file) [])]
+    (if (sequential? raw) (vec raw) [])))
 
 (defn- token-estimate [text]
   (long (Math/ceil (/ (count (or text "")) 4.0))))
@@ -30,9 +28,9 @@
               {:prefix "mimo-v2-omni" :input_per_m 0.40 :output_per_m 2.0}]})
 
 (defn pricing []
-  (let [path (pricing-file)]
-    (if (fs/regular-file? path)
-      (merge default-pricing (edn/read-string (slurp (str path))))
+  (let [custom (aio/read-edn-safe (pricing-file) nil)]
+    (if (map? custom)
+      (merge default-pricing custom)
       default-pricing)))
 
 (defn normalize-model-name [model]
@@ -71,10 +69,11 @@
    invented denominator; records whose detail is lost are not reconstructed
    from totals."
   [provider model]
-  (let [provider* (keyword (name provider))
-        model* (str/lower-case (or model ""))]
-    (some #(when (str/includes? model* (str/lower-case (:prefix %))) %)
-          (get (pricing) provider*))))
+  (when provider
+    (let [provider* (keyword (name provider))
+          model* (str/lower-case (or model ""))]
+      (some #(when (str/includes? model* (str/lower-case (:prefix %))) %)
+            (get (pricing) provider*)))))
 
 (defn- cost-estimate [provider model input output cache-read cache-write]
   (let [{:keys [input_per_m output_per_m cache_read_per_m cache_write_per_m]} (price-entry provider model)]
@@ -107,10 +106,8 @@
       (seq signals) (assoc :turn/signals signals))))
 
 (defn append-event! [entry]
-  (let [path (usage-file)
-        events (conj (load-events) entry)]
-    (fs/create-dirs (fs/parent path))
-    (spit (str path) (pr-str events))
+  (let [events (conj (load-events) entry)]
+    (aio/write-private-file! (usage-file) (pr-str events))
     events))
 
 (defn- turn-events

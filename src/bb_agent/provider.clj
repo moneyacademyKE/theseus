@@ -28,7 +28,11 @@
 (defn- parse-json-args [args]
   (if (str/blank? (or args ""))
     {}
-    (json/parse-string args keyword)))
+    (try
+      (let [parsed (json/parse-string args keyword)]
+        (if (map? parsed) parsed {:_parse_error "Tool arguments JSON must be an object"}))
+      (catch Exception e
+        {:_parse_error (or (ex-message e) "Malformed tool arguments JSON")}))))
 
 (defn- safe-parse-json
   "Best-effort JSON parse; returns nil on empty or non-JSON payloads (such

@@ -22,12 +22,12 @@
    (str (:session/id e))
    (str (:provider e))
    (str (:model e))
-   (long (:tokens/input e 0))
-   (long (:tokens/output e 0))
-   (long (:tokens/cache-read e 0))
-   (long (:tokens/cache-write e 0))
-   (long (:tokens/total e 0))
-   (double (:cost/estimate-usd e 0.0))
+   (long (or (:tokens/input e) 0))
+   (long (or (:tokens/output e) 0))
+   (long (or (:tokens/cache-read e) 0))
+   (long (or (:tokens/cache-write e) 0))
+   (long (or (:tokens/total e) 0))
+   (double (or (:cost/estimate-usd e) 0.0))
    (if (false? (:ok e)) 0 1)])
 
 (defn- normalize-row
@@ -57,6 +57,8 @@
     (fs/create-dirs (fs/parent (index-file)))
     (let [conn (sqlite/get-connection db)]
       (try
+        (try (sqlite/execute! conn ["PRAGMA busy_timeout = 5000"])
+             (catch Exception _ nil))
         (doseq [s schema!]
           (sqlite/execute! conn [s]))
         (sqlite/execute! conn ["BEGIN IMMEDIATE"])

@@ -79,6 +79,29 @@
           (try (Files/deleteIfExists tmp)
                (catch Exception _ nil)))))))
 
+(defn write-atomic-file!
+  "Atomically write UTF-8 content to path with default workspace permissions
+   (temp file + atomic rename). Cleans up temp file on error."
+  [path content]
+  (let [target (.toPath (java.io.File. (str path)))
+        parent (.getParent target)]
+    (when parent
+      (Files/createDirectories parent empty-attrs))
+    (let [tmp (Paths/get (str parent)
+                         (into-array String [(str "." (.getFileName target)
+                                                  ".tmp." (System/nanoTime)
+                                                  "-" (rand-int 100000))]))
+          bytes (.getBytes (str content) StandardCharsets/UTF_8)]
+      (try
+        (Files/write tmp bytes empty-open-opts)
+        (try
+          (Files/move tmp target atomic-move-opts)
+          (catch Exception _
+            (Files/move tmp target replace-move-opts)))
+        (finally
+          (try (Files/deleteIfExists tmp)
+               (catch Exception _ nil)))))))
+
 (defn with-file-lock
   "Serialize f across both JVM threads and OS processes using a companion
    lock file (never locking the target data file directly, which breaks under

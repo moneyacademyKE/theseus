@@ -25,6 +25,8 @@
     (fs/create-dirs (fs/parent path))
     (let [conn (sqlite/get-connection (str path))]
       (try
+        (try (sqlite/execute! conn ["PRAGMA busy_timeout = 5000"])
+             (catch Exception _ nil))
         (f conn)
         (finally
           (sqlite/close-connection conn))))))
@@ -38,13 +40,19 @@
          (catch Exception _ nil)))
   nil)
 
+(defn- safe-read-edn-str [s default]
+  (if (and (string? s) (not (str/blank? s)))
+    (try (edn/read-string s)
+         (catch Exception _ default))
+    default))
+
 (defn- normalize-row [row]
   (let [m (into {} (map (fn [[k v]] [(keyword k) v]) row))
-        status (some-> (:status m) edn/read-string)
+        status (safe-read-edn-str (:status m) nil)
         ev (:evidence_count m)]
     (cond-> {:memory/id (:id m)
              :memory/text (or (:text m) "")
-             :memory/kind (or (some-> (:kind m) edn/read-string) :raw)}
+             :memory/kind (or (safe-read-edn-str (:kind m) :raw) :raw)}
       status (assoc :memory/status status)
       (some? ev) (assoc :memory/evidence-count (long ev)))))
 

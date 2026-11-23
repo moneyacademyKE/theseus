@@ -63,7 +63,10 @@
       (or (str/includes? (str/lower-case (or content-type "")) "text/event-stream")
           (str/starts-with? (str/triml text) "event:")
           (str/starts-with? (str/triml text) "data:"))
-      (mapv #(json/parse-string % true) (sse-events text))
+      (vec (keep (fn [frame]
+                   (try (json/parse-string frame true)
+                        (catch Exception _ nil)))
+                 (sse-events text)))
       :else [(json/parse-string text true)])))
 
 (defn- rpc-error

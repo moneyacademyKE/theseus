@@ -1,7 +1,6 @@
 (ns bb-agent.config
   (:require [babashka.fs :as fs]
             [bb-agent.atomic-io :as aio]
-            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (defn home
@@ -36,10 +35,16 @@
     (and (map? tg) (str/blank? (:token tg)))
     (conj {:key :telegram :problem ":token missing or blank"})))
 
+(defn- read-config-map [path]
+  (when (fs/regular-file? path)
+    (let [parsed (aio/read-edn-safe path nil)]
+      (when (map? parsed) parsed))))
+
 (defn load-config []
-  (let [path (config-file)]
-    (if (fs/regular-file? path)
-      (merge default-config (edn/read-string (slurp (str path))))
+  (let [cfg (or (read-config-map (config-file))
+                (read-config-map (last-good-file)))]
+    (if cfg
+      (merge default-config cfg)
       default-config)))
 
 (defn write-config!

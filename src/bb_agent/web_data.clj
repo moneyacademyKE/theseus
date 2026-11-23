@@ -216,7 +216,11 @@
   ([days]
    (let [by-day (->> (events)
                      (filter #(= :turn (:usage/event %)))
-                     (group-by (fn [e] (subs (str (:created/at e)) 0 10))))
+                     (keep (fn [e]
+                             (let [ts (str (or (:created/at e) ""))]
+                               (when (>= (count ts) 10)
+                                 [(subs ts 0 10) e]))))
+                     (reduce (fn [m [d e]] (update m d (fnil conj []) e)) {}))
          today  (java.time.LocalDate/now)
          bucket (fn [i]
                   (let [d  (str (.minusDays today i))

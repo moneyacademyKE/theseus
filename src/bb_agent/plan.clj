@@ -86,16 +86,19 @@
                          steps))))))))
 
 (defn- run-verify-cmd [cmd cwd]
-  (let [dir (if (and (string? cwd) (fs/directory? cwd)) cwd (str (config/home)))
-        proc (p/process ["bash" "-c" cmd] {:dir dir :out :string :err :string})
-        res (deref proc 30000 ::timeout)]
-    (if (= ::timeout res)
-      (do (p/destroy-tree proc)
-          {:ok? false :exit -1 :error "verification command timed out (30s)"})
-      {:ok? (zero? (:exit res))
-       :exit (:exit res)
-       :stdout (:out res)
-       :stderr (:err res)})))
+  (let [dir (if (and (string? cwd) (fs/directory? cwd)) cwd (str (config/home)))]
+    (try
+      (let [proc (p/process ["bash" "-c" cmd] {:dir dir :out :string :err :string :continue true})
+            res (deref proc 30000 ::timeout)]
+        (if (= ::timeout res)
+          (do (p/destroy-tree proc)
+              {:ok? false :exit -1 :error "verification command timed out (30s)"})
+          {:ok? (zero? (:exit res))
+           :exit (:exit res)
+           :stdout (:out res)
+           :stderr (:err res)}))
+      (catch Exception e
+        {:ok? false :exit -1 :error (or (ex-message e) (.getName (class e)))}))))
 
 (defn start-step! [session-id step-idx]
   (update-step! session-id step-idx #(assoc % :status :in-progress :started-at (System/currentTimeMillis))))

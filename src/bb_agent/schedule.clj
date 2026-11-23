@@ -1,11 +1,11 @@
 (ns bb-agent.schedule
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.cron :as cron]
             [bb-agent.outbox :as outbox]
-            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (defn schedules-file []
@@ -15,16 +15,13 @@
   (fs/path (config/home) "state" "schedule-runs.edn"))
 
 (defn load-schedules []
-  (let [path (schedules-file)]
-    (if (fs/regular-file? path)
-      (edn/read-string (slurp (str path)))
-      [])))
+  (let [raw (aio/read-edn-safe (schedules-file) [])]
+    (if (sequential? raw) (vec raw) [])))
 
 (defn save-schedules! [entries]
-  (let [path (schedules-file)]
-    (fs/create-dirs (fs/parent path))
-    (spit (str path) (pr-str (vec entries)))
-    (vec entries)))
+  (let [v (vec entries)]
+    (aio/write-private-file! (schedules-file) (pr-str v))
+    v))
 
 (defn add-schedule!
   "Register `schedule-id` -> `prompt`. The 3-arity attaches a 5-field
@@ -61,14 +58,13 @@
 (defn find-schedule [schedule-id]
   (some #(when (= schedule-id (:schedule/id %)) %) (load-schedules)))
 
+(defn- load-run-log []
+  (let [raw (aio/read-edn-safe (runs-file) [])]
+    (if (sequential? raw) (vec raw) [])))
+
 (defn- append-run-log! [entry]
-  (let [path (runs-file)
-        entries (if (fs/regular-file? path)
-                  (edn/read-string (slurp (str path)))
-                  [])
-        updated (conj (vec entries) entry)]
-    (fs/create-dirs (fs/parent path))
-    (spit (str path) (pr-str updated))
+  (let [updated (conj (load-run-log) entry)]
+    (aio/write-private-file! (runs-file) (pr-str updated))
     updated))
 
 (defn last-run-times
@@ -77,13 +73,10 @@
   so later entries win the reduce. Runs from before :at stamping
   existed simply carry no time and are ignored."
   []
-  (let [path (runs-file)]
-    (if (fs/regular-file? path)
-      (->> (edn/read-string (slurp (str path)))
-           (keep (fn [{:keys [schedule/id] :as e}]
-                   (when (and id (:at e)) [id (:at e)])))
-           (reduce (fn [acc [id at]] (assoc acc id at)) {}))
-      {})))
+  (->> (load-run-log)
+       (keep (fn [{:keys [schedule/id] :as e}]
+               (when (and id (:at e)) [id (:at e)])))
+       (reduce (fn [acc [id at]] (assoc acc id at)) {})))
 
 (defn- minute-aligned [zdt]
   (.truncatedTo zdt java.time.temporal.ChronoUnit/MINUTES))

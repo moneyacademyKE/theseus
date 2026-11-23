@@ -199,7 +199,9 @@
         f (get pred-fns op)
         resolved (mapv #(if (qvar? %) (get env %) %) args)]
     (when (fn? f)
-      (apply f resolved))))
+      (try
+        (apply f resolved)
+        (catch Exception _ nil)))))
 
 (defn- eval-clause [db envs clause]
   (cond

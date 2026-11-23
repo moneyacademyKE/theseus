@@ -510,7 +510,13 @@
                                         (let [tname (:tool/name req)]
                                           (safe-emit cfg {:status :tool/call :tool tname :args (:tool/args req)})
                                           (future
-                                            (tool/handle-tool-request req (assoc round-cfg :security/exposure exposure)))))
+                                            (try
+                                              (tool/handle-tool-request req (assoc round-cfg :security/exposure exposure))
+                                              (catch Exception e
+                                                {:tool/name tname
+                                                 :status :error
+                                                 :executed? false
+                                                 :error/message (or (ex-message e) (.getName (class e)))})))))
                                       tool-requests)
                            par-results (mapv deref futs)]
                        (reset! heartbeat (System/currentTimeMillis))
