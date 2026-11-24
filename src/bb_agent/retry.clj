@@ -42,14 +42,17 @@
 (defn backoff-ms
   "Delay to sleep after failure on `attempt` (1-based), before the next:
   base * 2^(attempt-1), clamped to :max-ms, scaled by jitter factor
-  (1 + j*(2r-1)) for r in [0,1), finally clamped to :max-ms again."
+  (1 + j*(2r-1)) for r in [0,1), finally clamped to [0, :max-ms]."
   [opts attempt]
   (let [{:keys [base-ms max-ms jitter rand]} (merge (defaults) opts)
-        raw (min (* (long base-ms)
-                    (long (Math/pow 2 (dec (long attempt)))))
-                 (long max-ms))
-        factor (+ 1 (* (double jitter) (- (* 2 (double (rand))) 1)))]
-    (long (min (long max-ms) (Math/round (* raw factor))))))
+        safe-base (max 0 (long (or base-ms 100)))
+        safe-max (max 0 (long (or max-ms 5000)))
+        exp (min 30 (max 0 (dec (long (or attempt 1)))))
+        raw (min (* safe-base (long (Math/pow 2 exp))) safe-max)
+        j (max 0.0 (double (or jitter 0.0)))
+        r (double ((or rand clojure.core/rand)))
+        factor (+ 1.0 (* j (- (* 2.0 r) 1.0)))]
+    (long (max 0 (min safe-max (Math/round (* raw factor)))))))
 
 (defn- announce-retry!
   "One `:retry/attempt` event before the backoff sleep: which attempt just
@@ -77,7 +80,9 @@
   `:attempts` counts calls actually made; breaker-open short-circuits
   before the first call, so it reports 0."
   [opts thunk]
-  (let [{:keys [breaker breaker-key max-attempts] :as opts} (merge (defaults) opts)]
+  (let [{:keys [breaker breaker-key max-attempts] :as opts} (merge (defaults) opts)
+        safe-attempts (max 1 (long (or max-attempts 1)))
+        sleep-fn (or (:sleep opts) (fn [ms] (Thread/sleep (long ms))))]
     (letfn [(now-secs [] (quot (long ((:clock opts))) 1000))]
     (loop [attempt 1 br breaker]
       (let [[allowed? br'] (if br
@@ -103,12 +108,12 @@
                 (let [br'' (if br
                              (cb/record-failure br' breaker-key (now-secs))
                              br')]
-                  (if (>= attempt (long max-attempts))
+                  (if (>= attempt safe-attempts)
                     {:outcome :exhausted
                      :error (:error result)
                      :kind (:kind result)
                      :attempts attempt
                      :breaker br''}
                     (do (announce-retry! opts attempt result)
-                        ((:sleep opts) (backoff-ms opts attempt))
+                        (sleep-fn (backoff-ms opts attempt))
                         (recur (inc attempt) br'')))))))))))))

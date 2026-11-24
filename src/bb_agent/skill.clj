@@ -96,7 +96,10 @@
     (let [skills (->> (fs/list-dir skills-dir)
                       (filter #(and (fs/directory? %)
                                     (fs/regular-file? (fs/path % "SKILL.md"))))
-                      (map #(parse-skill (slurp (str (fs/path % "SKILL.md")))))
+                      (keep (fn [dir]
+                              (try
+                                (parse-skill (slurp (str (fs/path dir "SKILL.md"))))
+                                (catch Exception _ nil))))
                       vec)
           names (map :name skills)]
       (when-not (= (count names) (count (set names)))

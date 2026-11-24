@@ -84,15 +84,16 @@
 
 (defn mark-attempt!
   "Bump the attempt counter on a persisted intent, by id. Returns the new
-   count. Public: the send path marks its own failed first attempt so the
-   drain inherits a truthful count instead of starting from zero."
+   count, or 0 if the file was concurrently drained or corrupted."
   [cfg id]
   (let [f (file-for cfg id)
-        record (edn/read-string (slurp f))
-        attempts (inc (long (or (:attempts record) 0)))]
-    (aio/write-private-file! f (pr-str (assoc record :attempts attempts
-                                              :last-attempt/at (str (java.time.Instant/now)))))
-    attempts))
+        record (aio/read-edn-safe f nil)]
+    (if (map? record)
+      (let [attempts (inc (long (or (:attempts record) 0)))]
+        (aio/write-private-file! f (pr-str (assoc record :attempts attempts
+                                                  :last-attempt/at (str (java.time.Instant/now)))))
+        attempts)
+      0)))
 
 (defn- dead!
   "Move a file out of circulation, loudly. `reason` is the truthful cause —

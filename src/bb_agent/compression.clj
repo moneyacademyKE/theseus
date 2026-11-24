@@ -297,8 +297,8 @@
                     (when (not (str/blank? previous-summary))
                       (str "Previous summary to update:\n" previous-summary "\n\n"))
                     "Turns to summarize:\n"
-                    (str/join "\n" (map turn middle)))]
-    (call-llm-fn prompt)))
+                    (str/join "\n" (map turn (filter map? middle))))]
+    (str (or (call-llm-fn prompt) ""))))
 
 (defn should-compress?
   "True when the estimated token count exceeds `threshold-tokens`."

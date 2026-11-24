@@ -70,6 +70,12 @@
         (if (map? m) m {}))
       (catch Exception _ {}))))
 
+(defn- safe-confidence [v]
+  (cond
+    (number? v) (double v)
+    (string? v) (or (try (Double/parseDouble (str/trim v)) (catch Exception _ nil)) 1.0)
+    :else 1.0))
+
 (defn run-dream
   "Package conversations, run `(call-llm-fn prompt)`, parse JSON, and filter
    every bucket through deterministic user-quote verification."
@@ -80,12 +86,17 @@
         rejected (atom 0)
         verified (into {}
                        (map (fn [b]
-                              (let [raw-items (vec (or (get parsed b) []))
+                              (let [raw-val (get parsed b)
+                                    raw-items (if (sequential? raw-val)
+                                                (vec (filter map? raw-val))
+                                                [])
                                     kept (filterv (fn [it]
-                                                    (let [conf (double (or (:confidence it) 1.0))
+                                                    (let [conf (safe-confidence (:confidence it))
                                                           min-sess (if (= b :learned) 2 1)
+                                                          sess (let [s (:sessions it)]
+                                                                 (if (sequential? s) s []))
                                                           ok? (and (dream-evidenced? it user-lines-by-session)
-                                                                   (>= (count (distinct (:sessions it))) min-sess)
+                                                                   (>= (count (distinct sess)) min-sess)
                                                                    (or (not= b :learned) (>= conf 0.7)))]
                                                       (when-not ok? (swap! rejected inc))
                                                       ok?))

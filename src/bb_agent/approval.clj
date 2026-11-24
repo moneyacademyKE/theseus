@@ -93,7 +93,9 @@
       :approved
       (let [pending (create-pending! session-id channel request)
             deadline (+ (System/currentTimeMillis) (or timeout-ms 30000))
-            sent (when notify (notify pending))]
+            sent (when notify
+                   (try (notify pending)
+                        (catch Exception _ nil)))]
         (loop []
           (if-let [decision (consume-decision! (:approval/id pending))]
             (case decision
@@ -104,7 +106,9 @@
             (if (< (System/currentTimeMillis) deadline)
               (do (Thread/sleep 200) (recur))
               (do (resolve-by-id! (:approval/id pending) session-id :expired)
-                  (when on-expire (on-expire pending sent))
+                  (when on-expire
+                    (try (on-expire pending sent)
+                         (catch Exception _ nil)))
                   :denied))))))))
 
 (defn interactive-approver []

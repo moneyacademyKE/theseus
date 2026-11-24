@@ -97,7 +97,7 @@
   ex-data carries the full tried ledger."
   ([steps call] (try-chain steps call []))
   ([steps call tried]
-   (loop [steps steps tried tried]
+   (loop [steps (filter map? steps) tried tried]
      (if-not (seq steps)
        (throw (ex-info "All providers in fallback chain failed"
                        {:fallback/tried tried}))
@@ -117,4 +117,5 @@
            (recur (next steps)
                   (conj tried {:fallback/provider (:provider step)
                                :fallback/kind (:kind result)
-                               :fallback/reason (ex-message (:error result))}))))))))
+                               :fallback/reason (or (ex-message (:error result))
+                                                    (.getName (class (:error result))))}))))))))

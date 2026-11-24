@@ -14,9 +14,9 @@
   overlap in vector costume with no IDF — BM25 is the same idea with
   honest weights and no stored vectors to go stale."
   (:require [babashka.fs :as fs]
+            [bb-agent.atomic-io :as aio]
             [bb-agent.config :as config]
             [bb-agent.session :as session]
-            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 ;; ---------- BM25 ranking core ----------
@@ -90,16 +90,12 @@
   (fs/path (config/home) "state" "session-summaries.edn"))
 
 (defn load-summaries []
-  (let [path (store-file)]
-    (if (fs/regular-file? path)
-      (edn/read-string (slurp (str path)))
-      {})))
+  (let [raw (aio/read-edn-safe (store-file) {})]
+    (if (map? raw) raw {})))
 
 (defn- save-summaries! [store]
-  (let [path (store-file)]
-    (fs/create-dirs (fs/parent path))
-    (spit (str path) (pr-str store))
-    store))
+  (aio/write-private-file! (store-file) (pr-str store))
+  store)
 
 ;; ---------- summarize + index (cross_session_search.gleam) ----------
 

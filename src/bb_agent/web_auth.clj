@@ -155,12 +155,14 @@
   whose TTL passed while the deck was down die here — honest expiry,
   not resurrection."
   []
-  (let [t (now)]
+  (let [t (now)
+        raw (try (edn/read-string (slurp (str (sessions-file))))
+                 (catch Exception _ {}))
+        loaded (if (map? raw) raw {})]
     (reset! sessions
             (into {}
-                  (remove (fn [[_ v]] (or (nil? (:expires v)) (<= (:expires v) t))))
-                  (try (edn/read-string (slurp (str (sessions-file))))
-                       (catch Exception _ {})))))
+                  (remove (fn [[_ v]] (or (not (map? v)) (nil? (:expires v)) (<= (:expires v) t))))
+                  loaded)))
   (reset! password-record-mtime (record-mtime (password-file)))
   (reset! ro-password-record-mtime (record-mtime (ro-password-file)))
   @sessions)

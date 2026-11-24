@@ -50,10 +50,12 @@
 (defn- session-row
   "One session's index row: id, a short title, the joined text."
   [{:keys [id path]}]
-  (let [turns (try (edn/read-string (slurp (str path))) (catch Exception _ []))
+  (let [raw (try (edn/read-string (slurp (str path))) (catch Exception _ []))
+        turns (if (sequential? raw) (filter map? raw) [])
         texts (mapv str (turn-texts turns))
-        title (if (seq texts)
-                (-> (first texts) (str/trim) (subs 0 (min 80 (count (str/trim (first texts))))))
+        first-trimmed (some-> (first texts) str/trim)
+        title (if (and first-trimmed (not (str/blank? first-trimmed)))
+                (subs first-trimmed 0 (min 80 (count first-trimmed)))
                 id)]
     {:id id :title title :body (str/join "\n\n" texts)}))
 

@@ -33,7 +33,8 @@
           (and a b (boolean (some #(<= a % b) values)))))
       (if-let [[_ n] (re-find #"^\*/(\d+)$" part)]
         (when-let [n (parse-number n)]
-          (boolean (some #(zero? (mod % n)) values)))
+          (and (pos? n)
+               (boolean (some #(zero? (mod % n)) values))))
         (when-let [v (parse-number part)]
           (contains? values v)))))
 

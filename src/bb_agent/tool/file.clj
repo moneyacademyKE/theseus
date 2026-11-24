@@ -14,6 +14,8 @@
     (string? v) (or (parse-long (str/trim v)) ::invalid)
     :else ::invalid))
 
+(declare binary-file?)
+
 (defn- read-file! [{:keys [path start_line end_line]}]
   (let [target (path/checked-read-path "read_file" path)
         s-line (parse-opt-long start_line)
@@ -49,6 +51,11 @@
       (common/error-result "read_file"
                            (str "File too large: " path)
                            {:path path :max/bytes common/max-read-bytes})
+
+      (binary-file? target)
+      (common/error-result "read_file"
+                           (str "Refused: binary file (use document_read or shell): " path)
+                           {:path path :executed? false})
 
       :else
       (let [full (slurp (str target))]
@@ -246,7 +253,7 @@
                                             (name (:tier guard)) "): " path)
                                        {:path path :tier (:tier guard)})
                   (do
-                    (spit (str target) updated)
+                    (aio/write-atomic-file! target updated)
                     (merge (common/ok-result "edit_file"
                                              {:path (str target)
                                               :bytes bytes

@@ -370,8 +370,8 @@
         (if (http/authorized? req)
           (try
             (http/json-res 200 ((api-routes uri)))
-            (catch Exception e
-              (http/json-res 500 {:error (str (.getMessage e))})))
+            (catch Exception _
+              (http/json-res 500 {:error "internal-error"})))
           (http/json-res 401 {:error "unauthorized"}))
 
         (contains? static-files uri)
@@ -395,9 +395,19 @@
       (reset! sse-clients {})
       (stop-http))))
 
+(defn parse-port
+  "Parse an integer TCP port in 1..65535, falling back to `default`."
+  [raw default]
+  (if (str/blank? (str (or raw "")))
+    default
+    (try
+      (let [p (Integer/parseInt (str/trim (str raw)))]
+        (if (<= 1 p 65535) p default))
+      (catch Exception _ default))))
+
 (defn -main
   [& _]
-  (let [port (Integer/parseInt (or (System/getenv "THESEUS_WEB_PORT") "8787"))
+  (let [port (parse-port (System/getenv "THESEUS_WEB_PORT") 8787)
         recovery (turn/recover-lane!)]
     (when (seq (:interrupted recovery))
       (println (str "web lane recovery: " (count (:interrupted recovery))

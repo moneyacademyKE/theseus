@@ -15,6 +15,7 @@ Only active, factually accurate documentation for the current codebase is indexe
 - [ADR 0009 — Zero-Daemon Babashka-Native Datalog Engine](babashka-rewrite/adr/0009-zero-daemon-native-datalog-engine.md)
 - [ADR 0010 — Security-vs-Robustness Calibration](babashka-rewrite/adr/0010-security-vs-robustness-calibration.md)
 - [ADR 0011 — 17-Point Runtime Robustness Hardening Wave](babashka-rewrite/adr/0011-runtime-robustness-17-hardening-wave.md)
+- [ADR 0012 — Wave 2: 17-Point Runtime Robustness Hardening](babashka-rewrite/adr/0012-runtime-robustness-wave2-17.md)
 
 ## Active Subsystems & Audits
 - [The Web Deck](webdeck.md) — architecture, explicit state machines, AX contract (`window.__THESEUS_DECK__`, `data-*`), vendoring policy, and tests.
@@ -22,6 +23,7 @@ Only active, factually accurate documentation for the current codebase is indexe
 - [Multi-Writer & Datalog DB Gap Analysis (2026-11-22)](audits/multiwriter-db-gap-analysis-2026-11-22.md) — 5-way DB comparison, empirical DataScript SCI receipt, and zero-daemon native Datalog path.
 - [Security vs. Robustness Gap Analysis (2026-11-24)](audits/security-vs-robustness-gap-analysis-2026-11-24.md) — 6 security-vs-robustness collisions and 5 calibrated fixes.
 - [17-Point Runtime Robustness Gap Analysis (2026-11-24)](audits/robustness-17-gap-analysis-2026-11-24.md) — 17 verified runtime crash/corruption fixes across 12 namespaces.
+- [Wave 2: 17 More Runtime Robustness Upgrades (2026-11-24)](audits/robustness-wave2-17-gap-analysis-2026-11-24.md) — 17 additional crash/corruption fixes across 14 namespaces.
 - [Hot-Code Reload](hot-reload.md) — opt-in launchd development supervisor (`THESEUS_HOT_RELOAD=1`).
 - [Goal Runner × OpenCode Dogfood Ladder](opencode-dogfood.md) — dogfood contract pinned by `test/bb_agent/goal/phase9_opencode_dogfood_test.clj`.
 

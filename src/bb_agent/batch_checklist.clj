@@ -57,7 +57,9 @@
 (defn load-checklist [session-id]
   (let [p (checklist-file session-id)]
     (when (fs/regular-file? p)
-      (parse-checklist (slurp (str p))))))
+      (try
+        (parse-checklist (slurp (str p)))
+        (catch Exception _ nil)))))
 
 (defn start-checklist!
   "Initialize or monotonically restart-merge a batch checklist. Any item
