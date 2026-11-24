@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.5.1 - 2026-11-24
 
 ### Changed — security-vs-robustness calibration (2026-11-24, ADR `0010`)
 
