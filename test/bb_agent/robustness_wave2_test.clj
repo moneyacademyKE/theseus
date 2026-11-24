@@ -5,10 +5,13 @@
             [bb-agent.batch-checklist :as bc]
             [bb-agent.compression :as compression]
             [bb-agent.config :as config]
+            [bb-agent.core :as core]
             [bb-agent.cron :as cron]
+            [bb-agent.doctor :as doctor]
             [bb-agent.fallback :as fallback]
             [bb-agent.memory-dream :as dream]
             [bb-agent.outbox :as outbox]
+            [bb-agent.provider :as provider]
             [bb-agent.retry :as retry]
             [bb-agent.semantic-memory :as sm]
             [bb-agent.skill :as skill]
@@ -158,5 +161,33 @@
       (spit (str (fs/path home "state" "web-sessions.edn")) "42")
       (with-redefs [config/home (constantly (str home))]
         (is (= {} (auth/load-sessions!))))
+      (finally
+        (fs/delete-tree home)))))
+
+(deftest top-level-reasoning-effort-is-accepted-by-doctor-and-forwarded-by-core
+  (let [home (fs/create-temp-dir {:prefix "theseus-re-rob-"})
+        seen (atom nil)]
+    (try
+      (spit (str (fs/path home "config.edn"))
+            (pr-str {:provider :infered-local
+                     :model "infered/auto"
+                     :reasoning-effort "high"
+                     :providers {:infered-local {:base-url "http://127.0.0.1:8790/v1"}}}))
+      (with-redefs [config/home (constantly (str home))]
+        (let [checks (doctor/run-checks)
+              cfg-key-check (first (filter #(= :config-keys (:check %)) checks))]
+          (is (= :ok (:status cfg-key-check))
+              (str "doctor must recognize top-level :reasoning-effort, got: " cfg-key-check)))
+        (with-redefs [provider/complete
+                      (fn [_ req]
+                        (reset! seen (:provider/config req))
+                        {:content "ok" :tool/requests []})]
+          (core/run-turn! {:provider :infered-local
+                           :model "infered/auto"
+                           :session/id "re-test"
+                           :reasoning-effort "high"
+                           :providers {:infered-local {:base-url "http://127.0.0.1:8790/v1"}}}
+                          "hi")
+          (is (= "high" (:reasoning-effort @seen)))))
       (finally
         (fs/delete-tree home)))))

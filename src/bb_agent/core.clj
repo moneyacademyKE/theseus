@@ -122,6 +122,12 @@
       (assoc :model (:model step))
       (assoc :provider/config (:provider/config step))))
 
+(defn- provider-config-for [cfg p]
+  (let [pcfg (get-in cfg [:providers p])]
+    (if (and (:reasoning-effort cfg) (nil? (:reasoning-effort pcfg)))
+      (assoc (or pcfg {}) :reasoning-effort (:reasoning-effort cfg))
+      pcfg)))
+
 (defn- fallback-steps [cfg base-request]
   (let [primary {:provider (:provider base-request)
                  :model (:model base-request)
@@ -131,7 +137,7 @@
                  (let [p (keyword (:provider fb))]
                    {:provider p
                     :model (:model fb)
-                    :provider/config (get-in cfg [:providers p])})))
+                    :provider/config (provider-config-for cfg p)})))
           (:provider/fallbacks cfg))))
 
 (def ^:private sticky-fallbacks (atom {}))
@@ -241,7 +247,7 @@
                                 {:provider (:provider cfg)
                                  :model (:model cfg)
                                  :messages [{:role :user :content prompt}]
-                                 :provider/config (get-in cfg [:providers (:provider cfg)])})))}))))))))
+                                 :provider/config (provider-config-for cfg (:provider cfg))})))}))))))))
 
 (defn- skills-system-message [skills-ctx]
   {:role :system
@@ -458,7 +464,7 @@
                         :model model
                         :messages messages
                         :memory/matches memory-matches
-                        :provider/config (get-in cfg [:providers provider])
+                        :provider/config (provider-config-for cfg provider)
                         :provider/tools round-tools}
                request (cond-> request (seq user-images) (assoc :images user-images))
                response (complete-chain cfg request)

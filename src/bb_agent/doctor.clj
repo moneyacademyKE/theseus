@@ -86,7 +86,7 @@
     :tools/enable-optional :nudge-final-rounds :nudge-interval :max-tool-rounds
     :vision-chain :vision-model :goal :goal/max-authoring-rounds
     :policy :approval/mode :notify :telegram :web
-    :retry :cwd :max-tokens :max-cost-usd})
+    :retry :cwd :max-tokens :max-cost-usd :reasoning-effort})
 
 (defn- check-unknown-config-keys [cfg]
   (let [unknown (remove known-config-keys (keys cfg))]
@@ -169,8 +169,14 @@
            ". Poller keeps running; fix and kickstart."))))
 
 (defn run-checks []
-  (let [result (try {:cfg (config/load-config)}
-                    (catch Exception e {:error (ex-message e)}))]
+  (let [cfg-path (config/config-file)
+        result (try
+                 (when (fs/regular-file? cfg-path)
+                   (let [raw (edn/read-string (slurp (str cfg-path)))]
+                     (when-not (map? raw)
+                       (throw (ex-info "config.edn must be a map" {})))))
+                 {:cfg (config/load-config)}
+                 (catch Exception e {:error (ex-message e)}))]
     (if-let [parse-error (:error result)]
       [(check-config-file)
        (check-config-parses parse-error)]
