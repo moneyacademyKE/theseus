@@ -15,6 +15,7 @@
             [bb-agent.session :as session]
             [bb-agent.skill :as skill]
             [bb-agent.tool :as tool]
+            [bb-agent.tool-repeat :as tool-repeat]
             [bb-agent.tools :as tools]
             [bb-agent.turn-integrity :as ti]
             [bb-agent.turn-signals :as turn-signals]
@@ -471,7 +472,16 @@
                         :provider/config (provider-config-for cfg provider)
                         :provider/tools round-tools}
                request (cond-> request (seq user-images) (assoc :images user-images))
-               response (complete-chain cfg request)
+               response (try
+                          (complete-chain cfg request)
+                          (catch Exception e
+                            (if (tool-repeat/repetitive-tool-error? (ex-message e))
+                              (let [{pruned :messages removed :removed}
+                                    (tool-repeat/prune-repetitive-tool-calls messages)]
+                                (if (pos? removed)
+                                  (complete-chain cfg (assoc request :messages pruned))
+                                  (throw e)))
+                              (throw e))))
                _ (reset! heartbeat (System/currentTimeMillis))
                known-names (set (map #(get-in % [:function :name]) round-tools))
                rescued-call (when (empty? (:tool/requests response))

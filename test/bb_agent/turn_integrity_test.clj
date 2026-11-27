@@ -119,3 +119,27 @@
         (is (nil? (crash-flag/read-crash-flag)) "consume clears the flag"))
       (finally
         (fs/delete-tree home)))))
+
+(deftest mechanism-based-phantom-nudges-test
+  (testing "execute-guard nudge explains reasoning mechanism and includes finished escape hatch"
+    (is (str/includes? ti/execute-guard-nudge-message "nothing runs inside your reasoning"))
+    (is (str/includes? ti/execute-guard-nudge-message "If the work is genuinely done")))
+
+  (testing "uncalled-commands-nudge quotes exact commands and includes escape hatch"
+    (let [msg (ti/uncalled-commands-nudge ["bb test" "git push"])]
+      (is (str/includes? msg "`bb test`"))
+      (is (str/includes? msg "`git push`"))
+      (is (str/includes? msg "nothing runs inside your reasoning"))
+      (is (str/includes? msg "If the work is genuinely done"))))
+
+  (testing "unbacked-facts-nudge quotes exact unverified facts"
+    (let [msg (ti/unbacked-facts-nudge ["abc1234"])]
+      (is (str/includes? msg "`abc1234`"))
+      (is (str/includes? msg "written, not read"))))
+
+  (testing "no-tool-calls-nudge tailors wording for local models without STOP"
+    (let [local-msg (ti/no-tool-calls-nudge {:local-model? true})
+          cloud-msg (ti/no-tool-calls-nudge {:local-model? false})]
+      (is (str/includes? local-msg "structured tool-call API"))
+      (is (not (str/includes? local-msg "STOP")))
+      (is (str/includes? cloud-msg "If the work is genuinely done")))))

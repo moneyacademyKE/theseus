@@ -67,10 +67,63 @@
          (not (any-mutating-tool-succeeded? turn))
          (boolean (re-find fake-done-claim-re c)))))
 
+(def ^:private finished-escape
+  (str " If the work is genuinely done and you have already reported it, "
+       "reply with a short confirmation and stop; do not run extra tool calls to re-verify it."))
+
+(def ^:private no-execution-while-reasoning
+  (str "Tools execute only between turns; nothing runs inside your reasoning. "
+       "If you saw that output while thinking, you imagined it. "
+       "The only evidence a tool ran is its result present in this conversation."))
+
 (def execute-guard-nudge-message
-  (str "Execution guard: you claimed changes were made, but no mutating tool "
-       "(write_file, shell, launch_goal) succeeded in this turn. Either perform "
-       "the edit with tools now, or honestly report what blocked you."))
+  (str "[System: Execution guard — you claimed changes were made, but no mutating tool "
+       "(write_file, edit_file, shell, launch_goal) succeeded in this turn. "
+       no-execution-while-reasoning
+       " Either perform the edit through the structured tool-call API now, "
+       "or honestly report what blocked you."
+       finished-escape "]"))
+
+(defn uncalled-commands-nudge
+  "Mechanism-based nudge quoting the exact commands claimed but never run."
+  [commands]
+  (let [quoted (str/join ", " (map #(str "`" % "`") commands))
+        subject (if (= 1 (count commands))
+                  "output from"
+                  "output from these commands:")]
+    (str "[System: You reported " subject " " quoted ". No such call ran this turn. "
+         no-execution-while-reasoning
+         " Call the tool now through the structured tool-call API, "
+         "or retract the claim and tell the user it has not been run."
+         finished-escape "]")))
+
+(defn unbacked-facts-nudge
+  "Mechanism-based nudge quoting exact SHAs/tallies absent from conversation evidence."
+  [facts]
+  (let [quoted (str/join ", " (map #(str "`" % "`") facts))
+        subject (if (= 1 (count facts)) "this fact:" "these facts:")]
+    (str "[System: You reported " subject " " quoted
+         ". None of it appears in any tool result or message in this conversation, "
+         "so it was written, not read. "
+         no-execution-while-reasoning
+         " Run the tool that produces it through the structured tool-call API, "
+         "or retract the claim and say it has not been verified."
+         finished-escape "]")))
+
+(defn no-tool-calls-nudge
+  "Mechanism-based nudge for turns that claimed work with zero tool calls.
+   `:local-model? true` avoids the word STOP (which causes Qwen/Kimi-class models
+   to reply with an acknowledgement instead of invoking a tool)."
+  [{:keys [local-model?]}]
+  (let [channel (if local-model?
+                  (str "Invoke it through the provider's structured tool-call API, the same "
+                       "channel the function schemas were registered on. JSON or markdown "
+                       "written into your message is text and does not execute.")
+                  "Call the tool through the structured tool-call API rather than describing it.")]
+    (str "[System: Your last response claimed work but produced no tool calls, so nothing was "
+         "executed. " no-execution-while-reasoning " " channel
+         " Pick the tool you need and call it now."
+         finished-escape "]")))
 
 ;; ---------- Silent-turn factual receipt synthesizer (#11) ----------
 

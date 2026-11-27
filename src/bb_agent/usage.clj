@@ -129,7 +129,7 @@
   the price of admission: no session id, no event — an outcome that
   cannot be attributed is a fixture, not signal (this is also what
   keeps contextless unit-test calls out of the live ledger)."
-  [{:keys [tool session-id status ok denial-source denial-rule denial-category denial-reason ms executed?]}]
+  [{:keys [tool session-id status ok denial-source denial-rule denial-category denial-reason ms executed? recoverable?]}]
   (when session-id
     (append-event!
      (cond-> {:usage/event :tool
@@ -143,6 +143,7 @@
        (some? denial-category) (assoc :denial/category denial-category)
        (some? denial-reason) (assoc :denial/reason denial-reason)
        (some? executed?) (assoc :tool/executed? (boolean executed?))
+       (some? recoverable?) (assoc :tool/recoverable? (boolean recoverable?))
        (number? ms) (assoc :tool/ms (max 0 (long ms)))))))
 
 (defn tool-summary

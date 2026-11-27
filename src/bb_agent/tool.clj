@@ -1,5 +1,6 @@
 (ns bb-agent.tool
   (:require [babashka.fs :as fs]
+            [bb-agent.bash-failure :as bash-failure]
             [bb-agent.config :as config]
             [bb-agent.datalog :as datalog]
             [bb-agent.plan :as plan]
@@ -15,6 +16,7 @@
             [bb-agent.tools :as tools]
             [bb-agent.tool.common :as common]
             [bb-agent.tool-hints :as hints]
+            [bb-agent.tool-name-heal :as name-heal]
             [bb-agent.tool.file :as file]
             [bb-agent.tool.goal :as goal]
             [bb-agent.tool.process :as process]
@@ -32,6 +34,22 @@
          web/handlers net-search/handlers browser-tool/handlers
          a2a-tool/handlers datalog/handlers repl/handlers))
 
+(def ^:private known-tool-names
+  (vec (distinct (concat (keys handlers)
+                         ["discover_tools" "plan" "spawn_subagent"]))))
+
+(defn- heal-tool-request
+  "Conservatively heal a near-miss tool name to a registered tool name.
+   Leaves exact or ambiguous/unknown names untouched."
+  [request]
+  (let [orig (:tool/name request)]
+    (if (or (nil? orig) (contains? handlers orig)
+            (contains? #{"discover_tools" "plan" "spawn_subagent"} orig))
+      request
+      (if-let [resolved (name-heal/resolve-tool-name (str orig) known-tool-names)]
+        (assoc request :tool/name resolved :tool/healed-from (str orig))
+        request))))
+
 (defn execute-tool-request
   "Run one tool request. The argument heal happens HERE as well as in
    normalize-request, on purpose: this is the execution seam, so any caller that
@@ -45,18 +63,21 @@
    overwrite got the old bytes kept plus the new ones — on the seam that writes
    brain/."
   [request]
-  (let [{:tool/keys [name args]} request
+  (let [request (heal-tool-request request)
+        {:tool/keys [name args healed-from]} request
         args (common/heal-args (str name) args)
-        handler (get handlers name)]
-    (if handler
-      (try
-        (handler args)
-        (catch Exception e
-          (common/error-result name
-                               (or (ex-message e) (.getName (class e)))
-                               {:exception/type (str (class e))
-                                :executed? false})))
-      (common/error-result name (str "Unknown tool: " name) {:executed? false}))))
+        handler (get handlers name)
+        res (if handler
+              (try
+                (handler args)
+                (catch Exception e
+                  (common/error-result name
+                                       (or (ex-message e) (.getName (class e)))
+                                       {:exception/type (str (class e))
+                                        :executed? false})))
+              (common/error-result name (str "Unknown tool: " name) {:executed? false}))]
+    (cond-> res
+      healed-from (assoc :tool/healed-from healed-from))))
 
 (defn- run-discover-tools [args cfg]
   (let [q (or (:query args) (get args "query") "")
@@ -79,7 +100,7 @@
   ([request cfg]
    (let [started-at (System/nanoTime)
          requested-policy (:approval/policy request)
-         request (normalize-request request)
+         request (-> request normalize-request heal-tool-request)
          request (cond-> request
                    (and (:cwd cfg)
                         (contains? #{"shell" "git_status" "telegram_send_file"
@@ -104,7 +125,9 @@
                    (and (string? (get cfg :web/job-id))
                         (= "web_send_file" (:tool/name request)))
                    (assoc-in [:tool/args :web-job-id] (get cfg :web/job-id))
-                   (= "read_session_turns" (:tool/name request))
+                   (and (:session/id cfg)
+                        (contains? #{"read_session_turns" "read_file" "write_file"}
+                                   (:tool/name request)))
                    (assoc-in [:tool/args :session/id] (:session/id cfg))
                    (and (map? (:telegram/send-context cfg))
                         (= "launch_goal" (:tool/name request)))
@@ -205,16 +228,22 @@
      ;; Telemetry is best-effort: a ledger failure must never fail the
      ;; tool call it measures. Attribution is required (see usage/tool-event!).
      (try
-       (usage/tool-event! {:tool (:tool/name request)
-                           :session-id (or (:session/id cfg) (:session/id request))
-                           :status (:status result)
-                           :executed? (boolean (:executed? result))
-                           :ms (quot (- (System/nanoTime) started-at) 1000000)
-                           :ok (boolean (and (:executed? result)
-                                             (= :ok (:status result))))
-                           :denial-source (:denial/source result)
-                           :denial-rule (:denial/rule result)
-                           :denial-category (:denial/category result)
-                           :denial-reason (:denial/reason result)})
+       (let [err-str (when (= :error (:status result))
+                       (str (:error/message result)
+                            (when-let [se (:stderr result)] (str "\nSTDERR:\n" se))))
+             rec? (when (= :error (:status result))
+                    (bash-failure/recoverable-tool-failure? (:tool/name request) err-str))]
+         (usage/tool-event! {:tool (:tool/name request)
+                             :session-id (or (:session/id cfg) (:session/id request))
+                             :status (:status result)
+                             :executed? (boolean (:executed? result))
+                             :ms (quot (- (System/nanoTime) started-at) 1000000)
+                             :ok (boolean (and (:executed? result)
+                                               (= :ok (:status result))))
+                             :recoverable? rec?
+                             :denial-source (:denial/source result)
+                             :denial-rule (:denial/rule result)
+                             :denial-category (:denial/category result)
+                             :denial-reason (:denial/reason result)}))
        (catch Exception _ nil))
      (hints/attach-next-step request (rtk/apply request result cfg)))))

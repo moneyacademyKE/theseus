@@ -55,16 +55,21 @@
 
 (defn tools-aggregate
   "Per-tool outcome counts from the funnel's :usage/event :tool entries.
-  :fail counts :error results only — a :denied call is a policy outcome,
-  not a tool failure (the veto-costume lesson, restated at the aggregate
-  layer: a denial has a source and a recourse; an error is just broken)."
+  :fail counts non-recoverable :error results only — a :denied call is a policy
+  outcome, and a :tool/recoverable? error (environmental shell miss, stale edit
+  anchor) stays queryable in :recoverable without poisoning the tool-defect rate."
   [events]
   (->> (tool-events events)
        (group-by :tool/name)
        (map (fn [[t xs]]
               [t {:calls (count xs)
                   :ok (count (filter :ok xs))
-                  :fail (count (filter #(= :error (:tool/status %)) xs))
+                  :fail (count (filter #(and (= :error (:tool/status %))
+                                             (not (:tool/recoverable? %)))
+                                       xs))
+                  :recoverable (count (filter #(and (= :error (:tool/status %))
+                                                    (boolean (:tool/recoverable? %)))
+                                              xs))
                   :denied (count (filter #(= :denied (:tool/status %)) xs))}]))
        (into {})))
 

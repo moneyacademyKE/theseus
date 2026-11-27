@@ -17,8 +17,33 @@
 
 (declare binary-file?)
 
-(defn- read-file! [{:keys [path start_line end_line]}]
-  (let [target (path/checked-read-path "read_file" path)
+;; ---------- Session-scoped fully-read path tracking (OpenCrabs read_state.rs) ----------
+
+(def ^:private fully-read-paths (atom #{}))
+
+(defn- canonical-key-path [p]
+  (try
+    (str (fs/canonicalize p))
+    (catch Exception _
+      (str (fs/absolutize p)))))
+
+(defn mark-fully-read!
+  "Record that `session-id` has been shown the full contents of `path`."
+  [session-id path]
+  (when (and session-id path)
+    (swap! fully-read-paths conj [(str session-id) (canonical-key-path path)]))
+  nil)
+
+(defn was-fully-read?
+  "True when `session-id` was shown the full contents of `path` this run."
+  [session-id path]
+  (boolean
+   (and session-id path
+        (contains? @fully-read-paths [(str session-id) (canonical-key-path path)]))))
+
+(defn- read-file! [{:keys [path start_line end_line] :as args}]
+  (let [sid (:session/id args)
+        target (path/checked-read-path "read_file" path)
         s-line (parse-opt-long start_line)
         e-line (parse-opt-long end_line)]
     (cond
@@ -65,9 +90,12 @@
                 total (count lines)
                 from-i (max 1 (or s-line 1))
                 to-i (min total (or e-line total))
+                truncated? (or (> from-i 1) (< to-i total))
                 sliced (if (or (zero? total) (> from-i total) (> from-i to-i))
                          ""
                          (str/join "\n" (subvec (vec lines) (dec from-i) to-i)))]
+            (when (and sid (not truncated?))
+              (mark-fully-read! sid target))
             (common/ok-result "read_file"
                               {:path (str target)
                                :content sliced
@@ -75,11 +103,13 @@
                                :start-line from-i
                                :end-line (max (dec from-i) to-i)
                                :total-lines total
-                               :truncated? (or (> from-i 1) (< to-i total))}))
-          (common/ok-result "read_file"
-                            {:path (str target)
-                             :content full
-                             :bytes (count (.getBytes full "UTF-8"))}))))))
+                               :truncated? truncated?}))
+          (do
+            (when sid (mark-fully-read! sid target))
+            (common/ok-result "read_file"
+                              {:path (str target)
+                               :content full
+                               :bytes (count (.getBytes full "UTF-8"))})))))))
 
 (defn- write-file-unguarded
   [target content bytes append? create-dirs? snapshot]
@@ -95,8 +125,9 @@
                             :append? (boolean append?)})
          (when snapshot {:snapshot snapshot})))
 
-(defn- write-file! [{:keys [path content append? create-dirs?]}]
-  (let [target (path/checked-write-path "write_file" path)
+(defn- write-file! [{:keys [path content append? create-dirs?] :as args}]
+  (let [sid (:session/id args)
+        target (path/checked-write-path "write_file" path)
         content (or content "")
         bytes (count (.getBytes content "UTF-8"))]
     (cond
@@ -105,6 +136,15 @@
       (path/protected-write-path? target)
       (common/error-result "write_file"
                            (str "Refused: protected secret path: " path)
+                           {:path path :executed? false})
+
+      (and sid
+           (not append?)
+           (fs/exists? target)
+           (not (was-fully-read? sid target)))
+      (common/error-result "write_file"
+                           (str "Refused: existing file was not read in full this session (" path
+                                "). Call read_file for the full file first, or use edit_file / append?=true.")
                            {:path path :executed? false})
 
       (> bytes common/max-write-bytes)
