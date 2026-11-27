@@ -14,6 +14,7 @@
             [bb-agent.model-commands :as model-commands]
             [bb-agent.session :as session]
             [bb-agent.skill :as skill]
+            [bb-agent.stop-intent :as stop-intent]
             [bb-agent.telegram-approval-ui :as approval-ui]
             [bb-agent.telegram-attachment :as attachment]
             [bb-agent.telegram-delivery :as delivery]
@@ -113,6 +114,7 @@
     "/goals" :goals
     ("/skills" "/help") :skills
     nil)
+      (when (stop-intent/stop-intent? text) :stop)
       (when (goal-bridge/build-intent? text) :build-goal))))
 
 (defn skill-command
@@ -130,16 +132,41 @@
       (when-let [matched (bot-commands/resolve-skill skills cmd-name)]
         (skill/compose-prompt matched input)))))
 
+(def ^:private active-turn-cancels (atom {}))
+
+(defn register-turn-cancel!
+  "Register a cancel atom for an in-flight session turn."
+  [session-id cancel-atom]
+  (when (and session-id cancel-atom)
+    (swap! active-turn-cancels assoc session-id cancel-atom))
+  cancel-atom)
+
+(defn unregister-turn-cancel!
+  [session-id]
+  (when session-id
+    (swap! active-turn-cancels dissoc session-id))
+  nil)
+
+(defn request-stop!
+  "Signal any in-flight turn for `session-id` to stop cleanly. Returns true if a turn was active."
+  [session-id]
+  (if-let [a (get @active-turn-cancels session-id)]
+    (do (reset! a true) true)
+    false))
+
 (defn handle-chat-command
   "Answer a chat command without an LLM turn. Public: shared verbatim
   with the web turn lane (bb-agent.web-turn) — one implementation of
-  /new /usage /model /models /goals /skills, two channels."
+  /new /usage /model /models /goals /skills /stop, two channels."
   [cmd session-id text _chat-id _thread-id]
   (case cmd
     ;; :goal-request/:build-goal are intercepted in the dispatch before this
     ;; runs (V1a: detached authoring, no flow wrapper needed) — deliberately
     ;; NOT cased here so an un-intercepted goal request can never silently
     ;; take the generic-command path.
+    :stop (if (request-stop! session-id)
+            "🛑 Stopping the active turn."
+            "🛑 Nothing running right now.")
     :goals (or (when-let [lines (goal-progress/list-goals)]
                  (str "🎯 Goals:\n" (str/join "\n" lines)))
                "No goals yet — /goal <what to build> launches one.")

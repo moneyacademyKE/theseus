@@ -315,7 +315,9 @@
                                             (name (:tier guard)) "): " path)
                                        {:path path :tier (:tier guard)})
                   (do
-                    (aio/write-atomic-file! target updated)
+                    (path-lock/with-path-lock
+                      (str target)
+                      (fn [_] (aio/write-atomic-file! target updated)))
                     (merge (common/ok-result "edit_file"
                                              {:path (str target)
                                               :bytes bytes
