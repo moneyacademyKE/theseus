@@ -270,6 +270,15 @@
                    (approval-ui/expire-keyboard! telegram-cfg chat-id mid
                                                  (:approval/id pending))))}))
 
+(defn- approver-for-turn
+  "Fully autonomous when :approval/mode is :auto-all and :security/taint-gate? is false;
+   otherwise wire the interactive Telegram approval keyboard."
+  [cfg telegram-cfg session-id chat-id thread-id]
+  (if (and (= :auto-all (:approval/mode cfg))
+           (false? (:security/taint-gate? cfg)))
+    (constantly :approved)
+    (approval-ask telegram-cfg session-id chat-id thread-id)))
+
 (defn- rerun-edited-reply!
   "An edit to a message we already answered re-runs the turn and replaces
    the prior reply in place — a stale answer next to an edited question
@@ -292,7 +301,7 @@
                             :session/shared? (group/group-chat? edited)
                             :status/emit (flow/flow-emit
                                           turn-flow telegram-cfg chat-id thread-id)
-                            :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
+                            :approval/ask (approver-for-turn cfg telegram-cfg session-id chat-id thread-id))
                      (group/agent-input bot (assoc edited :text text)))))]
         (flow/settle! turn-flow telegram-cfg chat-id true)
         (let [chunks (tr/split-message (tr/to-html (:assistant/final turn)))]
@@ -334,7 +343,7 @@
                         :telegram/send-context {:chat-id chat-id
                                                 :thread-id thread-id}
                         :user/images (:user/images input-message)
-                        :approval/ask (approval-ask telegram-cfg session-id chat-id thread-id))
+                        :approval/ask (approver-for-turn cfg telegram-cfg session-id chat-id thread-id))
                  (group/agent-input bot input-message))))]
     (flow/settle! turn-flow telegram-cfg chat-id true)
     (let [delivered (delivery/send-html!

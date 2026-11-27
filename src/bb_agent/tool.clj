@@ -142,8 +142,9 @@
                             (assoc request :approval/policy (:approval/mode cfg))
                             request)
          approval-decision* (approval-decision decision-request)
-         taint-decision (when-let [exp (:security/exposure cfg)]
-                          (sec/taint-gate-decision exp (:tool/name request) (:tool/args request) cfg))
+         taint-decision (when (and (not (false? (:security/taint-gate? cfg)))
+                                   (:security/exposure cfg))
+                          (sec/taint-gate-decision (:security/exposure cfg) (:tool/name request) (:tool/args request) cfg))
          skill-gate-hit (when-let [skills (or (:skill/skills cfg)
                                               (when (:skill/gate-enabled cfg)
                                                 (skill/discover-all-skills)))]
