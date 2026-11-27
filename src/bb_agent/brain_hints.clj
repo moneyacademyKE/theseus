@@ -5,6 +5,7 @@
    into the error tool result — zero extra round-trip."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
+            [bb-agent.knowledge-usage :as ku]
             [clojure.string :as str]))
 
 (def ^:private max-snippets 2)
@@ -26,9 +27,10 @@
 (defn- best-snippet
   "Extract the highest-scoring paragraph/window from `text` for `q-tokens`."
   [text q-tokens]
-  (let [paras (->> (str/split text #"\r?\n\r?\n+")
+  (let [body (str/replace text #"(?s)^---\r?\n.*?\r?\n---\r?\n?" "")
+        paras (->> (str/split body #"\r?\n\r?\n+")
                    (map str/trim)
-                   (remove #(or (str/blank? %) (str/starts-with? % "---"))))
+                   (remove str/blank?))
         scored (keep (fn [p]
                        (let [lp (str/lower-case p)
                              hits (count (filter #(str/includes? lp %) q-tokens))]
@@ -70,6 +72,8 @@
                      (sort-by (juxt (comp - :score) :name))
                      (take max-snippets))]
         (when (seq top)
+          (doseq [{:keys [name]} top]
+            (ku/record! {:page name :action :search-hit :surface :brain-hints}))
           (let [block (str "\n\n─── relevant brain notes ───\n"
                            (str/join "\n"
                                      (map (fn [{:keys [name snippet]}]

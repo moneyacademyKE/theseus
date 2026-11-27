@@ -689,16 +689,22 @@
                    (if (seq tool-requests)
                      (if (awaiting-human? tool-results)
                        (finish-turn id active-cfg prompt memory-matches semantic-ctx turn* (tool-results-summary tool-results) (:usage response))
-                       (let [rounds-next (dec rounds-left)
+                       (let [steer-msg (when-let [drain (:turn/drain-steer active-cfg)]
+                                         (drain))
+                             steered? (and (string? steer-msg) (not (str/blank? steer-msg)))
+                             turn** (cond-> turn* steered? (assoc :turn/steered? true))
+                             rounds-next (dec rounds-left)
                              extend? (and (neg? rounds-next)
                                           (pos? nudge-final-rounds)
                                           (not final-nudge-used?))]
                          (recur (cond-> (continue-messages messages response tool-results)
+                                  steered? (conj {:role :user
+                                                  :content (str "[User steer mid-turn]: " steer-msg)})
                                   (and truncated? (zero? truncation-nudges))
                                   (conj {:role :user :content (ti/truncation-recovery-prompt tool-requests)})
                                   extend? (conj {:role :user
                                                  :content (final-nudge-message nudge-final-rounds)}))
-                                turn*
+                                turn**
                                 (if extend? nudge-final-rounds rounds-next)
                                 seen-calls*
                                 read-cache*

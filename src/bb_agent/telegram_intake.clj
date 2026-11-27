@@ -29,6 +29,7 @@
             [bb-agent.telegram-rich :as tr]
             [bb-agent.telegram-state :as state]
             [bb-agent.telegram-voice :as voice]
+            [bb-agent.turn-diagnostics :as turn-diag]
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
 
@@ -237,7 +238,8 @@
    degrades to a log line, never a poll crash."
   [telegram-cfg chat-id thread-id message-id e]
   (binding [*out* *err*]
-    (println (str "telegram turn failed: " (.getMessage e)
+    (println (str "telegram turn failed: "
+                  (turn-diag/format-compact (turn-diag/assess-failure {:exception e}))
                   (when-let [d (ex-data e)]
                     (str " data=" (pr-str d))))))
   (try

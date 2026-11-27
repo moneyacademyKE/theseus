@@ -129,7 +129,14 @@
                                [bb-agent.queued-fold-test]
                                [bb-agent.path-lock-test]
                                [bb-agent.behavioral-wiring-test]
-                               [bb-agent.telegram-auto-register-test])
+                               [bb-agent.telegram-auto-register-test]
+                               [bb-agent.turn-diagnostics-test]
+                               [bb-agent.knowledge-usage-test]
+                               [bb-agent.conflict-blocks-test]
+                               [bb-agent.secret-mask-test]
+                               [bb-agent.rework-control-test]
+                               [bb-agent.rsi-canary-test]
+                               [bb-agent.loopforge-wave3-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -196,7 +203,14 @@
                                              'bb-agent.queued-fold-test
                                              'bb-agent.path-lock-test
                                              'bb-agent.behavioral-wiring-test
-                                             'bb-agent.telegram-auto-register-test)]
+                                             'bb-agent.telegram-auto-register-test
+                                             'bb-agent.turn-diagnostics-test
+                                             'bb-agent.knowledge-usage-test
+                                             'bb-agent.conflict-blocks-test
+                                             'bb-agent.secret-mask-test
+                                             'bb-agent.rework-control-test
+                                             'bb-agent.rsi-canary-test
+                                             'bb-agent.loopforge-wave3-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
