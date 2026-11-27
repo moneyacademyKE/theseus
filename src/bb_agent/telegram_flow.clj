@@ -18,10 +18,14 @@
      clean message at the bottom;
    - contexts are redacted and middle-truncated; a flow failure never
      blocks the turn (try/catch at every Telegram call)."
-  (:require [bb-agent.session :as session]
+  (:require [bb-agent.progress-pub :as progress-pub]
+            [bb-agent.session :as session]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-presence :as presence]
             [clojure.string :as str]))
+
+(def sanitize-status progress-pub/sanitize-public-status)
+(def create-nonblocking-publisher progress-pub/create-publisher)
 
 (def ^:private context-cap 64)
 

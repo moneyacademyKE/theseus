@@ -136,7 +136,8 @@
                                [bb-agent.secret-mask-test]
                                [bb-agent.rework-control-test]
                                [bb-agent.rsi-canary-test]
-                               [bb-agent.loopforge-wave3-test])
+                               [bb-agent.loopforge-wave3-test]
+                               [bb-agent.loopforge-wave4-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -210,7 +211,8 @@
                                              'bb-agent.secret-mask-test
                                              'bb-agent.rework-control-test
                                              'bb-agent.rsi-canary-test
-                                             'bb-agent.loopforge-wave3-test)]
+                                             'bb-agent.loopforge-wave3-test
+                                             'bb-agent.loopforge-wave4-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"

@@ -49,3 +49,55 @@
 
     :else
     {:ok? true}))
+
+(defn score-run
+  "3-point run grade: 2 clean pass, 1 passed after rework/retry, 0 failed,
+   nil for non-terminal/cancelled runs."
+  [{:keys [status rework-count]}]
+  (case status
+    :failed 0
+    :succeeded (if (pos? (long (or rework-count 0))) 1 2)
+    nil))
+
+(defn- mean [xs]
+  (when (seq xs)
+    (/ (double (reduce + 0 xs)) (double (count xs)))))
+
+(defn evaluate-canary
+  "Evaluate canary trial scores (0..2). Early-stops at >=3 runs if candidate
+   trails control by >= 1.0 point; decides :pass / :fail once both arms reach min-runs."
+  [{:keys [candidate-scores control-scores min-runs] :or {min-runs 5}}]
+  (let [cn (count candidate-scores)
+        kn (count control-scores)
+        cavg (mean candidate-scores)
+        kavg (mean control-scores)]
+    (cond
+      (and (>= cn 3) (>= kn 3) (<= (- cavg kavg) -1.0))
+      {:verdict :early-stop :candidate-avg cavg :control-avg kavg}
+
+      (or (< cn min-runs) (< kn min-runs))
+      {:verdict :collecting :candidate-runs cn :control-runs kn}
+
+      (< cavg (- kavg 0.35))
+      {:verdict :fail :candidate-avg cavg :control-avg kavg}
+
+      :else
+      {:verdict :pass :candidate-avg cavg :control-avg kavg})))
+
+(defn evaluate-post-release-watch
+  "Compare post-release run scores against pre-release baseline. Flags :degraded
+   when >=3 post runs average >=0.5 points below baseline."
+  [{:keys [baseline-scores post-scores min-runs] :or {min-runs 3}}]
+  (let [bn (count baseline-scores)
+        pn (count post-scores)
+        bavg (mean baseline-scores)
+        pavg (mean post-scores)]
+    (cond
+      (or (< bn min-runs) (< pn min-runs))
+      {:verdict :insufficient-data :baseline-runs bn :post-runs pn}
+
+      (<= (- pavg bavg) -0.5)
+      {:verdict :degraded :baseline-avg bavg :post-avg pavg}
+
+      :else
+      {:verdict :healthy :baseline-avg bavg :post-avg pavg})))

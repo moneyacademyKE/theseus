@@ -38,3 +38,13 @@
 
       :else
       {:ok? true})))
+
+(defn check-files-whitelist
+  "Hard scope gate: every changed file must belong to `whitelist`.
+   Returns {:ok? true} or {:ok? false :out-of-scope [...]}."
+  [changed-files whitelist]
+  (let [allowed (set whitelist)
+        out (vec (remove allowed changed-files))]
+    (if (empty? out)
+      {:ok? true}
+      {:ok? false :out-of-scope out})))

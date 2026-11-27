@@ -20,6 +20,7 @@
             [bb-agent.goal.control :as control]
             [bb-agent.goal.budget :as budget]
             [bb-agent.goal.decision :as decision]
+            [bb-agent.human-context :as human-context]
             [bb-agent.rework-control :as rework-control]
             [babashka.process :refer [sh check]]
             [clojure.string :as str]))
@@ -71,7 +72,8 @@
             cmd     (render-template tmpl (assoc world
                                                  :attempt attempt
                                                  :model (or model "")
-                                                 :feedback (or (:last-feedback state) "")))
+                                                 :feedback (or (:last-feedback state) "")
+                                                 :human_context (or (human-context/read-human-context (:workdir cfg ".")) "")))
             timeout (act-timeout-ms cfg act)]
         (log/event! (:log-dir cfg) :info "acting"
                     {:cmd cmd :attempt attempt :prompt-index pidx :model model})
