@@ -3,6 +3,7 @@
             [bb-agent.circuit-breaker :as cb]
             [bb-agent.compression :as compression]
             [bb-agent.fallback :as fallback]
+            [bb-agent.gaslighting :as gas]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
             [bb-agent.plan :as plan]
@@ -17,6 +18,7 @@
             [bb-agent.tool :as tool]
             [bb-agent.tool-repeat :as tool-repeat]
             [bb-agent.tools :as tools]
+            [bb-agent.truncation :as trunc]
             [bb-agent.turn-integrity :as ti]
             [bb-agent.turn-signals :as turn-signals]
             [bb-agent.usage :as usage]
@@ -465,9 +467,12 @@
                round-tools (if (seq discovered-tools)
                              (tools/active-definitions round-cfg)
                              active-tools)
+               pressure-nudge (trunc/context-pressure-nudge (compression/count-chars messages) live-budget)
+               request-messages (cond-> messages
+                                  pressure-nudge (conj {:role :system :content pressure-nudge}))
                request {:provider provider
                         :model model
-                        :messages messages
+                        :messages request-messages
                         :memory/matches memory-matches
                         :provider/config (provider-config-for cfg provider)
                         :provider/tools round-tools}
@@ -706,11 +711,15 @@
                               (inc execute-nudges))
 
                        :else
-                       (finish-turn id cfg prompt memory-matches semantic-ctx
-                                    (cond-> turn*
-                                      (pos? phantom-streak)
-                                      (assoc :turn/phantom-nudged phantom-streak))
-                                    content (:usage response))))
+                       (let [any-tool-ok? (some #(= :ok (:status %)) (:tool/results turn*))
+                             final-content (if any-tool-ok?
+                                             (or (gas/strip-gaslighting-preamble content) content)
+                                             content)]
+                         (finish-turn id cfg prompt memory-matches semantic-ctx
+                                      (cond-> turn*
+                                        (pos? phantom-streak)
+                                        (assoc :turn/phantom-nudged phantom-streak))
+                                      final-content (:usage response)))))
                    (let [streak (inc reasoning-streak)
                          rthreshold (or (:reasoning-nudge-threshold cfg)
                                         default-reasoning-nudge-threshold)]

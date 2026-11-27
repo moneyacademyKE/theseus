@@ -4,7 +4,8 @@
    deterministic failures (:rate-limited, :auth-expired, :permission-denied,
    :timeout, :not-found), and attaches a crisp 1-line :next-step directive so
    the model stops burning turns retrying unrecoverable calls."
-  (:require [clojure.string :as str]))
+  (:require [bb-agent.brain-hints :as brain-hints]
+            [clojure.string :as str]))
 
 (def ^:private max-inspect-chars 2000)
 
@@ -81,7 +82,11 @@
                  (shell-timeout-hint (get-in request [:tool/args :cmd]))
 
                  kind (next-step-hint kind)
-                 :else nil)]
+                 :else nil)
+          bh (try
+               (brain-hints/hints-for (str (:tool/name request) " " (bounded err-text)))
+               (catch Exception _ nil))]
       (cond-> result
         kind (assoc :failure/kind kind)
-        hint (assoc :next-step hint)))))
+        hint (assoc :next-step hint)
+        bh (assoc :brain/hints bh)))))
