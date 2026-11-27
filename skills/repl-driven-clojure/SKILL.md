@@ -45,4 +45,5 @@ metadata:
 - **No piped receipts:** `bb test | tail` masks exit 1 with exit 0. Always run bare or `cmd; echo "EXIT=$?"`.
 - **Register new tests in `bb.edn`:** Add both `[ns]` in `:requires` and `'ns` in `t/run-tests`, then confirm `bb test-roster` shows `never-run: 0`.
 - **`babashka.process/shell` arity bug:** `(p/shell {:opts} ["prog" "arg"])` stringifies the vector and fails; always pass varargs `(apply p/shell {:opts} "prog" "arg" rest)` (`p/process` takes a vector).
+- **Never `load-file` side-effecting scripts to syntax-check:** parse with `edamame.core/parse-string-all` or `bb lint`. Also watch for docstrings ending in `.)` closing an `ns` form early.
 - **Opt-out escape hatch:** If a non-coding turn ever needs to bypass `:repl-gate`, set `:repl/enforce false` in `config.edn` (recognized by `bb doctor`).
