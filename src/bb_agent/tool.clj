@@ -4,6 +4,7 @@
             [bb-agent.datalog :as datalog]
             [bb-agent.plan :as plan]
             [bb-agent.redact :as redact]
+            [bb-agent.repl :as repl]
             [bb-agent.rtk :as rtk]
             [bb-agent.security :as sec]
             [bb-agent.skill :as skill]
@@ -29,7 +30,7 @@
 (def ^:private handlers
   (merge file/handlers process/handlers telegram/handlers goal/handlers
          web/handlers net-search/handlers browser-tool/handlers
-         a2a-tool/handlers datalog/handlers))
+         a2a-tool/handlers datalog/handlers repl/handlers))
 
 (defn execute-tool-request
   "Run one tool request. The argument heal happens HERE as well as in
@@ -82,7 +83,7 @@
          request (cond-> request
                    (and (:cwd cfg)
                         (contains? #{"shell" "git_status" "telegram_send_file"
-                                     "web_send_file"}
+                                     "web_send_file" "repl_eval"}
                                    (:tool/name request))
                         (nil? (get-in request [:tool/args :cwd])))
                    ;; A stale/missing session cwd (e.g. a pre-migration
@@ -128,11 +129,19 @@
                                                   (:tool/name request)
                                                   (get-in request [:tool/args :path])))
          plan-gate-hit? (plan/plan-gate-blocked? cfg (:tool/name request))
+         repl-gate-hit? (repl/repl-gate-blocked? cfg
+                                                 (:tool/name request)
+                                                 (get-in request [:tool/args :path]))
          run-request! (fn [req]
-                        (case (:tool/name req)
-                          "plan" (plan/run-plan-tool (:tool/args req) cfg)
-                          "spawn_subagent" (subagent/run-subagent! (:tool/args req) cfg)
-                          (execute-tool-request req)))
+                        (let [res (case (:tool/name req)
+                                    "plan" (plan/run-plan-tool (:tool/args req) cfg)
+                                    "spawn_subagent" (subagent/run-subagent! (:tool/args req) cfg)
+                                    (execute-tool-request req))]
+                          (when (and (= "repl_eval" (:tool/name req))
+                                     (= :ok (:status res))
+                                     (:repl/evals cfg))
+                            (swap! (:repl/evals cfg) inc))
+                          res))
          raw-result (cond
                       (= "discover_tools" (:tool/name request))
                       (case approval-decision*
@@ -153,6 +162,13 @@
                                    {:reason (str "Plan gate: " (:turn/tool-calls cfg)
                                                  " tool calls reached without an active session plan. "
                                                  "Call plan(action=\"init\", title=..., steps=[...]) before further edits.")})
+
+                      repl-gate-hit?
+                      (deny-result request :repl-gate
+                                   {:reason (str "REPL-driven gate: evaluate and verify your expression/hypothesis "
+                                                 "with repl_eval before editing "
+                                                 (get-in request [:tool/args :path])
+                                                 ".")})
 
                       skill-gate-hit
                       (assoc (deny-result request :skill-gate

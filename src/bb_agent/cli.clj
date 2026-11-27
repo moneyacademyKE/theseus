@@ -8,6 +8,7 @@
             [bb-agent.doctor :as doctor]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
+            [bb-agent.repl :as repl]
             [bb-agent.rich :as rich]
             [bb-agent.rsi :as rsi]
             [bb-agent.rsi-learn :as rsi-learn]
@@ -421,6 +422,19 @@
           (println (pr-str (or (:result res) (select-keys res [:schema :attributes :predicates]))))
           (usage! (or (:error/message res) "datalog query failed") 1))))))
 
+(defn- handle-repl-command [args]
+  (let [code (str/join " " args)]
+    (if (str/blank? code)
+      (usage! "Usage: bb repl <clojure-expr>" 2)
+      (let [res (repl/eval-code! {:code code :cwd (System/getProperty "user.dir")})]
+        (if (:ok? res)
+          (do
+            (when (not (str/blank? (:stdout res)))
+              (print (:stdout res))
+              (when-not (str/ends-with? (:stdout res) "\n") (println)))
+            (println (:value res)))
+          (usage! (or (:error res) "repl eval failed") 1))))))
+
 (defn -main [& args]
   (let [[command & rest-args] (if (= 1 (count args))
                                 (let [only (first args)]
@@ -429,6 +443,7 @@
     (case command
       "memory" (handle-memory-command rest-args)
       "datalog" (handle-datalog-command rest-args)
+      "repl" (handle-repl-command rest-args)
       "session" (handle-session-command rest-args)
       "skill" (handle-skill-command rest-args)
       "usage" (handle-usage-command rest-args)

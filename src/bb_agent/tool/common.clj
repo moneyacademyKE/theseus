@@ -257,6 +257,8 @@
                     "is tainted or flagged for exfiltration risk"
                     (when reason (str ": " reason))
                     ". Recourse: ask the user to approve before continuing.")
+        :repl-gate (or reason
+                       (str "REPL-driven gate: evaluate and verify your hypothesis with repl_eval before calling " name "."))
         (str "Tool " name " requires explicit approval" detail))}
        (some? rule) (assoc :denial/rule rule)
        (some? category) (assoc :denial/category category)

@@ -422,7 +422,9 @@
                         plan-ctx (into [{:role :system :content plan-ctx}])
                         (:saver/active? cfg) (into [{:role :system :content saver/system-hint}]))
         heartbeat (atom (System/currentTimeMillis))
-        skill-seen (or (:skill/seen cfg) (atom #{}))]
+        skill-seen (or (:skill/seen cfg) (atom #{}))
+        repl-evals (or (:repl/evals cfg) (atom 0))
+        repl-enforce? (if (contains? cfg :repl/enforce) (:repl/enforce cfg) true)]
     (ti/with-stall-watchdog
      cfg heartbeat
      (fn []
@@ -455,6 +457,8 @@
                           messages)
                round-cfg (cond-> cfg
                            (nil? (:skill/seen cfg)) (assoc :skill/seen skill-seen)
+                           (nil? (:repl/evals cfg)) (assoc :repl/evals repl-evals)
+                           true (assoc :repl/enforce repl-enforce?)
                            true (assoc :turn/tool-calls (count (:tool/results turn)))
                            (seq discovered-tools) (assoc :tools/discovered discovered-tools))
                round-tools (if (seq discovered-tools)

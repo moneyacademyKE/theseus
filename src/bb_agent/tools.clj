@@ -147,6 +147,17 @@
       :required []}}}
    {:type "function"
     :function
+    {:name "repl_eval"
+     :description "Evaluate a Clojure/Babashka expression in the REPL (auto-connects to .nrepl-port over bencode when running, else runs bounded bb -e). Required before editing .clj/.cljc/.cljs/.bb files when REPL-driven enforcement is active."
+     :parameters
+     {:type "object"
+      :properties {"code" {:type "string" :description "Clojure expression(s) to evaluate"}
+                   "ns" {:type "string" :description "Optional namespace to require and switch into (e.g. \"bb-agent.core\")"}
+                   "cwd" {:type "string" :description "Optional working directory (optional)"}
+                   "timeout-ms" {:type "integer" :description "Optional timeout in ms (500-30000, default 10000)"}}
+      :required ["code"]}}}
+   {:type "function"
+    :function
     {:name "plan"
      :description "Manage the structured session plan (actions: init, start, complete, status, clear). Supports optional shell verify_cmd on complete to verify step completion."
      :parameters

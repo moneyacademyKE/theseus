@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added — enforced REPL-driven development (2026-11-27, ADR `0013`)
+
+- **Native `repl_eval` tool, mechanical `:repl-gate` & pre-write Clojure syntax check (`src/bb_agent/repl.clj`):** added zero-dependency `repl_eval` (auto-connects to `.nrepl-port` over built-in `bencode.core` when running, falls back to bounded `bb -e`), mechanical `:repl-gate` in `tool.clj` + `core.clj` (default `:repl/enforce true`, opt-out via `config.edn`, registered in `doctor.clj`) requiring at least one successful `repl_eval` before mutating `.clj`/`.cljc`/`.cljs`/`.bb` files, automatic `edamame.core/parse-string-all` syntax/paren check in `tool/file.clj` (`write_file` & `edit_file`) before touching disk, and `bb repl:server` / `bb repl:eval` / `theseus repl`. Verified: `bb-agent.repl-test` (`5` tests / `36` assertions), `e2e.tools-test` (`18`/`134`), `e2e.tool-advertisement-test` (`4`/`27`), `e2e.doctor-test` (`10`/`44`), `bb lint` (`0 errors, 0 warnings`), `bb test-roster` (`140/140`, `0 never-run`), and `bb verify:rewrite-docs` (exit `0`).
+
 ## v1.5.1 - 2026-11-24
 
 ### Changed — security-vs-robustness calibration (2026-11-24, ADR `0010`)

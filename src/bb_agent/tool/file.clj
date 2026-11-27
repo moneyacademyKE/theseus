@@ -3,6 +3,7 @@
             [bb-agent.atomic-io :as aio]
             [bb-agent.tool.common :as common]
             [bb-agent.knowledge :as knowledge]
+            [bb-agent.repl :as repl]
             [bb-agent.session :as session]
             [bb-agent.tool.path :as path]
             [clojure.string :as str]))
@@ -110,6 +111,13 @@
       (common/error-result "write_file"
                            (str "Content too large for write_file: " path)
                            {:path path :max/bytes common/max-write-bytes :bytes bytes})
+
+      (and (not append?) (repl/clojure-file? path)
+           (not (:ok? (repl/parse-check-clojure content))))
+      (common/error-result "write_file"
+                           (str "Refused: invalid Clojure syntax in " path ": "
+                                (:error (repl/parse-check-clojure content)))
+                           {:path path :executed? false})
 
       :else
       (let [guard (knowledge/guard-write! path)]
@@ -242,10 +250,20 @@
           (common/error-result "edit_file" err {:path path})
           (let [updated (:content tx)
                 bytes (count (.getBytes ^String updated "UTF-8"))]
-            (if (> bytes common/max-write-bytes)
+            (cond
+              (> bytes common/max-write-bytes)
               (common/error-result "edit_file"
                                    (str "Result too large for edit_file: " path)
                                    {:path path :max/bytes common/max-write-bytes :bytes bytes})
+
+              (and (repl/clojure-file? path)
+                   (not (:ok? (repl/parse-check-clojure updated))))
+              (common/error-result "edit_file"
+                                   (str "Refused: invalid Clojure syntax after edit in " path ": "
+                                        (:error (repl/parse-check-clojure updated)))
+                                   {:path path :executed? false})
+
+              :else
               (let [guard (knowledge/guard-write! path)]
                 (if (= :refused (:verdict guard))
                   (common/error-result "edit_file"

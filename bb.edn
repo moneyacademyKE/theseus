@@ -114,7 +114,8 @@
                                [bb-agent.duskbot-tier3-test]
                                [bb-agent.datalog-test]
                                [bb-agent.robustness-17-test]
-                               [bb-agent.robustness-wave2-test])
+                               [bb-agent.robustness-wave2-test]
+                               [bb-agent.repl-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -166,7 +167,8 @@
                                              'bb-agent.duskbot-tier3-test
                                              'bb-agent.datalog-test
                                              'bb-agent.robustness-17-test
-                                             'bb-agent.robustness-wave2-test)]
+                                             'bb-agent.robustness-wave2-test
+                                             'bb-agent.repl-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
@@ -227,6 +229,12 @@
                               (pp/pprint (dl/q (edn/read-string q-str) (dl/theseus-db)))
                               (do (println "Usage: bb datalog:query '[:find ?t :where [?e :memory/text ?t]]'")
                                   (System/exit 1))))}
+     repl:server {:doc "Start a local Babashka nREPL server (writes .nrepl-port for repl_eval). Usage: bb repl:server [port]"
+                  :task (let [port (or (first *command-line-args*) "0")]
+                          (shell "bb" "nrepl-server" (str "127.0.0.1:" port)))}
+     repl:eval {:doc "Evaluate a Clojure expression via .nrepl-port (if running) or bb -e. Usage: bb repl:eval '<expr>'"
+                :requires ([bb-agent.cli :as cli])
+                :task (apply cli/-main "repl" *command-line-args*)}
      model {:doc "Model commands. Usage: bb model set/current ..."
             :requires ([bb-agent.cli :as cli])
             :task (apply cli/-main "model" *command-line-args*)}

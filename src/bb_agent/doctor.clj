@@ -86,7 +86,7 @@
     :tools/enable-optional :nudge-final-rounds :nudge-interval :max-tool-rounds
     :vision-chain :vision-model :goal :goal/max-authoring-rounds
     :policy :approval/mode :notify :telegram :web
-    :retry :cwd :max-tokens :max-cost-usd :reasoning-effort})
+    :retry :cwd :max-tokens :max-cost-usd :reasoning-effort :repl/enforce})
 
 (defn- check-unknown-config-keys [cfg]
   (let [unknown (remove known-config-keys (keys cfg))]
