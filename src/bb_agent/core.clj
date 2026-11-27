@@ -4,6 +4,7 @@
             [bb-agent.compression :as compression]
             [bb-agent.fallback :as fallback]
             [bb-agent.gaslighting :as gas]
+            [bb-agent.loop-break :as loop-break]
             [bb-agent.memory :as memory]
             [bb-agent.model :as model]
             [bb-agent.plan :as plan]
@@ -53,12 +54,6 @@
    this, so key order and formatting must not matter."
   [args]
   (pr-str (if (map? args) (sort-by (comp str key) args) args)))
-
-(defn- loop-guard-message
-  [[tool-name args]]
-  (str "⚠️ Loop guard: `" tool-name "` repeated with identical arguments "
-       "(" args ") — stopping this turn instead of burning more rounds. "
-       "Narrow or rephrase the request."))
 
 (def ^:private default-loop-guard-nudge-threshold 2)
 
@@ -508,11 +503,14 @@
                                   (when (>= (get seen-calls k 0) (dec threshold)) k)))
                               tool-requests)]
            (if repeated
-             ;; Identical call Nth time: stop gracefully, execute nothing.
-             (finish-turn id cfg prompt memory-matches semantic-ctx
-                          (assoc turn :turn/ok false)
-                          (loop-guard-message repeated)
-                          (:usage response))
+             ;; Identical call Nth time: report raw dropped call(s) & stop cleanly.
+             (let [[r-tool _] repeated
+                   pending (loop-break/describe-pending-calls tool-requests)
+                   tried-n (inc (count (:fallback/tried turn)))]
+               (finish-turn id cfg prompt memory-matches semantic-ctx
+                            (assoc turn :turn/ok false)
+                            (loop-break/chain-exhausted-message r-tool threshold pending tried-n)
+                            (:usage response)))
              (let [can-parallel-read?
                    (and (>= (count tool-requests) 2)
                         (every? (fn [req]

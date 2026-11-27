@@ -3,6 +3,7 @@
             [bb-agent.atomic-io :as aio]
             [bb-agent.tool.common :as common]
             [bb-agent.knowledge :as knowledge]
+            [bb-agent.path-lock :as path-lock]
             [bb-agent.repl :as repl]
             [bb-agent.session :as session]
             [bb-agent.tool.path :as path]
@@ -113,12 +114,15 @@
 
 (defn- write-file-unguarded
   [target content bytes append? create-dirs? snapshot]
-  (when-let [parent (fs/parent target)]
-    (when (or create-dirs? append?)
-      (fs/create-dirs parent)))
-  (if append?
-    (spit (str target) content :append true)
-    (aio/write-atomic-file! target content))
+  (path-lock/with-path-lock
+    (str target)
+    (fn [_]
+      (when-let [parent (fs/parent target)]
+        (when (or create-dirs? append?)
+          (fs/create-dirs parent)))
+      (if append?
+        (spit (str target) content :append true)
+        (aio/write-atomic-file! target content))))
   (merge (common/ok-result "write_file"
                            {:path (str target)
                             :bytes bytes

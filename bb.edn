@@ -123,7 +123,11 @@
                                [bb-agent.brain-hints-test]
                                [bb-agent.truncation-test]
                                [bb-agent.gaslighting-test]
-                               [bb-agent.pressure-nudge-test])
+                               [bb-agent.pressure-nudge-test]
+                               [bb-agent.loop-break-test]
+                               [bb-agent.stop-intent-test]
+                               [bb-agent.queued-fold-test]
+                               [bb-agent.path-lock-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -184,7 +188,11 @@
                                              'bb-agent.brain-hints-test
                                              'bb-agent.truncation-test
                                              'bb-agent.gaslighting-test
-                                             'bb-agent.pressure-nudge-test)]
+                                             'bb-agent.pressure-nudge-test
+                                             'bb-agent.loop-break-test
+                                             'bb-agent.stop-intent-test
+                                             'bb-agent.queued-fold-test
+                                             'bb-agent.path-lock-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
