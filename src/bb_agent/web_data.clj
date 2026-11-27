@@ -14,7 +14,20 @@
             [bb-agent.config :as config]
             [bb-agent.goal.control :as control]
             [bb-agent.rsi :as rsi]
+            [bb-agent.secret-mask :as secret-mask]
             [bb-agent.session :as session]))
+
+(defn safe-config-view
+  "Return a secret-masked projection of config.edn suitable for Web Deck / CLI APIs."
+  []
+  (let [cfg (or (try (config/load-config) (catch Exception _ nil)) {})]
+    (-> cfg
+        secret-mask/mask-config
+        (update :providers (fn [ps]
+                             (when (map? ps)
+                               (into {} (map (fn [[k v]] [k (secret-mask/mask-config v)]) ps)))))
+        (update :telegram secret-mask/mask-config)
+        (update :notify secret-mask/mask-config))))
 
 ;; ---------- utilities ----------
 

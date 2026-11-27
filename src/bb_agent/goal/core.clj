@@ -20,6 +20,7 @@
             [bb-agent.goal.control :as control]
             [bb-agent.goal.budget :as budget]
             [bb-agent.goal.decision :as decision]
+            [bb-agent.rework-control :as rework-control]
             [babashka.process :refer [sh check]]
             [clojure.string :as str]))
 
@@ -67,12 +68,27 @@
                                  [:harness :argv :prompt :model :mode]))
         (harness/invoke! cfg (assoc invocation :mode mode)))
       (let [tmpl    (:sh act)
-            cmd     (render-template tmpl (assoc world :attempt attempt :model (or model "")))
+            cmd     (render-template tmpl (assoc world
+                                                 :attempt attempt
+                                                 :model (or model "")
+                                                 :feedback (or (:last-feedback state) "")))
             timeout (act-timeout-ms cfg act)]
         (log/event! (:log-dir cfg) :info "acting"
                     {:cmd cmd :attempt attempt :prompt-index pidx :model model})
-        (sh {:out :string :err :string :dir (:workdir cfg ".")
-             :continue true :timeout timeout} "bash" "-c" cmd)))))
+        (let [res (sh {:out :string :err :string :dir (:workdir cfg ".")
+                       :continue true :timeout timeout} "bash" "-c" cmd)]
+          (if (not (zero? (long (or (:exit res) 0))))
+            (assoc res :rework/decision
+                   (rework-control/decide-failure
+                    {:node-id (:name cfg)
+                     :attempt attempt
+                     :max-retries (or (:max-retries cfg) 1)
+                     :rework-count (or (:rework-count state) 0)
+                     :max-reworks (or (:max-reworks cfg) 2)
+                     :reject-to (:reject-to cfg)
+                     :error (or (not-empty (str/trim (str (:err res))))
+                                (str "exit " (:exit res)))}))
+            res))))))
 
 (defn- process-alive?
   [proc]

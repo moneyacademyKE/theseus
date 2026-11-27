@@ -12,8 +12,13 @@
    brain files unattended in v1 — the proposal ledger earns that autonomy."
   (:require [babashka.fs :as fs]
             [bb-agent.config :as config]
+            [bb-agent.knowledge-usage :as ku]
+            [bb-agent.rsi-canary :as rsi-canary]
             [bb-agent.usage :as usage]
             [clojure.string :as str]))
+
+(def assign-canaries rsi-canary/assign-canaries)
+(def validate-replay rsi-canary/validate-replay)
 
 (def ^:private default-min-events 50)
 (def ^:private min-provider-turns 2)
@@ -96,6 +101,7 @@
                         provider-signal)]
      {:events (count turns)
       :tools (tools-aggregate events)
+      :knowledge-usage (try (ku/aggregate) (catch Exception _ {}))
       :unverified-fallback-tags (- (count (filter :fallback/served events))
                                    (count rescues))
       :providers providers})))

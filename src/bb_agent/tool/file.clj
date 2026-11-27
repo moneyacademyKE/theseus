@@ -1,8 +1,10 @@
 (ns bb-agent.tool.file
   (:require [babashka.fs :as fs]
             [bb-agent.atomic-io :as aio]
+            [bb-agent.conflict-blocks :as conflict-blocks]
             [bb-agent.tool.common :as common]
             [bb-agent.knowledge :as knowledge]
+            [bb-agent.knowledge-usage :as ku]
             [bb-agent.path-lock :as path-lock]
             [bb-agent.repl :as repl]
             [bb-agent.session :as session]
@@ -85,7 +87,16 @@
                            {:path path :executed? false})
 
       :else
-      (let [full (slurp (str target))]
+      (let [full (slurp (str target))
+            tstr (str target)
+            _ (when (and (str/includes? tstr "/brain/knowledge/")
+                         (str/ends-with? tstr ".md"))
+                (ku/record! {:page (str (fs/file-name target))
+                             :action :read
+                             :surface :chat
+                             :session-id sid}))
+            conflicts (when (str/includes? full "<<<<<<<")
+                        (not-empty (conflict-blocks/extract-blocks tstr full)))]
         (if (or s-line e-line)
           (let [lines (str/split-lines full)
                 total (count lines)
@@ -98,19 +109,21 @@
             (when (and sid (not truncated?))
               (mark-fully-read! sid target))
             (common/ok-result "read_file"
-                              {:path (str target)
-                               :content sliced
-                               :bytes (count (.getBytes sliced "UTF-8"))
-                               :start-line from-i
-                               :end-line (max (dec from-i) to-i)
-                               :total-lines total
-                               :truncated? truncated?}))
+                              (cond-> {:path tstr
+                                       :content sliced
+                                       :bytes (count (.getBytes sliced "UTF-8"))
+                                       :start-line from-i
+                                       :end-line (max (dec from-i) to-i)
+                                       :total-lines total
+                                       :truncated? truncated?}
+                                conflicts (assoc :conflict/blocks conflicts))))
           (do
             (when sid (mark-fully-read! sid target))
             (common/ok-result "read_file"
-                              {:path (str target)
-                               :content full
-                               :bytes (count (.getBytes full "UTF-8"))})))))))
+                              (cond-> {:path tstr
+                                       :content full
+                                       :bytes (count (.getBytes full "UTF-8"))}
+                                conflicts (assoc :conflict/blocks conflicts)))))))))
 
 (defn- write-file-unguarded
   [target content bytes append? create-dirs? snapshot]

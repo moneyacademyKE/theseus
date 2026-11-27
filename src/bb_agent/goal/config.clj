@@ -4,6 +4,7 @@
   handles bundle expansions, and facilitates config hot-reloading."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [bb-agent.gate-scope :as gate-scope]
             [bb-agent.goal.harness :as harness]
             [bb-agent.goal.predicates :as predicates]))
 
@@ -134,7 +135,14 @@
                      (when-not (predicates/valid? c)
                        {:key :integrity
                         :problem (str "check[" i "] not a well-formed predicate")}))
-                   (map-indexed vector (:integrity cfg []))))]
+                   (map-indexed vector (:integrity cfg []))))
+        gate-errors
+        (vec (keep (fn [[i g]]
+                     (let [res (gate-scope/validate-gate g)]
+                       (when-not (:ok? res)
+                         {:key :verification-gates
+                          :problem (str "gate[" i "] " (:error res))})))
+                   (map-indexed vector (:verification-gates cfg []))))]
     (cond-> []
       (not (predicates/valid? (:goal cfg)))
       (conj {:key :goal :problem "not a well-formed predicate"})
@@ -144,6 +152,7 @@
 
       :always (into act-errors)
       :always (into integrity-errors)
+      :always (into gate-errors)
       :always (into (harness-model-errors cfg)))))
 
 (defn load-config

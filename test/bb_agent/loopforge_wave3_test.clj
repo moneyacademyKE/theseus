@@ -3,9 +3,14 @@
             [bb-agent.config :as config]
             [bb-agent.core :as core]
             [bb-agent.gate-scope :as gs]
+            [bb-agent.goal.config :as goal-config]
+            [bb-agent.knowledge-usage :as ku]
             [bb-agent.provider :as provider]
             [bb-agent.queue-brake :as qb]
+            [bb-agent.rsi :as rsi]
+            [bb-agent.secret-mask :as sm]
             [bb-agent.tool :as tool]
+            [bb-agent.web-data :as web-data]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]))
 
@@ -52,3 +57,38 @@
   (is (some? (:error (gs/validate-gate {:id "g2" :mode :command :execution-scope :run :commands ["git status"]})))
       "git command in :run scope must fail validation")
   (is (some? (:error (gs/validate-gate {:id "g3" :mode :bogus})))))
+
+(deftest loopforge-live-wiring-integration-test
+  (let [home (fs/create-temp-dir {:prefix "theseus-lf-wire-"})
+        kfile (fs/path home "brain" "knowledge" "wired.md")
+        cfile (fs/path home "conflict.clj")]
+    (try
+      (fs/create-dirs (fs/parent kfile))
+      (spit (str kfile) "# Wired Knowledge\nhello\n")
+      (spit (str cfile) "<<<<<<< HEAD\n(def a 1)\n=======\n(def a 2)\n>>>>>>> feat\n")
+      (with-redefs [config/home (constantly (str home))]
+        (config/write-config! {:provider :openai-compatible
+                               :providers {:openai-compatible {:base-url "https://x" :api-key "sk-secret-999"}}
+                               :telegram {:token "bot-secret-123"}})
+        ;; 1. read_file records :read in knowledge-usage and rsi/digest surfaces it
+        (let [r1 (tool/handle-tool-request {:tool/name "read_file" :tool/args {:path (str kfile)}}
+                                           {:session/id "lw-1" :approval/mode :auto-all})]
+          (is (= :ok (:status r1)))
+          (is (= 1 (get-in (ku/aggregate) ["wired.md" :read])))
+          (is (= 1 (get-in (rsi/digest []) [:knowledge-usage "wired.md" :read]))))
+        ;; 2. read_file extracts :conflict/blocks on git conflict markers
+        (let [r2 (tool/handle-tool-request {:tool/name "read_file" :tool/args {:path (str cfile)}}
+                                           {:session/id "lw-1" :approval/mode :auto-all})]
+          (is (= :ok (:status r2)))
+          (is (= 1 (count (:conflict/blocks r2)))))
+        ;; 3. web-data/safe-config-view masks provider & telegram secrets
+        (let [safe (web-data/safe-config-view)]
+          (is (= sm/masked-sentinel (get-in safe [:providers :openai-compatible :api-key])))
+          (is (= sm/masked-sentinel (get-in safe [:telegram :token]))))
+        ;; 4. goal/config validate-config flags git command in :run scope
+        (let [errs (goal-config/validate-config
+                    {:goal :ok :progress :sig :act {:sh "echo hi"}
+                     :verification-gates [{:id "g1" :mode :command :execution-scope :run :commands ["git status"]}]})]
+          (is (some #(= :verification-gates (:key %)) errs))))
+      (finally
+        (fs/delete-tree home)))))

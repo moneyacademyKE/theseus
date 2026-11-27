@@ -12,9 +12,12 @@
    "ACCESS_KEY" "PRIVATE_KEY" "AUTH" "COOKIE" "CREDENTIAL" "SESSION"])
 
 (defn sensitive-key?
-  "True when env/config key `k` looks like a credential or secret."
+  "True when env/config key `k` looks like a credential or secret (handles
+   both snake_case env vars and Clojure kebab-case keywords like :api-key)."
   [k]
-  (let [u (str/upper-case (if (keyword? k) (name k) (str k)))]
+  (let [u (-> (if (keyword? k) (name k) (str k))
+              str/upper-case
+              (str/replace "-" "_"))]
     (boolean (some #(str/includes? u %) sensitive-key-parts))))
 
 (defn- mask-map [m all-keys?]

@@ -6,7 +6,10 @@
             [bb-agent.core :as core]
             [bb-agent.cron :as cron]
             [bb-agent.outbox :as outbox]
+            [bb-agent.queue-brake :as queue-brake]
             [clojure.string :as str]))
+
+(def ^:private schedule-brake (queue-brake/create-brake {:max-depth 2}))
 
 (defn schedules-file []
   (fs/path (config/home) "state" "schedules.edn"))
@@ -196,26 +199,34 @@
   ([cfg schedule-id] (run-schedule! cfg schedule-id (str (java.time.Instant/now))))
   ([cfg schedule-id at]
    (if-let [schedule (find-schedule schedule-id)]
-     (if (:schedule/command schedule)
-       (run-command-lane! cfg schedule schedule-id at)
-       (let [turn (core/run-turn! (merge cfg
-                                         (select-keys schedule [:cwd :provider :model])
-                                         {:session/id schedule-id
-                                          ;; Scheduled turns are non-interactive: no human
-                                          ;; can answer an approval prompt inside a cron lane
-                                          ;; (the request just expires and the run fails, as
-                                          ;; ai-stock-brief-hourly did hourly). The owner
-                                          ;; pre-consented by installing the schedule, and
-                                          ;; the constitution still vetoes first — policy
-                                          ;; :deny short-circuits before this gate.
-                                          :approval/ask (constantly :approved)})
-                                    (:schedule/prompt schedule))
-             log-entry {:schedule/id schedule-id
-                        :status :ok
-                        :at at
-                        :assistant/final (:assistant/final turn)}]
-         (append-run-log! log-entry)
-         turn))
+     (if-not (queue-brake/try-acquire! schedule-brake schedule-id)
+       {:status :braked
+        :schedule/id schedule-id
+        :at at
+        :reason "queue-depth brake active"}
+       (try
+         (if (:schedule/command schedule)
+           (run-command-lane! cfg schedule schedule-id at)
+           (let [turn (core/run-turn! (merge cfg
+                                             (select-keys schedule [:cwd :provider :model])
+                                             {:session/id schedule-id
+                                              ;; Scheduled turns are non-interactive: no human
+                                              ;; can answer an approval prompt inside a cron lane
+                                              ;; (the request just expires and the run fails, as
+                                              ;; ai-stock-brief-hourly did hourly). The owner
+                                              ;; pre-consented by installing the schedule, and
+                                              ;; the constitution still vetoes first — policy
+                                              ;; :deny short-circuits before this gate.
+                                              :approval/ask (constantly :approved)})
+                                      (:schedule/prompt schedule))
+                 log-entry {:schedule/id schedule-id
+                            :status :ok
+                            :at at
+                            :assistant/final (:assistant/final turn)}]
+             (append-run-log! log-entry)
+             turn))
+         (finally
+           (queue-brake/release! schedule-brake schedule-id))))
      (throw (ex-info (str "Unknown schedule: " schedule-id)
                      {:schedule/id schedule-id})))))
 
