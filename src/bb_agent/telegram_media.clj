@@ -15,6 +15,7 @@
     (:channel_post update) :message
     (:edited_channel_post update) :edited
     (:message_reaction update) :reaction
+    (:my_chat_member update) :my_chat_member
     :else :other))
 
 (defn message

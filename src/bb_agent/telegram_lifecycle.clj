@@ -18,6 +18,7 @@
             [bb-agent.outbox :as outbox]
             [bb-agent.session :as session]
             [bb-agent.telegram-approval-ui :as approval-ui]
+            [bb-agent.telegram-auto-register :as auto-reg]
             [bb-agent.telegram-delivery :as delivery]
             [bb-agent.telegram-group-context :as gctx]
             [bb-agent.telegram-group :as group]
@@ -76,6 +77,13 @@
 (defn- get-bot [cfg]
   (:result (api-get! cfg "getMe" {:headers {"accept" "application/json"}})))
 
+(defn- get-chat-member [cfg chat-id user-id]
+  (let [body (api-get cfg "getChatMember"
+                      {:headers {"accept" "application/json"}
+                       :query-params {:chat_id chat-id :user_id user-id}})]
+    (when (and (map? body) (true? (:ok body)))
+      (:result body))))
+
 (defn- get-updates [cfg]
   (let [body (api-get cfg "getUpdates"
                       (cond-> {:headers {"accept" "application/json"}}
@@ -85,7 +93,7 @@
                                   (json/generate-string
                                    ["message" "edited_message" "channel_post"
                                     "edited_channel_post" "callback_query"
-                                    "message_reaction"]))))]
+                                    "message_reaction" "my_chat_member"]))))]
     (if (and (map? body) (true? (:ok body)))
       (do (clear-poll-error!)
           {:updates (or (:result body) []) :conflict? false})
@@ -130,7 +138,7 @@
         _ (let [problems (config/validate-telegram telegram-cfg)]
             (when (seq problems)
               (throw (ex-info "Telegram config invalid" {:errors problems}))))
-        cfg (assoc cfg :telegram telegram-cfg)
+        live-cfg (atom (assoc cfg :telegram telegram-cfg))
         bot (get-bot telegram-cfg)
         {:keys [updates conflict?]} (get-updates telegram-cfg)
         seen (atom (state/load-seen))
@@ -151,7 +159,7 @@
             ;; conversational context — independent of whether we respond.
             (when (:group-context telegram-cfg true)
               (doseq [u (:updates batch)]
-                (let [m (:message u)
+                (let [m (media/message u)
                       cid (get-in m [:chat :id])]
                   (when (and cid (neg? (long cid)))
                     (gctx/record! cid {:message-id (:message_id m)
@@ -160,16 +168,31 @@
                                        :text (or (:text m) (:caption m))}
                                   :size (or (:group-context-size telegram-cfg) 30)
                                   :thread-id (group/topic-id m))))))
-            (if (:album? batch)
-              (intake/process-album! cfg bot batch)
-              (intake/process-message! cfg bot (:message (first (:updates batch)))))
+            (let [first-msg (media/message (first (:updates batch)))
+                  cfg* (auto-reg/maybe-register-on-message!
+                        @live-cfg bot first-msg
+                        #(get-chat-member telegram-cfg %1 %2))]
+              (reset! live-cfg cfg*)
+              (if (:album? batch)
+                (intake/process-album! cfg* bot batch)
+                (intake/process-message! cfg* bot first-msg)))
             (mark-done! seen processed (:updates batch)))
           (doseq [u chunk]
             (case (media/update-kind u)
-              :edited (intake/handle-edited! cfg bot (media/edited-message u))
-              :reaction (intake/handle-reaction! cfg (:message_reaction u))
+              :edited (intake/handle-edited! @live-cfg bot (media/edited-message u))
+              :reaction (intake/handle-reaction! @live-cfg (:message_reaction u))
+              :my_chat_member
+              (let [res (auto-reg/handle-my-chat-member! @live-cfg (:my_chat_member u))]
+                (when (:registered? res)
+                  (reset! live-cfg (:cfg res))
+                  (println (str "telegram: auto-registered admin chat " (:chat-id res)))
+                  (flush)
+                  (try
+                    (delivery/send-message! telegram-cfg (:chat-id res)
+                                            "✅ Registered this group/channel — ready to respond.")
+                    (catch Exception _ nil))))
               (when (:callback_query u)
-                (approval-ui/handle-callback! cfg u)))
+                (approval-ui/handle-callback! @live-cfg u)))
             (mark-done! seen processed [u])))))
     ;; 2026-09-08: watcher/recovery verdicts land in goals/<name>/outcome.edn
     ;; — drain them into session turns every cycle so finished work becomes
