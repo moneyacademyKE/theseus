@@ -218,18 +218,32 @@
                      (str/join "\n" lines))
                 (str native "\nNo skills found.")))))
 
+(defn- format-turn-failure [e]
+  (let [m (or (.getMessage e) (str (type e)))
+        tried (:fallback/tried (ex-data e))
+        detail (when (seq tried)
+                 (->> tried
+                      (map (fn [{:fallback/keys [provider reason]}]
+                             (str (some-> provider name) ": " reason)))
+                      (str/join " | ")))
+        full (if (seq detail) (str m " (" detail ")") m)]
+    (if (> (count full) 450)
+      (str (subs full 0 450) "…")
+      full)))
+
 (defn- notify-turn-failure!
   "A dead turn must never be silent: swap the ack reaction to a failure
    signal and send one bounded error reply. The notice itself failing
    degrades to a log line, never a poll crash."
   [telegram-cfg chat-id thread-id message-id e]
   (binding [*out* *err*]
-    (println (str "telegram turn failed: " (.getMessage e))))
+    (println (str "telegram turn failed: " (.getMessage e)
+                  (when-let [d (ex-data e)]
+                    (str " data=" (pr-str d))))))
   (try
     (when (:react-ack telegram-cfg true)
       (presence/reaction! telegram-cfg chat-id message-id {:emoji "🤯"}))
-    (let [m (or (.getMessage e) (str (type e)))
-          summary (if (> (count m) 300) (str (subs m 0 300) "…") m)]
+    (let [summary (format-turn-failure e)]
       (delivery/send-message! telegram-cfg chat-id
                               (str "⚠️ Turn failed: " summary)
                               {:thread-id thread-id
