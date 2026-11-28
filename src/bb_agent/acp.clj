@@ -81,6 +81,15 @@
   (let [existing (or (session/load-metadata sid) {:session/id sid})]
     (session/save-metadata! sid (merge existing fields {:updated/at (str (java.time.Instant/now))}))))
 
+(defn- set-session-title! [state sid title emit!]
+  (let [cleaned (h/clean-title title)]
+    (when cleaned
+      (swap! (:sessions state) assoc-in [sid :title] cleaned)
+      (persist-session-fields! sid {:title cleaned})
+      (emit! (session-update-notif sid {:sessionUpdate "session_info_update"
+                                        :title cleaned}))
+      cleaned)))
+
 (defn- handle-initialize [id]
   (ok-resp id
            {:protocolVersion 1
@@ -254,11 +263,14 @@
 (defn- try-slash-command!
   "Intercept all native Theseus /commands locally without burning LLM tokens.
   Shares `telegram-intake/chat-command` and `handle-chat-command` verbatim."
-  [state sid prompt-text]
+  [state sid prompt-text emit!]
   (let [trimmed (str/trim (str prompt-text))]
     (when (str/starts-with? trimmed "/")
-      (let [[cmd] (str/split trimmed #"\s+" 2)]
+      (let [[cmd arg] (str/split trimmed #"\s+" 2)]
         (case cmd
+          "/rename" (if-let [new-title (set-session-title! state sid arg emit!)]
+                      (str "Renamed session to: " new-title)
+                      "Usage: /rename <new title>")
           "/doctor" (let [checks (doctor/run-checks)]
                       (str/join "\n" (map (fn [{:keys [status id message]}]
                                             (str "[" (str/upper-case (name status)) "] " id ": " message))
@@ -275,19 +287,18 @@
   (let [sid (:sessionId params)
         sess (ensure-session! state sid (:cwd params))
         raw-prompt (h/extract-prompt-text (:prompt params))
+        title-source (h/extract-user-text-only (:prompt params))
         user-images (h/decode-image-blocks! (:prompt params))]
-    (when-not (:title sess)
-      (when-let [title (h/derive-title raw-prompt)]
-        (swap! (:sessions state) assoc-in [sid :title] title)
-        (persist-session-fields! sid {:title title})
-        (emit! (session-update-notif sid {:sessionUpdate "session_info_update"
-                                          :title title}))))
-    (if-let [local-reply (try-slash-command! state sid raw-prompt)]
+    (if-let [local-reply (try-slash-command! state sid raw-prompt emit!)]
       (do
         (emit! (session-update-notif sid {:sessionUpdate "agent_message_chunk"
                                           :content {:type "text" :text local-reply}}))
         (ok-resp id {:stopReason "end_turn"}))
-      (let [prompt-text (or (intake/skill-command raw-prompt) raw-prompt)
+      (let [expanded-skill (intake/skill-command raw-prompt)
+            prompt-text (or expanded-skill raw-prompt)
+            _ (when-not (:title sess)
+                (when-let [title (h/derive-title title-source (boolean expanded-skill))]
+                  (set-session-title! state sid title emit!)))
             base-cfg ((:cfg-fn state))
             mode-overrides (h/cfg-overrides-for-mode (:mode sess))
             call-counter (atom 0)
@@ -409,6 +420,11 @@
       "session/close" (handle-close-or-delete state id params false)
       "session/delete" (handle-close-or-delete state id params true)
       "_session/steer" (handle-steer state id params)
+      ("session/rename" "_session/rename")
+      (let [sid (:sessionId params)
+            t (or (:title params) (:name params))]
+        (ensure-session! state sid nil)
+        (ok-resp id {:title (set-session-title! state sid t emit!)}))
       ("_theseus/compact" "session/compact") (handle-compact state id params)
       "notifications/initialized" nil
       (when (some? id)

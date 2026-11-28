@@ -32,6 +32,7 @@
    {:name "skills" :description "List all commands and skills"}
    {:name "help" :description "List all commands and skills"}
    {:name "compact" :description "Compact session history into a checkpoint"}
+   {:name "rename" :description "Rename this session (/rename <title>)"}
    {:name "doctor" :description "Run health diagnostics"}
    {:name "sessions" :description "List persisted sessions"}
    {:name "stop" :description "Cancel the running turn"}])
@@ -169,8 +170,25 @@
                 trimmed (if (> (count content) max-resource-chars)
                           (str (subs content 0 max-resource-chars) "\n[truncated]")
                           content)]
-            (str "[file: " (str p) "]\n" trimmed))))
+            (str "[file: " p "]\n" trimmed))))
       (catch Exception _ nil))))
+
+(defn extract-user-text-only
+  "Extract only the human-authored text blocks from an ACP prompt (ignoring
+  attached file/resource/image blocks so file paths never leak into titles)."
+  [prompt]
+  (cond
+    (string? prompt) prompt
+    (sequential? prompt)
+    (->> prompt
+         (keep (fn [blk]
+                 (cond
+                   (string? blk) blk
+                   (and (map? blk) (or (= "text" (:type blk)) (nil? (:type blk))))
+                   (:text blk))))
+         (str/join " "))
+    (map? prompt) (:text prompt)
+    :else ""))
 
 (defn extract-prompt-text [prompt]
   (cond
@@ -224,15 +242,31 @@
                          (catch Exception _ nil)))
                      img-blocks)))))))
 
-(defn derive-title [prompt-text]
-  (let [cleaned (-> (str (or prompt-text ""))
+(defn clean-title [s]
+  (let [cleaned (-> (str (or s ""))
                     (str/replace #"\s+" " ")
                     str/trim)]
-    (when (and (not (str/blank? cleaned))
-               (not (str/starts-with? cleaned "/")))
+    (when-not (str/blank? cleaned)
       (if (> (count cleaned) 72)
         (str (subs cleaned 0 69) "...")
         cleaned))))
+
+(defn derive-title
+  "Derive a clean session title from human-authored text.
+  - Native slash commands return nil (never hijack title).
+  - Skill invocations (`/skill-name args`) become `skill-name: args` (or `skill-name`).
+  - Plain prompts collapse whitespace and cap at 72 chars."
+  ([user-text] (derive-title user-text false))
+  ([user-text skill?]
+   (let [trimmed (str/trim (str (or user-text "")))]
+     (cond
+       (str/blank? trimmed) nil
+       (and (str/starts-with? trimmed "/") skill?)
+       (let [[cmd rest-txt] (str/split trimmed #"\s+" 2)
+             sname (subs cmd 1)]
+         (clean-title (if (str/blank? rest-txt) sname (str sname ": " rest-txt))))
+       (str/starts-with? trimmed "/") nil
+       :else (clean-title trimmed)))))
 
 (defn plan->acp-entries [plan-map]
   (when (and (map? plan-map) (= :active (:status plan-map)) (seq (:steps plan-map)))

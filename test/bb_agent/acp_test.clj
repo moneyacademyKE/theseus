@@ -410,3 +410,58 @@
                                #(swap! emitted conj %))
           (is (= :auto-safe (:approval/mode @captured-cfg)))
           (is (str/includes? @captured-prompt "secret architecture note")))))))
+
+(deftest session-naming-rename-skill-title-and-file-strip
+  (with-temp-home
+    (fn [dir]
+      (let [skill-dir (fs/path dir "skills" "code-check")
+            _ (fs/create-dirs skill-dir)
+            _ (spit (str (fs/path skill-dir "SKILL.md"))
+                    "---\nname: code-check\ndescription: Check code\n---\nCheck it.\n")
+            note-file (str (fs/path dir "notes.txt"))
+            _ (spit note-file "big file contents that should not leak into title")
+            llm-calls (atom 0)
+            fake-runner (fn [_cfg _prompt]
+                          (swap! llm-calls inc)
+                          {:assistant/final "ok" :turn/ok true})
+            state (acp/new-state {:cfg (sample-cfg) :run-turn! fake-runner})
+            emitted (atom [])]
+        (testing "skill-started thread auto-titles as 'skill: args'"
+          (let [sid (get-in (acp/handle-message! state {:jsonrpc "2.0" :id 1 :method "session/new" :params {:cwd dir}}
+                                                 #(swap! emitted conj %))
+                            [:result :sessionId])]
+            (reset! emitted [])
+            (acp/handle-message! state {:jsonrpc "2.0" :id 2 :method "session/prompt"
+                                        :params {:sessionId sid :prompt "/code-check src/app.clj"}}
+                                 #(swap! emitted conj %))
+            (is (some #(and (= "session_info_update" (get-in % [:params :update :sessionUpdate]))
+                            (= "code-check: src/app.clj" (get-in % [:params :update :title])))
+                      @emitted))
+            (is (= "code-check: src/app.clj" (:title (session/load-metadata sid))))))
+
+        (testing "/rename updates title locally without calling LLM and emits session_info_update"
+          (let [sid (get-in (acp/handle-message! state {:jsonrpc "2.0" :id 3 :method "session/new" :params {:cwd dir}}
+                                                 #(swap! emitted conj %))
+                            [:result :sessionId])
+                calls-before @llm-calls]
+            (reset! emitted [])
+            (acp/handle-message! state {:jsonrpc "2.0" :id 4 :method "session/prompt"
+                                        :params {:sessionId sid :prompt "/rename Auth Refactor"}}
+                                 #(swap! emitted conj %))
+            (is (= calls-before @llm-calls))
+            (is (= "Auth Refactor" (:title (session/load-metadata sid))))
+            (is (some #(and (= "session_info_update" (get-in % [:params :update :sessionUpdate]))
+                            (= "Auth Refactor" (get-in % [:params :update :title])))
+                      @emitted))))
+
+        (testing "@file resource_link does not leak [file: ...] into auto-title"
+          (let [sid (get-in (acp/handle-message! state {:jsonrpc "2.0" :id 5 :method "session/new" :params {:cwd dir}}
+                                                 #(swap! emitted conj %))
+                            [:result :sessionId])]
+            (reset! emitted [])
+            (acp/handle-message! state {:jsonrpc "2.0" :id 6 :method "session/prompt"
+                                        :params {:sessionId sid
+                                                 :prompt [{:type "resource_link" :uri (str "file://" note-file)}
+                                                          {:type "text" :text "fix the parser"}]}}
+                                 #(swap! emitted conj %))
+            (is (= "fix the parser" (:title (session/load-metadata sid))))))))))
