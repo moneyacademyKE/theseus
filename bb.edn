@@ -137,7 +137,8 @@
                                [bb-agent.rework-control-test]
                                [bb-agent.rsi-canary-test]
                                [bb-agent.loopforge-wave3-test]
-                               [bb-agent.loopforge-wave4-test])
+                               [bb-agent.loopforge-wave4-test]
+                               [bb-agent.acp-test])
                     :task (let [{:keys [fail error]}
                                 (t/run-tests 'bb-agent.notify-listen-test
                                              'bb-agent.goal-bridge-test
@@ -212,9 +213,13 @@
                                              'bb-agent.rework-control-test
                                              'bb-agent.rsi-canary-test
                                              'bb-agent.loopforge-wave3-test
-                                             'bb-agent.loopforge-wave4-test)]
+                                             'bb-agent.loopforge-wave4-test
+                                             'bb-agent.acp-test)]
                                  (when (pos? (+ fail error))
                                    (System/exit 1)))}
+     acp {:doc "Run Theseus as an Agent Client Protocol (ACP v1) stdio provider (e.g. for T3 Code)."
+          :requires ([bb-agent.acp :as acp])
+          :task (apply acp/-main *command-line-args*)}
      memory {:doc "Memory commands. Usage: bb memory add <text> | bb memory search <query>"
              :requires ([bb-agent.cli :as cli])
              :task (apply cli/-main "memory" *command-line-args*)}

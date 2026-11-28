@@ -455,4 +455,5 @@
       "daemon" (handle-daemon-command rest-args)
       "telegram" (handle-telegram-command rest-args)
       "ui" (handle-ui-command rest-args)
+      "acp" (apply (requiring-resolve 'bb-agent.acp/-main) rest-args)
       (handle-agent-command (if command (cons command rest-args) [])))))
