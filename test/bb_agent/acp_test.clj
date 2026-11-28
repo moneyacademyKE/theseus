@@ -321,3 +321,92 @@
           (is (= 1 (get-in (nth lines 1) [:result :protocolVersion])))
           (is (= 11 (:id (nth lines 2))))
           (is (= -32601 (get-in (nth lines 2) [:error :code]))))))))
+
+(deftest native-slash-commands-skill-expansion-and-title-guard
+  (with-temp-home
+    (fn [dir]
+      (let [skill-dir (fs/path dir "skills" "code-check")]
+        (fs/create-dirs skill-dir)
+        (spit (str (fs/path skill-dir "SKILL.md"))
+              "---\nname: code-check\ndescription: Check code quality\n---\nAlways inspect tests first.\n"))
+      (let [captured-prompt (atom nil)
+            llm-calls (atom 0)
+            fake-runner (fn [_cfg prompt]
+                          (swap! llm-calls inc)
+                          (reset! captured-prompt prompt)
+                          {:assistant/final "Skill ran!" :turn/ok true})
+            state (acp/new-state {:cfg (assoc (sample-cfg) :models ["anthropic/claude-sonnet-4"])
+                                  :run-turn! fake-runner})
+            emitted (atom [])
+            new-resp (acp/handle-message!
+                      state
+                      {:jsonrpc "2.0" :id 1 :method "session/new" :params {:cwd dir}}
+                      #(swap! emitted conj %))
+            sid (get-in new-resp [:result :sessionId])]
+        (testing "config :models appear in availableModels"
+          (is (some #(str/includes? (:modelId %) "claude-sonnet-4")
+                    (get-in new-resp [:result :models :availableModels]))))
+
+        (testing "/help, /autonomy, /skills run locally and do NOT poison session title"
+          (reset! emitted [])
+          (acp/handle-message! state {:jsonrpc "2.0" :id 2 :method "session/prompt"
+                                      :params {:sessionId sid :prompt "/help"}}
+                               #(swap! emitted conj %))
+          (acp/handle-message! state {:jsonrpc "2.0" :id 3 :method "session/prompt"
+                                      :params {:sessionId sid :prompt "/autonomy"}}
+                               #(swap! emitted conj %))
+          (is (= 0 @llm-calls))
+          (is (not (some #(= "session_info_update" (get-in % [:params :update :sessionUpdate]))
+                         @emitted))))
+
+        (testing "/code-check expands skill body via skill/compose-prompt before run-turn!"
+          (reset! emitted [])
+          (let [resp (acp/handle-message!
+                      state
+                      {:jsonrpc "2.0" :id 4 :method "session/prompt"
+                       :params {:sessionId sid :prompt "/code-check src/app.clj"}}
+                      #(swap! emitted conj %))]
+            (is (= "end_turn" (get-in resp [:result :stopReason])))
+            (is (= 1 @llm-calls))
+            (is (str/includes? @captured-prompt "Always inspect tests first."))
+            (is (str/includes? @captured-prompt "src/app.clj"))))))))
+
+(deftest plan-mode-uses-auto-safe-cwd-filters-list-and-resource-link-reads-file
+  (with-temp-home
+    (fn [dir]
+      (let [sub-a (str (fs/create-dirs (fs/path dir "proj-a")))
+            sub-b (str (fs/create-dirs (fs/path dir "proj-b")))
+            note-file (str (fs/path sub-a "notes.txt"))
+            _ (spit note-file "secret architecture note")
+            captured-cfg (atom nil)
+            captured-prompt (atom nil)
+            fake-runner (fn [cfg prompt]
+                          (reset! captured-cfg cfg)
+                          (reset! captured-prompt prompt)
+                          {:assistant/final "ok" :turn/ok true})
+            state (acp/new-state {:cfg (sample-cfg) :run-turn! fake-runner})
+            emitted (atom [])
+            sid-a (get-in (acp/handle-message! state {:jsonrpc "2.0" :id 1 :method "session/new" :params {:cwd sub-a}}
+                                               #(swap! emitted conj %))
+                          [:result :sessionId])
+            sid-b (get-in (acp/handle-message! state {:jsonrpc "2.0" :id 2 :method "session/new" :params {:cwd sub-b}}
+                                               #(swap! emitted conj %))
+                          [:result :sessionId])]
+        (testing "session/list filters by cwd when provided"
+          (let [res (acp/handle-message! state {:jsonrpc "2.0" :id 3 :method "session/list" :params {:cwd sub-a}}
+                                         #(swap! emitted conj %))
+                ids (set (map :sessionId (get-in res [:result :sessions])))]
+            (is (contains? ids sid-a))
+            (is (not (contains? ids sid-b)))))
+
+        (testing "plan mode maps to :auto-safe (read-only) and resource_link injects file text"
+          (acp/handle-message! state {:jsonrpc "2.0" :id 4 :method "session/set_mode"
+                                      :params {:sessionId sid-a :modeId "plan"}}
+                               #(swap! emitted conj %))
+          (acp/handle-message! state {:jsonrpc "2.0" :id 5 :method "session/prompt"
+                                      :params {:sessionId sid-a
+                                               :prompt [{:type "text" :text "summarize"}
+                                                        {:type "resource_link" :uri (str "file://" note-file)}]}}
+                               #(swap! emitted conj %))
+          (is (= :auto-safe (:approval/mode @captured-cfg)))
+          (is (str/includes? @captured-prompt "secret architecture note")))))))

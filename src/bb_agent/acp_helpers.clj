@@ -2,15 +2,17 @@
   "Pure payload builders and data adapters for the Theseus ACP v1 server.
 
   Kept separate from `bb-agent.acp` so protocol shaping, catalog construction,
-  prompt/image decoding, plan mapping, and telemetry formatting stay pure,
-  cohesive, and easy to reason about."
+  prompt/image/resource decoding, plan mapping, and telemetry formatting stay
+  pure, cohesive, and easy to reason about."
   (:require [babashka.fs :as fs]
             [bb-agent.compression :as compression]
             [bb-agent.config :as config]
             [bb-agent.model :as model]
             [bb-agent.skill :as skill]
+            [bb-agent.tool.common :as tool-common]
             [clojure.string :as str])
-  (:import [java.util Base64 UUID]))
+  (:import [java.net URI]
+           [java.util Base64 UUID]))
 
 (def available-modes
   [{:id "supervised" :name "Supervised"}
@@ -20,22 +22,27 @@
    {:id "plan" :name "Plan (read-only)"}])
 
 (def ^:private base-commands
-  [{:name "new" :description "Start a new session"}
-   {:name "sessions" :description "List persisted sessions"}
-   {:name "models" :description "Switch provider/model"}
+  [{:name "new" :description "Start a fresh conversation"}
+   {:name "reset" :description "Clear conversation state"}
+   {:name "usage" :description "Show token usage"}
+   {:name "autonomy" :description "Show RSI autonomy tier status"}
+   {:name "goals" :description "List goal runs and their status"}
+   {:name "model" :description "Show or switch the LLM model"}
+   {:name "models" :description "Configure default and fallback models"}
+   {:name "skills" :description "List all commands and skills"}
+   {:name "help" :description "List all commands and skills"}
    {:name "compact" :description "Compact session history into a checkpoint"}
-   {:name "usage" :description "Session usage stats"}
    {:name "doctor" :description "Run health diagnostics"}
+   {:name "sessions" :description "List persisted sessions"}
    {:name "stop" :description "Cancel the running turn"}])
 
+(def ^:private edit-tools #{"write_file" "edit_file"})
+(def ^:private max-resource-chars 32768)
+
 (defn available-commands-for
-  "Combine built-in ACP slash commands with locally discovered Theseus skills."
+  "Combine built-in ACP/Theseus slash commands with all discovered skills."
   []
-  (let [skills-dir (fs/path (config/home) "skills")
-        discovered (try
-                     (when (fs/directory? skills-dir)
-                       (skill/discover-skills skills-dir))
-                     (catch Exception _ []))
+  (let [discovered (try (skill/discover-all-skills) (catch Exception _ []))
         seen (set (map :name base-commands))
         skill-cmds (->> discovered
                         (remove #(contains? seen (:name %)))
@@ -48,17 +55,28 @@
 (defn mode-for-cfg [cfg]
   (case (:approval/mode cfg)
     :auto-all (if (false? (:security/taint-gate? cfg)) "full-access" "auto")
-    :auto-edits "auto-accept-edits"
-    :plan "plan"
+    :auto-safe "plan"
     "supervised"))
 
 (defn cfg-overrides-for-mode [mode-id]
   (case mode-id
     "full-access" {:approval/mode :auto-all :security/taint-gate? false}
     "auto" {:approval/mode :auto-all :security/taint-gate? true}
-    "auto-accept-edits" {:approval/mode :auto-edits :security/taint-gate? true}
-    "plan" {:approval/mode :plan :security/taint-gate? true}
+    "auto-accept-edits" {:approval/mode :ask :security/taint-gate? true}
+    "plan" {:approval/mode :auto-safe :security/taint-gate? true}
     {:approval/mode :ask :security/taint-gate? true}))
+
+(defn auto-approved-by-mode?
+  "True when `mode-id` allows `tool-name` to run without prompting T3 Code."
+  [mode-id tool-name]
+  (case mode-id
+    "full-access" true
+    "auto" true
+    "auto-accept-edits" (or (contains? tool-common/safe-auto-tools tool-name)
+                            (contains? edit-tools tool-name))
+    "supervised" (contains? tool-common/safe-auto-tools tool-name)
+    "plan" (contains? tool-common/safe-auto-tools tool-name)
+    false))
 
 (defn model-id-str [provider model-name]
   (str (name (or provider :default)) "/" (or model-name "default")))
@@ -71,7 +89,8 @@
       [nil s])))
 
 (defn- catalog-entries [cfg]
-  (let [primary [(or (:provider cfg) :infered-local) (or (:model cfg) "default")]
+  (let [default-prov (or (:provider cfg) :infered-local)
+        primary [default-prov (or (:model cfg) "default")]
         from-providers (for [[p pcfg] (:providers cfg)
                              :let [m (:model pcfg)]
                              :when (and p (string? m) (not (str/blank? m)))]
@@ -79,7 +98,10 @@
         from-fallbacks (for [{:keys [provider model]} (:provider/fallbacks cfg)
                              :when (and provider (string? model) (not (str/blank? model)))]
                          [(keyword provider) model])
-        pairs (distinct (concat [primary] from-providers from-fallbacks))]
+        from-models (for [m (:models cfg)
+                          :when (and (string? m) (not (str/blank? m)))]
+                      [default-prov m])
+        pairs (distinct (concat [primary] from-providers from-fallbacks from-models))]
     (vec (for [[p m] pairs]
            {:provider p
             :model m
@@ -138,6 +160,18 @@
       (when (and (string? p) (not (str/blank? p)))
         [{:path p}]))))
 
+(defn- read-file-uri [uri]
+  (when (and (string? uri) (str/starts-with? uri "file://"))
+    (try
+      (let [p (fs/path (URI. uri))]
+        (when (fs/regular-file? p)
+          (let [content (slurp (str p))
+                trimmed (if (> (count content) max-resource-chars)
+                          (str (subs content 0 max-resource-chars) "\n[truncated]")
+                          content)]
+            (str "[file: " (str p) "]\n" trimmed))))
+      (catch Exception _ nil))))
+
 (defn extract-prompt-text [prompt]
   (cond
     (string? prompt) prompt
@@ -148,10 +182,11 @@
                    (string? blk) blk
                    (map? blk)
                    (when-not (= "image" (:type blk))
-                     (or (:text blk)
-                         (get-in blk [:resource :text])
-                         (when-let [uri (get-in blk [:resource :uri])]
-                           (str "[resource: " uri "]")))))))
+                     (let [uri (or (:uri blk) (get-in blk [:resource :uri]))]
+                       (or (:text blk)
+                           (get-in blk [:resource :text])
+                           (read-file-uri uri)
+                           (when uri (str "[resource: " uri "]"))))))))
          (str/join "\n"))
     (map? prompt) (or (:text prompt) (pr-str prompt))
     :else (str prompt)))
@@ -193,7 +228,8 @@
   (let [cleaned (-> (str (or prompt-text ""))
                     (str/replace #"\s+" " ")
                     str/trim)]
-    (when-not (str/blank? cleaned)
+    (when (and (not (str/blank? cleaned))
+               (not (str/starts-with? cleaned "/")))
       (if (> (count cleaned) 72)
         (str (subs cleaned 0 69) "...")
         cleaned))))

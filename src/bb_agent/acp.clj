@@ -5,7 +5,8 @@
   JetBrains, MonoCode, and any ACP-compatible client via `theseus acp`.
   Supports bidirectional JSON-RPC (interactive `session/request_permission`),
   parallel tool-call FIFO correlation, live plan/usage/thought updates,
-  multimodal image attachments, local slash commands, and real compaction."
+  multimodal image attachments, @file resources, full native slash commands +
+  skill expansion, cwd-filtered session lists, and real compaction."
   (:require [babashka.fs :as fs]
             [bb-agent.acp-helpers :as h]
             [bb-agent.compression :as compression]
@@ -16,7 +17,7 @@
             [bb-agent.plan :as plan]
             [bb-agent.rich :as rich]
             [bb-agent.session :as session]
-            [bb-agent.usage :as usage]
+            [bb-agent.telegram-intake :as intake]
             [bb-agent.version :as version]
             [cheshire.core :as json]
             [clojure.string :as str])
@@ -109,8 +110,14 @@
                  :modes (h/modes-payload (:mode sess))
                  :configOptions (h/config-options-payload cfg sid)})))
 
-(defn- handle-session-list [id]
-  (let [metas (session/list-metadata)
+(defn- canonical-dir-str [dir]
+  (when (and (string? dir) (not (str/blank? dir)))
+    (try (str (fs/canonicalize dir)) (catch Exception _ dir))))
+
+(defn- handle-session-list [id params]
+  (let [want-cwd (canonical-dir-str (:cwd params))
+        metas (cond->> (session/list-metadata)
+                want-cwd (filter #(= want-cwd (canonical-dir-str (:cwd %)))))
         sessions (mapv (fn [m]
                          {:sessionId (or (:session/id m) "default")
                           :cwd (or (:cwd m) (config/home))
@@ -214,7 +221,8 @@
   "Send a blocking server->client `session/request_permission` JSON-RPC request
   and wait for the client's response (resolved by `serve-io!`)."
   [state emit! sid sess tool-call-id req]
-  (if @(:approve-all? sess)
+  (if (or @(:approve-all? sess)
+          (h/auto-approved-by-mode? (:mode sess) (:tool/name req)))
     :approved
     (let [req-id (swap! (:next-req-id state) inc)
           p (promise)
@@ -240,15 +248,17 @@
             "allow_once" :approved
             :denied))))))
 
+(def ^:private local-chat-commands
+  #{:new :usage :autonomy :goals :model :models :skills :stop})
+
 (defn- try-slash-command!
-  "Intercept built-in /commands locally without burning LLM tokens.
-  Returns response text if handled, or nil to proceed to `run-turn!`."
+  "Intercept all native Theseus /commands locally without burning LLM tokens.
+  Shares `telegram-intake/chat-command` and `handle-chat-command` verbatim."
   [state sid prompt-text]
   (let [trimmed (str/trim (str prompt-text))]
     (when (str/starts-with? trimmed "/")
       (let [[cmd] (str/split trimmed #"\s+" 2)]
         (case cmd
-          "/usage" (str "Usage report:\n```edn\n" (pr-str (usage/report)) "\n```")
           "/doctor" (let [checks (doctor/run-checks)]
                       (str/join "\n" (map (fn [{:keys [status id message]}]
                                             (str "[" (str/upper-case (name status)) "] " id ": " message))
@@ -257,25 +267,28 @@
                        (str "Compacted: " (:compacted res) " (" (:messagesCount res) " messages)"))
           "/sessions" (let [metas (take 10 (session/list-metadata))]
                         (str/join "\n" (map #(str "- " (:session/id %) " (" (or (:title %) "untitled") ")") metas)))
-          nil)))))
+          (let [parsed (intake/chat-command trimmed)]
+            (when (contains? local-chat-commands parsed)
+              (intake/handle-chat-command parsed sid trimmed nil nil))))))))
 
 (defn- handle-prompt [state id params emit!]
   (let [sid (:sessionId params)
         sess (ensure-session! state sid (:cwd params))
-        prompt-text (h/extract-prompt-text (:prompt params))
+        raw-prompt (h/extract-prompt-text (:prompt params))
         user-images (h/decode-image-blocks! (:prompt params))]
     (when-not (:title sess)
-      (when-let [title (h/derive-title prompt-text)]
+      (when-let [title (h/derive-title raw-prompt)]
         (swap! (:sessions state) assoc-in [sid :title] title)
         (persist-session-fields! sid {:title title})
         (emit! (session-update-notif sid {:sessionUpdate "session_info_update"
                                           :title title}))))
-    (if-let [local-reply (try-slash-command! state sid prompt-text)]
+    (if-let [local-reply (try-slash-command! state sid raw-prompt)]
       (do
         (emit! (session-update-notif sid {:sessionUpdate "agent_message_chunk"
                                           :content {:type "text" :text local-reply}}))
         (ok-resp id {:stopReason "end_turn"}))
-      (let [base-cfg ((:cfg-fn state))
+      (let [prompt-text (or (intake/skill-command raw-prompt) raw-prompt)
+            base-cfg ((:cfg-fn state))
             mode-overrides (h/cfg-overrides-for-mode (:mode sess))
             call-counter (atom 0)
             call-queues (atom {})
@@ -384,7 +397,7 @@
       "initialize" (handle-initialize id)
       "authenticate" (ok-resp id {})
       "session/new" (handle-session-new state id params emit!)
-      "session/list" (handle-session-list id)
+      "session/list" (handle-session-list id params)
       "session/load" (handle-session-load state id params emit!)
       "session/resume" (handle-session-load state id params emit!)
       "session/set_model" (handle-set-model state id params emit!)
@@ -428,7 +441,6 @@
                  (emit! (err-resp nil -32700 (str "Parse error: " err)))
                  (let [msg (:ok parsed)]
                    (cond
-                     ;; Client response to a server-initiated request (e.g. session/request_permission)
                      (and (some? (:id msg)) (nil? (:method msg)))
                      (when-let [p (get @(:pending-client-reqs state) (:id msg))]
                        (deliver p msg))
